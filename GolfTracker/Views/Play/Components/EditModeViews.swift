@@ -159,24 +159,6 @@ struct ManualPlacementMapView: View {
                             .foregroundColor(.yellow)
                             .font(.title)
                     }
-
-                    // Show tee marker if set
-                    if let teeCoord = hole.teeCoordinate {
-                        Annotation("", coordinate: teeCoord) {
-                            ZStack {
-                                Circle()
-                                    .fill(.white)
-                                    .frame(width: 30, height: 30)
-                                Circle()
-                                    .stroke(.black, lineWidth: 2)
-                                    .frame(width: 30, height: 30)
-                                Text("T")
-                                    .font(.headline)
-                                    .fontWeight(.bold)
-                                    .foregroundColor(.black)
-                            }
-                        }
-                    }
                 }
 
                 // Show temporary position marker
@@ -354,87 +336,6 @@ struct MoveHoleManuallyOverlay: View {
     }
 }
 
-struct AddTeeManuallyOverlay: View {
-    let currentHole: Hole?
-    @Binding var temporaryPosition: CLLocationCoordinate2D?
-    @Binding var isAddingTeeManually: Bool
-    @Binding var savedMapRegion: MKCoordinateRegion?
-    let userLocation: CLLocation?
-    let store: DataStore
-    let currentCourse: Course
-    let restoreSavedMapRegion: () -> Void
-
-    var body: some View {
-        VStack(spacing: 0) {
-            VStack(spacing: 8) {
-                Text("Place Tee Marker")
-                    .font(.title2)
-                    .fontWeight(.semibold)
-
-                Text("Tap the map to place the tee")
-                    .font(.subheadline)
-                    .foregroundColor(.secondary)
-            }
-            .padding()
-            .padding(.top, 50)
-            .frame(maxWidth: .infinity)
-            .background(.ultraThinMaterial)
-
-            Spacer()
-
-            VStack(spacing: 12) {
-                HStack(spacing: 8) {
-                    if temporaryPosition != nil {
-                        Button(action: {
-                            guard let hole = currentHole,
-                                  let coordinate = temporaryPosition else { return }
-                            store.updateTeeMarker(hole, in: currentCourse, teeCoordinate: coordinate)
-                            restoreSavedMapRegion()
-                            isAddingTeeManually = false
-                            temporaryPosition = nil
-                            savedMapRegion = nil
-                        }) {
-                            Label("Save", systemImage: "checkmark.circle.fill")
-                                .font(.headline)
-                                .frame(maxWidth: .infinity)
-                                .padding(.vertical, 10)
-                        }
-                        .buttonStyle(.borderedProminent)
-                        .tint(.green)
-                    }
-
-                    Button(action: {
-                        guard let location = userLocation else { return }
-                        temporaryPosition = location.coordinate
-                    }) {
-                        Image(systemName: "location.fill")
-                            .font(.headline)
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 10)
-                    }
-                    .buttonStyle(.bordered)
-                    .disabled(userLocation == nil)
-
-                    Button(action: {
-                        restoreSavedMapRegion()
-                        isAddingTeeManually = false
-                        temporaryPosition = nil
-                        savedMapRegion = nil
-                    }) {
-                        Text("Cancel")
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 10)
-                    }
-                    .buttonStyle(.bordered)
-                }
-            }
-            .padding()
-            .padding(.bottom, 20)
-            .background(.ultraThinMaterial)
-        }
-    }
-}
-
 // MARK: - Stroke Movement Views
 
 struct StrokeMovementMapView: View {
@@ -456,24 +357,6 @@ struct StrokeMovementMapView: View {
                         Image(systemName: "flag.fill")
                             .foregroundColor(.yellow)
                             .font(.title)
-                    }
-
-                    // Show tee marker if set
-                    if let teeCoord = hole.teeCoordinate {
-                        Annotation("", coordinate: teeCoord) {
-                            ZStack {
-                                Circle()
-                                    .fill(.white)
-                                    .frame(width: 30, height: 30)
-                                Circle()
-                                    .stroke(.black, lineWidth: 2)
-                                    .frame(width: 30, height: 30)
-                                Text("T")
-                                    .font(.headline)
-                                    .fontWeight(.bold)
-                                    .foregroundColor(.black)
-                            }
-                        }
                     }
 
                     // Show other strokes for current hole (not the one being moved)
@@ -629,24 +512,6 @@ struct PenaltyStrokeMapView: View {
                             .font(.title)
                     }
 
-                    // Show tee marker if set
-                    if let teeCoord = hole.teeCoordinate {
-                        Annotation("", coordinate: teeCoord) {
-                            ZStack {
-                                Circle()
-                                    .fill(.white)
-                                    .frame(width: 30, height: 30)
-                                Circle()
-                                    .stroke(.black, lineWidth: 2)
-                                    .frame(width: 30, height: 30)
-                                Text("T")
-                                    .font(.headline)
-                                    .fontWeight(.bold)
-                                    .foregroundColor(.black)
-                            }
-                        }
-                    }
-
                     // Show other strokes for current hole
                     if let round = currentRound {
                         let strokesForHole = round.strokes.filter { $0.holeNumber == hole.number }
@@ -725,7 +590,7 @@ struct AddPenaltyStrokeOverlay: View {
                     .foregroundColor(.secondary)
             }
             .padding()
-            .padding(.top, 50)
+            .padding(.top, 100)
             .frame(maxWidth: .infinity)
             .background(.ultraThinMaterial)
 

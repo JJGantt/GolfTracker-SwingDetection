@@ -4,6 +4,8 @@ import MapKit
 struct ActiveRoundView: View {
     @StateObject private var store = WatchDataStore.shared
     @StateObject private var locationManager = LocationManager.shared
+    @StateObject private var swingDetector = SwingDetectionManager.shared
+    @StateObject private var workoutManager = WorkoutManager.shared
     @State private var selectedClubIndex: Double = 0
     @State private var position: MapCameraPosition = .automatic
     @State private var showingRecordedFeedback = false
@@ -16,9 +18,8 @@ struct ActiveRoundView: View {
     @State private var showingActionsSheet = false
     @State private var showingEditHole = false
     @State private var showingAddHole = false
+    @State private var showingAccelTest = false
     @State private var navigateToAddHole = false
-    @State private var showingMapTest = false
-    @State private var isTestMode = false
     @FocusState private var isMapFocused: Bool
     @FocusState private var isMainViewFocused: Bool
 
@@ -269,6 +270,41 @@ struct ActiveRoundView: View {
     }
 
     @ViewBuilder
+    private func penaltyCancelButton(buttonSize: CGFloat, iconSize: CGFloat) -> some View {
+        VStack {
+            Spacer()
+
+            HStack(alignment: .bottom) {
+                Spacer()
+
+                Button(action: {
+                    isPlacingPenalty = false
+                    temporaryPenaltyPosition = nil
+                    isMapFocused = false
+                    isMainViewFocused = true
+                    updateMapPosition()
+                    WKInterfaceDevice.current().play(.click)
+                }) {
+                    ZStack {
+                        Circle()
+                            .fill(Color.red.opacity(0.95))
+                            .frame(width: buttonSize, height: buttonSize)
+                            .shadow(color: .black.opacity(0.3), radius: 2, x: 0, y: 1)
+
+                        Image(systemName: "xmark")
+                            .font(.system(size: iconSize, weight: .bold))
+                            .foregroundColor(.white)
+                    }
+                }
+                .buttonStyle(PlainButtonStyle())
+            }
+            .padding(.horizontal, 4)
+            .padding(.bottom, 16)
+        }
+        .ignoresSafeArea()
+    }
+
+    @ViewBuilder
     private var holeInfoOverlay: some View {
         VStack(alignment: .leading) {
             VStack(alignment: .leading, spacing: 4) {
@@ -360,6 +396,11 @@ struct ActiveRoundView: View {
 
             // Bottom swipe-up indicator
             swipeUpIndicator
+
+            // Cancel button for penalty placement (bottom right)
+            if isPlacingPenalty {
+                penaltyCancelButton(buttonSize: buttonSize, iconSize: iconSize)
+            }
         }
         .task {
             calculateCrownOffset(screenHeight: geometry.size.height)
@@ -393,14 +434,11 @@ struct ActiveRoundView: View {
         .sheet(isPresented: $showingAddHole) {
             AddHoleView(store: store, locationManager: locationManager, isPresented: $showingAddHole)
         }
+        .sheet(isPresented: $showingAccelTest) {
+            AccelTestView()
+        }
         .navigationDestination(isPresented: $navigateToAddHole) {
             AddHoleNavigationView(store: store, locationManager: locationManager)
-        }
-        .sheet(isPresented: $showingMapTest) {
-            MapTestView(locationManager: locationManager, isPresented: $showingMapTest)
-        }
-        .navigationDestination(isPresented: $isTestMode) {
-            MapTestNavigationView(locationManager: locationManager)
         }
         .onAppear {
             print("⌚ [ActiveRoundView] View appeared")
@@ -412,6 +450,26 @@ struct ActiveRoundView: View {
             updateMapPosition()
             // Set focus to main view for crown control
             isMainViewFocused = true
+            // Start swing detection
+            swingDetector.startMonitoring()
+
+            // Request HealthKit authorization and start workout if there's an active round
+            if store.currentRound != nil && !workoutManager.isWorkoutActive {
+                workoutManager.requestAuthorization { success in
+                    if success {
+                        print("⌚ [ActiveRoundView] HealthKit authorized, starting workout")
+                        workoutManager.startWorkout()
+                    } else {
+                        print("⌚ [ActiveRoundView] HealthKit authorization failed")
+                    }
+                }
+            }
+        }
+        .onDisappear {
+            // Stop swing detection when leaving the view
+            swingDetector.stopMonitoring()
+            // Note: We don't stop the workout here - it should continue in background
+            // Only stop when the round is explicitly ended
         }
         .onChange(of: locationManager.location) { _, _ in
             // Trigger view refresh when location updates (for distance display)
@@ -685,24 +743,50 @@ struct ActiveRoundView: View {
             }
             .padding(.horizontal, 8)
 
-            // Bottom row: Map Test button
-            Button(action: {
-                showingActionsSheet = false
-                isTestMode = true
-            }) {
-                HStack(spacing: 8) {
-                    Image(systemName: "map.fill")
-                        .font(.system(size: 16, weight: .bold))
-                    Text("Map Test")
-                        .font(.system(size: 13, weight: .semibold))
+            // Bottom row: Motion Test and Add Last Swing buttons
+            HStack(spacing: 8) {
+                // Motion Test button (left)
+                Button(action: {
+                    showingActionsSheet = false
+                    showingAccelTest = true
+                }) {
+                    HStack(spacing: 6) {
+                        Text("Motion Test")
+                            .font(.system(size: 12, weight: .semibold))
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.8)
+                    }
+                    .foregroundColor(.white)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 12)
+                    .background(Color.yellow.opacity(0.9))
+                    .cornerRadius(8)
                 }
-                .foregroundColor(.white)
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 12)
-                .background(Color.yellow.opacity(0.9))
-                .cornerRadius(8)
+                .buttonStyle(PlainButtonStyle())
+
+                // Add Last Swing button (right)
+                Button(action: {
+                    addStrokeFromLastSwing()
+                    showingActionsSheet = false
+                }) {
+                    HStack(spacing: 6) {
+                        Image(systemName: "figure.golf")
+                            .font(.system(size: 14, weight: .bold))
+                        Text("Last Swing")
+                            .font(.system(size: 12, weight: .semibold))
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.8)
+                    }
+                    .foregroundColor(.white)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 12)
+                    .background(Color.purple.opacity(0.9))
+                    .cornerRadius(8)
+                }
+                .buttonStyle(PlainButtonStyle())
+                .disabled(swingDetector.lastDetectedSwing == nil)
+                .opacity(swingDetector.lastDetectedSwing == nil ? 0.5 : 1.0)
             }
-            .buttonStyle(PlainButtonStyle())
             .padding(.horizontal, 8)
         }
         .padding()
@@ -772,6 +856,59 @@ struct ActiveRoundView: View {
                 showingRecordedFeedback = false
             }
         }
+    }
+
+    private func addStrokeFromLastSwing() {
+        guard let swing = swingDetector.lastDetectedSwing else {
+            print("⌚ [AddLastSwing] No swing detected")
+            return
+        }
+
+        guard var round = store.currentRound,
+              let hole = store.currentHole else {
+            print("⌚ [AddLastSwing] No active round or hole")
+            return
+        }
+
+        let strokesForHole = round.strokes.filter { $0.holeNumber == hole.number }
+        let strokeNumber = strokesForHole.count + 1
+
+        // Calculate trajectory heading if we have a captured aim direction
+        var trajectoryHeading = capturedAimDirection
+        if trajectoryHeading == nil {
+            // Default to bearing towards the flag
+            trajectoryHeading = calculateBearing(from: swing.location, to: hole.coordinate)
+        }
+
+        let stroke = Stroke(
+            holeNumber: hole.number,
+            strokeNumber: strokeNumber,
+            coordinate: swing.location,
+            club: selectedClub,
+            trajectoryHeading: trajectoryHeading,
+            acceleration: swing.peakAcceleration
+        )
+
+        // Add to current round
+        round.strokes.append(stroke)
+        store.currentRound = round
+
+        // Save locally
+        store.saveToStorage()
+
+        // Sync to iPhone
+        WatchConnectivityManager.shared.sendRound(round)
+
+        // Reset aim direction after stroke is recorded
+        capturedAimDirection = nil
+
+        // Clear the last swing
+        swingDetector.clearLastSwing()
+
+        // Haptic feedback
+        WKInterfaceDevice.current().play(.success)
+
+        print("⌚ [AddLastSwing] Added stroke from detected swing at \(swing.location) with \(swing.peakAcceleration)G")
     }
 
     private func deleteLastStroke() {
@@ -875,14 +1012,12 @@ struct ActiveRoundView: View {
 
         let holeCoord = hole.coordinate
 
-        // Use tee coordinate if available, otherwise use user's current location
+        // Use user's current location
         let startCoord: CLLocationCoordinate2D
-        if let teeCoord = hole.teeCoordinate {
-            startCoord = teeCoord
-        } else if let userLocation = locationManager.location {
+        if let userLocation = locationManager.location {
             startCoord = userLocation.coordinate
         } else {
-            // No tee and no user location - can't position map
+            // No user location - can't position map
             return
         }
 

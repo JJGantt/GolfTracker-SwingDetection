@@ -66,28 +66,17 @@ struct Hole: Identifiable, Codable, Hashable {
     var number: Int
     var latitude: Double
     var longitude: Double
-    var teeLatitude: Double?
-    var teeLongitude: Double?
-    var yards: Int?
     var par: Int?
 
     var coordinate: CLLocationCoordinate2D {
         CLLocationCoordinate2D(latitude: latitude, longitude: longitude)
     }
 
-    var teeCoordinate: CLLocationCoordinate2D? {
-        guard let teeLat = teeLatitude, let teeLon = teeLongitude else { return nil }
-        return CLLocationCoordinate2D(latitude: teeLat, longitude: teeLon)
-    }
-
-    init(number: Int, coordinate: CLLocationCoordinate2D, yards: Int? = nil, par: Int? = nil, teeCoordinate: CLLocationCoordinate2D? = nil) {
+    init(number: Int, coordinate: CLLocationCoordinate2D, par: Int? = nil) {
         self.number = number
         self.latitude = coordinate.latitude
         self.longitude = coordinate.longitude
-        self.yards = yards
         self.par = par
-        self.teeLatitude = teeCoordinate?.latitude
-        self.teeLongitude = teeCoordinate?.longitude
     }
 }
 
@@ -104,6 +93,7 @@ struct Stroke: Identifiable, Codable, Hashable {
     var landingLongitude: Double?
     var isPenalty: Bool
     var trajectoryHeading: Double? // Direction user was trying to hit (in degrees)
+    var acceleration: Double? // Peak acceleration in G when swing was detected
 
     var coordinate: CLLocationCoordinate2D {
         CLLocationCoordinate2D(latitude: latitude, longitude: longitude)
@@ -114,7 +104,7 @@ struct Stroke: Identifiable, Codable, Hashable {
         return CLLocationCoordinate2D(latitude: lat, longitude: lon)
     }
 
-    init(holeNumber: Int, strokeNumber: Int, coordinate: CLLocationCoordinate2D, club: Club, isPenalty: Bool = false, trajectoryHeading: Double? = nil) {
+    init(holeNumber: Int, strokeNumber: Int, coordinate: CLLocationCoordinate2D, club: Club, isPenalty: Bool = false, trajectoryHeading: Double? = nil, acceleration: Double? = nil) {
         self.holeNumber = holeNumber
         self.strokeNumber = strokeNumber
         self.latitude = coordinate.latitude
@@ -123,6 +113,7 @@ struct Stroke: Identifiable, Codable, Hashable {
         self.timestamp = Date()
         self.isPenalty = isPenalty
         self.trajectoryHeading = trajectoryHeading
+        self.acceleration = acceleration
     }
 }
 

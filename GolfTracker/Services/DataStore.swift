@@ -179,7 +179,7 @@ class DataStore: ObservableObject {
     func addHole(to course: Course, coordinate: CLLocationCoordinate2D, par: Int? = nil) {
         guard let index = courses.firstIndex(where: { $0.id == course.id }) else { return }
         let holeNumber = courses[index].holes.count + 1
-        let hole = Hole(number: holeNumber, coordinate: coordinate, yards: nil, par: par, teeCoordinate: nil)
+        let hole = Hole(number: holeNumber, coordinate: coordinate, par: par)
         courses[index].holes.append(hole)
         saveCourses()
 
@@ -263,49 +263,6 @@ class DataStore: ObservableObject {
         updateActiveRoundHoles(for: course)
     }
 
-    func updateHoleYards(_ hole: Hole, in course: Course, yards: Int?) {
-        guard let courseIndex = courses.firstIndex(where: { $0.id == course.id }),
-              let holeIndex = courses[courseIndex].holes.firstIndex(where: { $0.id == hole.id }) else { return }
-        courses[courseIndex].holes[holeIndex].yards = yards
-        saveCourses()
-        updateActiveRoundHoles(for: course)
-    }
-
-    func updateHolePar(_ hole: Hole, in course: Course, par: Int?) {
-        guard let courseIndex = courses.firstIndex(where: { $0.id == course.id }),
-              let holeIndex = courses[courseIndex].holes.firstIndex(where: { $0.id == hole.id }) else { return }
-        courses[courseIndex].holes[holeIndex].par = par
-        saveCourses()
-        updateActiveRoundHoles(for: course)
-    }
-
-    func updateTeeMarker(_ hole: Hole, in course: Course, teeCoordinate: CLLocationCoordinate2D?) {
-        guard let courseIndex = courses.firstIndex(where: { $0.id == course.id }),
-              let holeIndex = courses[courseIndex].holes.firstIndex(where: { $0.id == hole.id }) else { return }
-
-        if let teeCoordinate = teeCoordinate {
-            courses[courseIndex].holes[holeIndex].teeLatitude = teeCoordinate.latitude
-            courses[courseIndex].holes[holeIndex].teeLongitude = teeCoordinate.longitude
-
-            // Automatically calculate yards from tee to hole
-            let teeLocation = CLLocation(latitude: teeCoordinate.latitude, longitude: teeCoordinate.longitude)
-            let holeLocation = CLLocation(
-                latitude: courses[courseIndex].holes[holeIndex].latitude,
-                longitude: courses[courseIndex].holes[holeIndex].longitude
-            )
-            let distanceInMeters = teeLocation.distance(from: holeLocation)
-            let distanceInYards = Int(distanceInMeters * 1.09361)
-
-            courses[courseIndex].holes[holeIndex].yards = distanceInYards
-        } else {
-            // Remove tee marker
-            courses[courseIndex].holes[holeIndex].teeLatitude = nil
-            courses[courseIndex].holes[holeIndex].teeLongitude = nil
-        }
-
-        saveCourses()
-        updateActiveRoundHoles(for: course)
-    }
 
     // MARK: - Round Management
 

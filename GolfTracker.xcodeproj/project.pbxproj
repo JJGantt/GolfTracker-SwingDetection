@@ -8,8 +8,8 @@
 
 /* Begin PBXBuildFile section */
 		06FE06C8A5C9410FB47BCF49 /* RoundsHistoryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 41CE51AAB05945F5A4DE314E /* RoundsHistoryView.swift */; };
-		6A27A5702EF7A72E00D64047 /* MapTestView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6A27A56F2EF7A72E00D64047 /* MapTestView.swift */; };
-		6A27A5722EF7A9E000D64047 /* MapTestNavigationView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6A27A5712EF7A9E000D64047 /* MapTestNavigationView.swift */; };
+		6A27A5752F0C000000000001 /* SwingDetectionManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6A27A5762F0C000000000002 /* SwingDetectionManager.swift */; };
+		6A27A5772F0C000000000003 /* WorkoutManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6A27A5782F0C000000000004 /* WorkoutManager.swift */; };
 		6A27A5742EF7ABA000D64047 /* AddHoleNavigationView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6A27A5732EF7ABA000D64047 /* AddHoleNavigationView.swift */; };
 		6A3253A92EF242DF0022829E /* AddHoleView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6A3253A82EF242DF0022829E /* AddHoleView.swift */; };
 		6A3253AB2EF2E9C80022829E /* EditHoleView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6A3253AA2EF2E9C80022829E /* EditHoleView.swift */; };
@@ -38,6 +38,7 @@
 		6AD5EAC02EE3B79E00DDDCF0 /* GolfWatch Watch App.app in Embed Watch Content */ = {isa = PBXBuildFile; fileRef = 6AD5EAB32EE3B79B00DDDCF0 /* GolfWatch Watch App.app */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		6AD5EAC72EE3B7EB00DDDCF0 /* ActiveRoundView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6AD5EAC62EE3B7EB00DDDCF0 /* ActiveRoundView.swift */; };
 		6AD5EAC92EE3B80700DDDCF0 /* WatchDataStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6AD5EAC82EE3B80700DDDCF0 /* WatchDataStore.swift */; };
+		FAEE76F6916D6EF479166310 /* AccelTestView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0103B059B95381AAE6DFE359 /* AccelTestView.swift */; };
 		6AD5EACA2EE3B82E00DDDCF0 /* LocationManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6AB83CEF2EDFB78400CE341C /* LocationManager.swift */; };
 		6AD5EACB2EE3B83200DDDCF0 /* DataStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6AB83CE62EDFB19E00CE341C /* DataStore.swift */; };
 		6AD5EACC2EE3B83600DDDCF0 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6AB83CE42EDFB17500CE341C /* Models.swift */; };
@@ -73,8 +74,8 @@
 
 /* Begin PBXFileReference section */
 		41CE51AAB05945F5A4DE314E /* RoundsHistoryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RoundsHistoryView.swift; sourceTree = "<group>"; };
-		6A27A56F2EF7A72E00D64047 /* MapTestView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MapTestView.swift; sourceTree = "<group>"; };
-		6A27A5712EF7A9E000D64047 /* MapTestNavigationView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MapTestNavigationView.swift; sourceTree = "<group>"; };
+		6A27A5762F0C000000000002 /* SwingDetectionManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SwingDetectionManager.swift; sourceTree = "<group>"; };
+		6A27A5782F0C000000000004 /* WorkoutManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkoutManager.swift; sourceTree = "<group>"; };
 		6A27A5732EF7ABA000D64047 /* AddHoleNavigationView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AddHoleNavigationView.swift; sourceTree = "<group>"; };
 		6A3253A82EF242DF0022829E /* AddHoleView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AddHoleView.swift; sourceTree = "<group>"; };
 		6A3253AA2EF2E9C80022829E /* EditHoleView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditHoleView.swift; sourceTree = "<group>"; };
@@ -107,6 +108,7 @@
 		6AD5EABC2EE3B79E00DDDCF0 /* Preview Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = "Preview Assets.xcassets"; sourceTree = "<group>"; };
 		6AD5EAC62EE3B7EB00DDDCF0 /* ActiveRoundView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ActiveRoundView.swift; sourceTree = "<group>"; };
 		6AD5EAC82EE3B80700DDDCF0 /* WatchDataStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchDataStore.swift; sourceTree = "<group>"; };
+		0103B059B95381AAE6DFE359 /* AccelTestView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccelTestView.swift; sourceTree = "<group>"; };
 		6AD5EACD2EE47B0D00DDDCF0 /* WatchConnectivityManager.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = WatchConnectivityManager.swift; sourceTree = "<group>"; };
 		70A60D673360436FB2457C24 /* RoundDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RoundDetailView.swift; sourceTree = "<group>"; };
 		B06522DFDE374AFFB8DC4411 /* CourseDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CourseDetailView.swift; sourceTree = "<group>"; };
@@ -293,6 +295,8 @@
 			isa = PBXGroup;
 			children = (
 				6AD5EAC82EE3B80700DDDCF0 /* WatchDataStore.swift */,
+				6A27A5762F0C000000000002 /* SwingDetectionManager.swift */,
+				6A27A5782F0C000000000004 /* WorkoutManager.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -301,11 +305,10 @@
 			isa = PBXGroup;
 			children = (
 				6A27A5732EF7ABA000D64047 /* AddHoleNavigationView.swift */,
-				6A27A5712EF7A9E000D64047 /* MapTestNavigationView.swift */,
-				6A27A56F2EF7A72E00D64047 /* MapTestView.swift */,
 				6A3253AA2EF2E9C80022829E /* EditHoleView.swift */,
 				6A3253A82EF242DF0022829E /* AddHoleView.swift */,
 				6AD5EAC62EE3B7EB00DDDCF0 /* ActiveRoundView.swift */,
+				0103B059B95381AAE6DFE359 /* AccelTestView.swift */,
 			);
 			path = Views;
 			sourceTree = "<group>";
@@ -442,13 +445,14 @@
 				6A27A5742EF7ABA000D64047 /* AddHoleNavigationView.swift in Sources */,
 				6A3253A92EF242DF0022829E /* AddHoleView.swift in Sources */,
 				6AD5EAB82EE3B79B00DDDCF0 /* ContentView.swift in Sources */,
-				6A27A5702EF7A72E00D64047 /* MapTestView.swift in Sources */,
-				6A27A5722EF7A9E000D64047 /* MapTestNavigationView.swift in Sources */,
 				6AD5EACB2EE3B83200DDDCF0 /* DataStore.swift in Sources */,
 				6AD5EACF2EE47B1500DDDCF0 /* WatchConnectivityManager.swift in Sources */,
 				6AD5EAC92EE3B80700DDDCF0 /* WatchDataStore.swift in Sources */,
+				6A27A5752F0C000000000001 /* SwingDetectionManager.swift in Sources */,
+				6A27A5772F0C000000000003 /* WorkoutManager.swift in Sources */,
 				6AD5EACA2EE3B82E00DDDCF0 /* LocationManager.swift in Sources */,
 				6A3253AB2EF2E9C80022829E /* EditHoleView.swift in Sources */,
+				FAEE76F6916D6EF479166310 /* AccelTestView.swift in Sources */,
 				6AD5EAC72EE3B7EB00DDDCF0 /* ActiveRoundView.swift in Sources */,
 				6AD5EAB62EE3B79B00DDDCF0 /* GolfWatchApp.swift in Sources */,
 				6AD5EACC2EE3B83600DDDCF0 /* Models.swift in Sources */,
@@ -656,7 +660,8 @@
 				DEVELOPMENT_ASSET_PATHS = "\"GolfWatch Watch App/Preview Content\"";
 				DEVELOPMENT_TEAM = XMH4AVFC78;
 				ENABLE_PREVIEWS = YES;
-				GENERATE_INFOPLIST_FILE = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = "GolfWatch Watch App/Info.plist";
 				INFOPLIST_KEY_CFBundleDisplayName = GolfWatch;
 				INFOPLIST_KEY_CFBundleIconName = AppIcon;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown";
@@ -688,7 +693,8 @@
 				DEVELOPMENT_ASSET_PATHS = "\"GolfWatch Watch App/Preview Content\"";
 				DEVELOPMENT_TEAM = XMH4AVFC78;
 				ENABLE_PREVIEWS = YES;
-				GENERATE_INFOPLIST_FILE = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = "GolfWatch Watch App/Info.plist";
 				INFOPLIST_KEY_CFBundleDisplayName = GolfWatch;
 				INFOPLIST_KEY_CFBundleIconName = AppIcon;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown";

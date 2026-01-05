@@ -261,9 +261,7 @@ class WatchDataStore: ObservableObject {
         let newHole = Hole(
             number: nextHoleNumber,
             coordinate: coordinate,
-            yards: nil,
-            par: par,
-            teeCoordinate: nil
+            par: par
         )
 
         // Add hole to round's holes array

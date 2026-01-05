@@ -20,7 +20,6 @@ struct HolePlayView: View {
     // MARK: - Editing Modes
     @State private var isAddingHole = false
     @State private var isMovingHoleManually = false
-    @State private var isAddingTeeManually = false
     @State private var isMovingStroke = false
     @State private var isAddingPenaltyStroke = false
     @State private var hasUserInteractedWithAddHoleMap = false
@@ -31,18 +30,12 @@ struct HolePlayView: View {
     @State private var strokeToMove: Stroke?
 
     // MARK: - Dialogs & Sheets
-    @State private var showingEditMenu = false
     @State private var showingMoveHoleConfirmation = false
-    @State private var showingAddTeeConfirmation = false
-    @State private var showingEditYards = false
-    @State private var showingEditPar = false
     @State private var showingClubSelection = false
     @State private var showingStrokeDetails = false
     @State private var showingCourseEditor = false
 
     // MARK: - Input State
-    @State private var yardsInput = ""
-    @State private var parInput = ""
     @State private var selectedStrokeIndex: Int = 0
 
     // MARK: - Stroke Recording
@@ -242,26 +235,6 @@ struct HolePlayView: View {
                     currentCourse: currentCourse,
                     restoreSavedMapRegion: restoreSavedMapRegion
                 )
-            } else if isAddingTeeManually {
-                ManualPlacementMapView(
-                    position: $position,
-                    temporaryPosition: $temporaryPosition,
-                    currentHole: currentHole,
-                    userLocation: locationManager.location,
-                    heading: locationManager.heading,
-                    useStandardMap: useStandardMap,
-                    isAddingTeeManually: true
-                )
-                AddTeeManuallyOverlay(
-                    currentHole: currentHole,
-                    temporaryPosition: $temporaryPosition,
-                    isAddingTeeManually: $isAddingTeeManually,
-                    savedMapRegion: $savedMapRegion,
-                    userLocation: locationManager.location,
-                    store: store,
-                    currentCourse: currentCourse,
-                    restoreSavedMapRegion: restoreSavedMapRegion
-                )
             } else if isMovingStroke {
                 StrokeMovementMapView(
                     position: $position,
@@ -319,11 +292,6 @@ struct HolePlayView: View {
                         saveCurrentMapRegion()
                         temporaryPosition = hole.coordinate
                         isMovingHoleManually = true
-                    },
-                    onTeeTap: {
-                        saveCurrentMapRegion()
-                        temporaryPosition = hole.teeCoordinate
-                        isAddingTeeManually = true
                     },
                     onStrokeTap: { index in
                         selectedStrokeIndex = index
@@ -390,13 +358,13 @@ struct HolePlayView: View {
         .disabled(currentHole == nil)
     }
 
-    private var editMenuButton: some View {
+    private var editHolePositionButton: some View {
         Button(action: {
-            showingEditMenu = true
+            showingMoveHoleConfirmation = true
         }) {
-            Image(systemName: "ellipsis.circle")
+            Image(systemName: "mappin.circle")
         }
-        .disabled(currentHole == nil)
+        .disabled(currentHole == nil || locationManager.location == nil)
     }
 
     private var contentWithModifiers: some View {
@@ -411,40 +379,19 @@ struct HolePlayView: View {
                 ToolbarItemGroup(placement: .navigationBarTrailing) {
                     viewToggleButton
                     mapStyleButton
-                    editMenuButton
+                    editHolePositionButton
                 }
             }
             .modifier(NavigationModifier(showingCourseEditor: $showingCourseEditor, store: store, currentCourse: currentCourse))
-            .modifier(EditMenuModifier(
-                showingEditMenu: $showingEditMenu,
-                showingMoveHoleConfirmation: $showingMoveHoleConfirmation,
-                showingAddTeeConfirmation: $showingAddTeeConfirmation,
-                showingEditYards: $showingEditYards,
-                showingEditPar: $showingEditPar,
-                showingCourseEditor: $showingCourseEditor,
-                currentHole: currentHole,
-                locationManager: locationManager,
-                yardsInput: $yardsInput,
-                parInput: $parInput,
-                isCurrentHoleCompleted: isCurrentHoleCompleted,
-                reopenHole: reopenCurrentHole
-            ))
             .modifier(HoleEditingModifier(
                 showingMoveHoleConfirmation: $showingMoveHoleConfirmation,
-                showingAddTeeConfirmation: $showingAddTeeConfirmation,
-                showingEditYards: $showingEditYards,
-                showingEditPar: $showingEditPar,
-                yardsInput: $yardsInput,
-                parInput: $parInput,
                 currentHole: currentHole,
                 locationManager: locationManager,
                 temporaryPosition: $temporaryPosition,
                 isMovingHoleManually: $isMovingHoleManually,
-                isAddingTeeManually: $isAddingTeeManually,
                 store: store,
                 currentCourse: currentCourse,
-                moveCurrentHoleToUserLocation: moveCurrentHoleToUserLocation,
-                addTeeMarkerAtCurrentLocation: addTeeMarkerAtCurrentLocation
+                moveCurrentHoleToUserLocation: moveCurrentHoleToUserLocation
             ))
             .confirmationDialog("Select Club", isPresented: $showingClubSelection) {
                 ForEach(Club.allCases, id: \.self) { club in
@@ -542,15 +489,6 @@ struct HolePlayView: View {
                 saveCurrentMapRegion()
             } else {
                 // Exiting hole-move mode: return to regular user/hole view
-                updateMapPosition()
-            }
-        }
-        .onChange(of: isAddingTeeManually) { _, newValue in
-            if newValue {
-                // Entering tee-add mode: show full hole view
-                saveCurrentMapRegion()
-            } else {
-                // Exiting tee-add mode: return to regular user/hole view
                 updateMapPosition()
             }
         }
@@ -680,12 +618,10 @@ struct HolePlayView: View {
 
         let holeCoord = hole.coordinate
 
-        // Determine the "start" of the hole: tee if present, otherwise user location.
+        // Use user location as the start
         let startCoord: CLLocationCoordinate2D
 
-        if let teeCoord = hole.teeCoordinate {
-            startCoord = teeCoord
-        } else if let userCoord = locationManager.location?.coordinate {
+        if let userCoord = locationManager.location?.coordinate {
             startCoord = userCoord
         } else {
             // Fallback: just show a tight region around the hole.
@@ -730,12 +666,6 @@ struct HolePlayView: View {
         guard let hole = currentHole,
               let location = locationManager.location else { return }
         store.updateHole(hole, in: currentCourse, newCoordinate: location.coordinate)
-    }
-
-    private func addTeeMarkerAtCurrentLocation() {
-        guard let hole = currentHole,
-              let location = locationManager.location else { return }
-        store.updateTeeMarker(hole, in: currentCourse, teeCoordinate: location.coordinate)
     }
 
     private func recordStroke(with club: Club) {
@@ -810,31 +740,10 @@ struct HolePlayView: View {
             let holeCoord = hole.coordinate
             let holeLocation = CLLocation(latitude: holeCoord.latitude, longitude: holeCoord.longitude)
 
-            // Calculate distance in meters
-            let distanceToHole = userLocation.distance(from: holeLocation)
+            // ALWAYS show user-to-hole view (user at bottom, hole at top)
+            let startCoord = userCoord
 
-            // Determine the max expected distance for the hole (use yards if available, otherwise default)
-            let holeYardsInMeters = (hole.yards.map { Double($0) * 0.9144 }) ?? 300.0 // Default to ~300 meters
-            let maxDistance = holeYardsInMeters * 1.5 // 50% buffer
-
-            // Determine starting point based on toggle and distance
-            let startCoord: CLLocationCoordinate2D
-            if forceUserHoleView {
-                // User has toggled to force user/hole view
-                startCoord = userCoord
-            } else if let teeCoord = hole.teeCoordinate {
-                // Tee exists - use it if user is far away
-                if distanceToHole > maxDistance {
-                    startCoord = teeCoord
-                } else {
-                    startCoord = userCoord
-                }
-            } else {
-                // No tee marker - ALWAYS show user-to-hole view (user at bottom, hole at top)
-                startCoord = userCoord
-            }
-
-            // Calculate bearing and distance from starting point to hole
+            // Calculate bearing and distance from user to hole
             let bearing = MapCalculations.calculateBearing(from: startCoord, to: holeCoord)
             let startLocation = CLLocation(latitude: startCoord.latitude, longitude: startCoord.longitude)
             let distance = max(startLocation.distance(from: holeLocation), 40.0)
@@ -842,7 +751,7 @@ struct HolePlayView: View {
             // Calculate span based on distance
             let spanInMeters = max(distance * 1.8, 40.0) // Minimum 40 meters view
 
-            // Center point exactly between start and hole
+            // Center point exactly between user and hole
             let centerLat = (holeCoord.latitude + startCoord.latitude) / 2.0
             let centerLon = (holeCoord.longitude + startCoord.longitude) / 2.0
             let center = CLLocationCoordinate2D(latitude: centerLat, longitude: centerLon)
@@ -857,29 +766,8 @@ struct HolePlayView: View {
             )
 
             position = .camera(camera)
-        } else if let teeCoord = hole.teeCoordinate {
-            // No user location but tee exists - show tee to hole view
-            let holeCoord = hole.coordinate
-            let bearing = MapCalculations.calculateBearing(from: teeCoord, to: holeCoord)
-            let teeLocation = CLLocation(latitude: teeCoord.latitude, longitude: teeCoord.longitude)
-            let holeLocation = CLLocation(latitude: holeCoord.latitude, longitude: holeCoord.longitude)
-            let distance = max(teeLocation.distance(from: holeLocation), 40.0)
-
-            let spanInMeters = max(distance * 1.8, 40.0)
-            let centerLat = (holeCoord.latitude + teeCoord.latitude) / 2.0
-            let centerLon = (holeCoord.longitude + teeCoord.longitude) / 2.0
-            let center = CLLocationCoordinate2D(latitude: centerLat, longitude: centerLon)
-
-            let camera = MapCamera(
-                centerCoordinate: center,
-                distance: spanInMeters * 2.2,
-                heading: bearing,
-                pitch: 0
-            )
-
-            position = .camera(camera)
         } else {
-            // No user location and no tee - just center on the hole
+            // No user location - just center on the hole
             position = .region(MKCoordinateRegion(
                 center: hole.coordinate,
                 span: MKCoordinateSpan(latitudeDelta: 0.0005, longitudeDelta: 0.0005)

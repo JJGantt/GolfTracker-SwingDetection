@@ -53,24 +53,6 @@ struct HoleOverlayControls: View {
                     .frame(height: 40)
 
                 VStack(spacing: 4) {
-                    Text("Yards")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                    if let yards = hole.yards {
-                        Text("\(yards)")
-                            .font(.title2)
-                            .fontWeight(.bold)
-                    } else {
-                        Text("--")
-                            .font(.title2)
-                            .foregroundColor(.secondary)
-                    }
-                }
-
-                Divider()
-                    .frame(height: 40)
-
-                VStack(spacing: 4) {
                     Text("Par")
                         .font(.caption)
                         .foregroundColor(.secondary)

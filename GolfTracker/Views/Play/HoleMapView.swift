@@ -14,7 +14,6 @@ struct HoleMapView: View {
     let distanceToTarget: (CLLocationCoordinate2D) -> Int?
 
     let onHoleTap: () -> Void
-    let onTeeTap: () -> Void
     let onStrokeTap: (Int) -> Void
 
     private var isHoleCompleted: Bool {
@@ -32,27 +31,6 @@ struct HoleMapView: View {
                         .onTapGesture {
                             onHoleTap()
                         }
-                }
-
-                // Show tee marker if set
-                if let teeCoord = hole.teeCoordinate {
-                    Annotation("", coordinate: teeCoord) {
-                        ZStack {
-                            Circle()
-                                .fill(.white)
-                                .frame(width: 30, height: 30)
-                            Circle()
-                                .stroke(.black, lineWidth: 2)
-                                .frame(width: 30, height: 30)
-                            Text("T")
-                                .font(.headline)
-                                .fontWeight(.bold)
-                                .foregroundColor(.black)
-                        }
-                        .onTapGesture {
-                            onTeeTap()
-                        }
-                    }
                 }
 
                 // Show strokes for current hole

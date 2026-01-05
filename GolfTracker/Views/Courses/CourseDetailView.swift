@@ -314,14 +314,12 @@ struct HoleDetailRow: View {
     let hole: Hole
 
     @State private var parText: String
-    @State private var yardsText: String
 
     init(store: DataStore, course: Course, hole: Hole) {
         self.store = store
         self.course = course
         self.hole = hole
         _parText = State(initialValue: hole.par != nil ? "\(hole.par!)" : "")
-        _yardsText = State(initialValue: hole.yards != nil ? "\(hole.yards!)" : "")
     }
 
     var body: some View {
@@ -329,32 +327,17 @@ struct HoleDetailRow: View {
             Text("Hole \(hole.number)")
                 .font(.headline)
 
-            HStack(spacing: 12) {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Par")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                    TextField("Par", text: $parText)
-                        .keyboardType(.numberPad)
-                        .textFieldStyle(.roundedBorder)
-                        .onChange(of: parText) { _, newValue in
-                            let par = newValue.isEmpty ? nil : Int(newValue)
-                            store.updateHolePar(hole, in: course, par: par)
-                        }
-                }
-
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Yards")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                    TextField("Yards", text: $yardsText)
-                        .keyboardType(.numberPad)
-                        .textFieldStyle(.roundedBorder)
-                        .onChange(of: yardsText) { _, newValue in
-                            let yards = newValue.isEmpty ? nil : Int(newValue)
-                            store.updateHoleYards(hole, in: course, yards: yards)
-                        }
-                }
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Par")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                TextField("Par", text: $parText)
+                    .keyboardType(.numberPad)
+                    .textFieldStyle(.roundedBorder)
+                    .onChange(of: parText) { _, newValue in
+                        let par = newValue.isEmpty ? nil : Int(newValue)
+                        store.updateHole(hole, in: course, newCoordinate: hole.coordinate, par: par)
+                    }
             }
         }
         .padding(.vertical, 4)

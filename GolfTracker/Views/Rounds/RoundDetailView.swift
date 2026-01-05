@@ -164,12 +164,6 @@ struct HoleScoreRow: View {
 
                     Spacer()
 
-                    if let yards = hole.yards {
-                        Text("\(yards) yds")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                    }
-
                     if let par = hole.par {
                         Text("Par \(par)")
                             .font(.caption)

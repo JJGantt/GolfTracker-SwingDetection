@@ -13,8 +13,6 @@ struct CourseEditorView: View {
     @State private var newHoleNumber = ""
     @State private var showingOverviewMap = false
     @State private var useStandardMap = false
-    @State private var isAddingTeeManually = false
-    @State private var temporaryTeePosition: CLLocationCoordinate2D?
 
     private var currentCourse: Course {
         store.courses.first { $0.id == course.id } ?? course
@@ -32,12 +30,7 @@ struct CourseEditorView: View {
     }
     
     var body: some View {
-        ZStack {
-            mapView
-            if isAddingTeeManually {
-                teeManuallyOverlay
-            }
-        }
+        mapView
         .navigationTitle(currentCourse.name)
         #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
@@ -81,21 +74,6 @@ struct CourseEditorView: View {
                 if let hole = selectedHole {
                     newHoleNumber = "\(hole.number)"
                     showingRenumberAlert = true
-                }
-            }
-
-            Button(selectedHole?.teeCoordinate == nil ? "Add Tee Marker" : "Edit Tee Marker") {
-                if let hole = selectedHole {
-                    temporaryTeePosition = hole.teeCoordinate
-                    isAddingTeeManually = true
-                }
-            }
-
-            if selectedHole?.teeCoordinate != nil {
-                Button("Remove Tee Marker", role: .destructive) {
-                    if let hole = selectedHole {
-                        store.updateTeeMarker(hole, in: currentCourse, teeCoordinate: nil)
-                    }
                 }
             }
 
@@ -158,46 +136,6 @@ struct CourseEditorView: View {
                                 }
                         }
                     }
-
-                    // Show tee marker if set
-                    if let teeCoord = hole.teeCoordinate, !showingOverviewMap {
-                        Annotation("", coordinate: teeCoord) {
-                            ZStack {
-                                Circle()
-                                    .fill(.white)
-                                    .frame(width: 30, height: 30)
-                                Circle()
-                                    .stroke(.black, lineWidth: 2)
-                                    .frame(width: 30, height: 30)
-                                Text("\(hole.number)")
-                                    .font(.caption)
-                                    .fontWeight(.bold)
-                                    .foregroundColor(.black)
-                            }
-                            .onTapGesture {
-                                selectedHole = hole
-                                showingHoleActions = true
-                            }
-                        }
-                    }
-                }
-
-                // Show temporary tee position
-                if let tempPos = temporaryTeePosition, isAddingTeeManually, let selectedHole = selectedHole {
-                    Annotation("", coordinate: tempPos) {
-                        ZStack {
-                            Circle()
-                                .fill(.green)
-                                .frame(width: 40, height: 40)
-                            Circle()
-                                .stroke(.black, lineWidth: 2)
-                                .frame(width: 40, height: 40)
-                            Text("\(selectedHole.number)")
-                                .font(.headline)
-                                .fontWeight(.bold)
-                                .foregroundColor(.white)
-                        }
-                    }
                 }
 
                 // Show user location
@@ -209,11 +147,7 @@ struct CourseEditorView: View {
             }
             .mapStyle(useStandardMap ? .standard : .hybrid)
             .onTapGesture { screenCoord in
-                if isAddingTeeManually {
-                    if let coordinate = proxy.convert(screenCoord, from: .local) {
-                        temporaryTeePosition = coordinate
-                    }
-                } else if !showingOverviewMap {
+                if !showingOverviewMap {
                     // Only add hole if not tapping near an existing hole
                     if let coordinate = proxy.convert(screenCoord, from: .local),
                        !isTappingNearExistingHole(coordinate: coordinate) {
@@ -221,59 +155,6 @@ struct CourseEditorView: View {
                     }
                 }
             }
-        }
-    }
-
-    private var teeManuallyOverlay: some View {
-        VStack(spacing: 0) {
-            VStack(spacing: 8) {
-                Text("Place Tee Marker")
-                    .font(.title2)
-                    .fontWeight(.semibold)
-
-                Text("Tap the map to place the tee for hole \(selectedHole?.number ?? 0)")
-                    .font(.subheadline)
-                    .foregroundColor(.secondary)
-                    .multilineTextAlignment(.center)
-            }
-            .padding()
-            .padding(.top, 50)
-            .frame(maxWidth: .infinity)
-            .background(.ultraThinMaterial)
-
-            Spacer()
-
-            VStack(spacing: 12) {
-                if temporaryTeePosition != nil {
-                    Button(action: {
-                        guard let hole = selectedHole,
-                              let coordinate = temporaryTeePosition else { return }
-                        store.updateTeeMarker(hole, in: currentCourse, teeCoordinate: coordinate)
-                        isAddingTeeManually = false
-                        temporaryTeePosition = nil
-                    }) {
-                        Label("Save Tee Marker", systemImage: "checkmark.circle.fill")
-                            .font(.headline)
-                            .frame(maxWidth: .infinity)
-                            .padding()
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .tint(.green)
-                }
-
-                Button(action: {
-                    isAddingTeeManually = false
-                    temporaryTeePosition = nil
-                }) {
-                    Text("Cancel")
-                        .frame(maxWidth: .infinity)
-                        .padding()
-                }
-                .buttonStyle(.bordered)
-            }
-            .padding()
-            .padding(.bottom, 20)
-            .background(.ultraThinMaterial)
         }
     }
 

@@ -10,6 +10,7 @@ class WatchConnectivityManager: NSObject, ObservableObject {
     // Callbacks for received data
     var onReceiveRound: ((Round) -> Void)?
     var onReceiveStrokes: (([Stroke]) -> Void)?
+    var onReceiveMotionData: ((String, Int, Double, Double) -> Void)? // CSV, sampleCount, threshold, timeAboveThreshold
 
     // Queue for pending sends
     private var pendingRound: Round?
@@ -128,6 +129,21 @@ class WatchConnectivityManager: NSObject, ObservableObject {
 extension WatchConnectivityManager: WCSessionDelegate {
 
     // MARK: - Receiving Messages (Immediate)
+
+    func session(_ session: WCSession, didReceiveMessage message: [String : Any]) {
+        // Handle motion data
+        if let type = message["type"] as? String, type == "motionData",
+           let csv = message["csv"] as? String,
+           let sampleCount = message["sampleCount"] as? Int,
+           let threshold = message["threshold"] as? Double,
+           let timeAboveThreshold = message["timeAboveThreshold"] as? Double {
+            print("📱 [iPhone] Received motion data: \(sampleCount) samples")
+            DispatchQueue.main.async {
+                self.onReceiveMotionData?(csv, sampleCount, threshold, timeAboveThreshold)
+            }
+            return
+        }
+    }
 
     func session(_ session: WCSession, didReceiveMessageData messageData: Data) {
         // Try to decode as Round first (iPhone → Watch)
