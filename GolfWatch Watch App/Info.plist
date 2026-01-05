@@ -29,7 +29,6 @@
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>location</string>
-		<string>workout-processing</string>
 	</array>
 	<key>UISupportedInterfaceOrientations</key>
 	<array>
