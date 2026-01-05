@@ -9,6 +9,7 @@ import SwiftUI
 
 struct ContentView: View {
     @EnvironmentObject var store: DataStore
+    @EnvironmentObject var motionDataHandler: MotionDataHandler
 
     var body: some View {
         TabView {
@@ -21,6 +22,11 @@ struct ContentView: View {
                 .tabItem {
                     Label("History", systemImage: "clock")
                 }
+
+            TestFilesView()
+                .tabItem {
+                    Label("Tests", systemImage: "waveform")
+                }
         }
     }
 }
@@ -28,4 +34,5 @@ struct ContentView: View {
 #Preview {
     ContentView()
         .environmentObject(DataStore())
+        .environmentObject(MotionDataHandler())
 }

@@ -15,7 +15,6 @@ struct HolePlayView: View {
     @State private var position = MapCameraPosition.automatic
     @State private var useStandardMap = false
     @State private var savedMapRegion: MKCoordinateRegion?
-    @State private var forceUserHoleView = false
 
     // MARK: - Editing Modes
     @State private var isAddingHole = false
@@ -350,10 +349,9 @@ struct HolePlayView: View {
 
     private var viewToggleButton: some View {
         Button(action: {
-            forceUserHoleView.toggle()
             updateMapPosition()
         }) {
-            Image(systemName: forceUserHoleView ? "figure.walk" : "flag.2.crossed.fill")
+            Image(systemName: "flag.2.crossed.fill")
         }
         .disabled(currentHole == nil)
     }

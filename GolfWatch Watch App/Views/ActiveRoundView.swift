@@ -770,8 +770,7 @@ struct ActiveRoundView: View {
                     showingActionsSheet = false
                 }) {
                     HStack(spacing: 6) {
-                        Image(systemName: "figure.golf")
-                            .font(.system(size: 14, weight: .bold))
+
                         Text("Last Swing")
                             .font(.system(size: 12, weight: .semibold))
                             .lineLimit(1)

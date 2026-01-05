@@ -26,6 +26,10 @@
 	<string>GolfTracker needs your location to calculate distances to holes and track your shots during a round.</string>
 	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
 	<string>GolfTracker needs your location to calculate distances to holes and track your shots during a round.</string>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>location</string>
+	</array>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

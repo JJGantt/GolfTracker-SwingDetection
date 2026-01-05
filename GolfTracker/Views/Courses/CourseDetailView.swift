@@ -8,8 +8,7 @@ struct CourseDetailView: View {
     @State private var position = MapCameraPosition.automatic
     @State private var showingPlay = false
     @State private var showingEditCourseInfo = false
-    @State private var showingEditHoleDetails = false
-    @State private var showingEditHolePositions = false
+    @State private var showingRoundsHistory = false
     @State private var showingDeleteConfirmation = false
     @State private var showingCannotDeleteAlert = false
     @Environment(\.dismiss) private var dismiss
@@ -113,22 +112,14 @@ struct CourseDetailView: View {
                     .buttonStyle(.bordered)
 
                     Button(action: {
-                        showingEditHoleDetails = true
+                        showingRoundsHistory = true
                     }) {
-                        Label("Edit Hole Details", systemImage: "list.number")
+                        Label("View Rounds", systemImage: "clock.fill")
                             .frame(maxWidth: .infinity)
                             .padding()
                     }
                     .buttonStyle(.bordered)
-
-                    Button(action: {
-                        showingEditHolePositions = true
-                    }) {
-                        Label("Edit Hole Positions", systemImage: "map")
-                            .frame(maxWidth: .infinity)
-                            .padding()
-                    }
-                    .buttonStyle(.bordered)
+                    .disabled(!store.hasRounds(for: currentCourse))
 
                     Button(action: {
                         if store.hasRounds(for: currentCourse) {
@@ -153,14 +144,11 @@ struct CourseDetailView: View {
         .navigationDestination(isPresented: $showingPlay) {
             HolePlayView(store: store, course: currentCourse)
         }
-        .navigationDestination(isPresented: $showingEditHolePositions) {
-            CourseEditorView(store: store, course: currentCourse)
+        .navigationDestination(isPresented: $showingRoundsHistory) {
+            RoundsHistoryView(store: store, initialCourseFilter: currentCourse.id)
         }
         .sheet(isPresented: $showingEditCourseInfo) {
             EditCourseInfoView(store: store, course: currentCourse)
-        }
-        .sheet(isPresented: $showingEditHoleDetails) {
-            EditHoleDetailsView(store: store, course: currentCourse)
         }
         .confirmationDialog("Delete Course", isPresented: $showingDeleteConfirmation) {
             Button("Delete \(currentCourse.name)", role: .destructive) {
@@ -279,67 +267,3 @@ struct EditCourseInfoView: View {
     }
 }
 
-struct EditHoleDetailsView: View {
-    @ObservedObject var store: DataStore
-    let course: Course
-    @Environment(\.dismiss) private var dismiss
-
-    private var currentCourse: Course {
-        store.courses.first { $0.id == course.id } ?? course
-    }
-
-    var body: some View {
-        NavigationStack {
-            List {
-                ForEach(currentCourse.holes) { hole in
-                    HoleDetailRow(store: store, course: currentCourse, hole: hole)
-                }
-            }
-            .navigationTitle("Edit Hole Details")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Done") {
-                        dismiss()
-                    }
-                }
-            }
-        }
-    }
-}
-
-struct HoleDetailRow: View {
-    @ObservedObject var store: DataStore
-    let course: Course
-    let hole: Hole
-
-    @State private var parText: String
-
-    init(store: DataStore, course: Course, hole: Hole) {
-        self.store = store
-        self.course = course
-        self.hole = hole
-        _parText = State(initialValue: hole.par != nil ? "\(hole.par!)" : "")
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Hole \(hole.number)")
-                .font(.headline)
-
-            VStack(alignment: .leading, spacing: 4) {
-                Text("Par")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-                TextField("Par", text: $parText)
-                    .keyboardType(.numberPad)
-                    .textFieldStyle(.roundedBorder)
-                    .onChange(of: parText) { _, newValue in
-                        let par = newValue.isEmpty ? nil : Int(newValue)
-                        store.updateHole(hole, in: course, newCoordinate: hole.coordinate, par: par)
-                    }
-            }
-        }
-        .padding(.vertical, 4)
-    }
-}

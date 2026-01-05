@@ -2,8 +2,15 @@ import SwiftUI
 
 struct RoundsHistoryView: View {
     @ObservedObject var store: DataStore
+    let initialCourseFilter: UUID?
     @State private var selectedCourseFilter: UUID? = nil
     @State private var selectedRound: Round?
+
+    init(store: DataStore, initialCourseFilter: UUID? = nil) {
+        self.store = store
+        self.initialCourseFilter = initialCourseFilter
+        _selectedCourseFilter = State(initialValue: initialCourseFilter)
+    }
 
     private var filteredRounds: [Round] {
         let rounds = store.rounds.sorted { $0.date > $1.date }

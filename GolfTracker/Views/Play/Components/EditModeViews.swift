@@ -224,7 +224,7 @@ struct MoveHoleManuallyOverlay: View {
                     .foregroundColor(.secondary)
             }
             .padding()
-            .padding(.top, 50)
+            .padding(.top, 100)
             .frame(maxWidth: .infinity)
             .background(.ultraThinMaterial)
 

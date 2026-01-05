@@ -19,6 +19,16 @@ class LocationManager: NSObject, ObservableObject {
         locationManager.distanceFilter = 1 // Update every 1 meter
         locationManager.headingFilter = 5 // Update every 5 degrees
 
+        // Enable background location updates (necessary for watchOS when screen is off)
+        #if os(iOS) || os(watchOS)
+        locationManager.allowsBackgroundLocationUpdates = true
+        locationManager.activityType = .fitness // Golf is a fitness activity
+        #endif
+
+        #if os(iOS)
+        locationManager.pausesLocationUpdatesAutomatically = false
+        #endif
+
         #if targetEnvironment(simulator)
         // Set a default location for simulator testing
         location = CLLocation(latitude: 37.7749, longitude: -122.4194)
