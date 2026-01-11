@@ -276,7 +276,82 @@ class DataStore: ObservableObject {
         // Send round to Watch
         WatchConnectivityManager.shared.sendRound(round)
 
+        // Handle satellite imagery (async)
+        handleSatelliteImagesForRound(course: course)
+
         return round
+    }
+
+    private func handleSatelliteImagesForRound(course: Course) {
+        let cacheManager = SatelliteCacheManager.shared
+
+        // Check if we already have cached crops for this course
+        if let existingCache = cacheManager.getCachedImages(for: course.id),
+           existingCache.images.count == course.holes.count {
+            // We have all holes cached - transfer immediately
+            print("📱 [DataStore] Using cached satellite images for \(course.name)")
+            SatelliteTransferManager.shared.transferImages(for: course.id) { success in
+                if success {
+                    print("📱 [DataStore] Successfully transferred cached images to Watch")
+                }
+            }
+        } else {
+            // First round or incomplete cache - download large image
+            print("📱 [DataStore] Downloading large satellite image for \(course.name)")
+            let startLocation = course.holes.first?.coordinate ?? CLLocationCoordinate2D(latitude: 0, longitude: 0)
+
+            cacheManager.downloadLargeSatelliteImage(centerCoordinate: startLocation, courseId: course.id) { result in
+                switch result {
+                case .success(let metadata):
+                    print("📱 [DataStore] Large satellite image downloaded, cropping per-hole images")
+                    // Crop and transfer images for each hole
+                    self.cropAndTransferHoleImages(for: course)
+                case .failure(let error):
+                    print("📱 [DataStore] Failed to download satellite: \(error)")
+                }
+            }
+        }
+    }
+
+    private func cropAndTransferHoleImages(for course: Course) {
+        let cacheManager = SatelliteCacheManager.shared
+        let transferManager = SatelliteTransferManager.shared
+
+        // Crop and transfer images sequentially for each hole
+        func processHole(at index: Int) {
+            guard index < course.holes.count else {
+                print("📱 [DataStore] Finished cropping and transferring all hole images")
+                return
+            }
+
+            let hole = course.holes[index]
+            cacheManager.cropImageForHole(courseId: course.id, hole: hole) { result in
+                switch result {
+                case .success(let metadata):
+                    // Transfer this hole's image to Watch
+                    guard let imageData = cacheManager.getImageData(for: course.id, holeNumber: hole.number) else {
+                        print("📱 [DataStore] ERROR: No image data for hole \(hole.number)")
+                        processHole(at: index + 1)
+                        return
+                    }
+
+                    transferManager.transferHoleImage(courseId: course.id, holeNumber: hole.number) { success in
+                        if success {
+                            print("📱 [DataStore] Transferred hole \(hole.number) image to Watch")
+                        }
+                        // Continue with next hole
+                        processHole(at: index + 1)
+                    }
+                case .failure(let error):
+                    print("📱 [DataStore] Failed to crop hole \(hole.number): \(error)")
+                    // Continue with next hole anyway
+                    processHole(at: index + 1)
+                }
+            }
+        }
+
+        // Start processing from first hole
+        processHole(at: 0)
     }
 
     func addStroke(to round: Round, holeNumber: Int, coordinate: CLLocationCoordinate2D, club: Club, trajectoryHeading: Double? = nil) {

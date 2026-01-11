@@ -160,3 +160,79 @@ struct Round: Identifiable, Codable, Hashable {
         return completedHoles.contains(holeNumber)
     }
 }
+
+// MARK: - Satellite Imagery Models
+
+struct SatelliteImageMetadata: Identifiable, Codable, Hashable {
+    var id = UUID()
+    var courseId: UUID
+    var holeNumber: Int
+    var centerLatitude: Double
+    var centerLongitude: Double
+    var radiusMeters: Double // 550 meters (600 yards)
+    var pixelWidth: Int // 2000
+    var pixelHeight: Int // 2000
+    var metersPerPixel: Double
+    var capturedDate: Date
+    var fileName: String
+
+    var centerCoordinate: CLLocationCoordinate2D {
+        CLLocationCoordinate2D(latitude: centerLatitude, longitude: centerLongitude)
+    }
+
+    init(courseId: UUID, holeNumber: Int, center: CLLocationCoordinate2D, radiusMeters: Double = 550.0, pixelWidth: Int = 2000, pixelHeight: Int = 2000) {
+        self.courseId = courseId
+        self.holeNumber = holeNumber
+        self.centerLatitude = center.latitude
+        self.centerLongitude = center.longitude
+        self.radiusMeters = radiusMeters
+        self.pixelWidth = pixelWidth
+        self.pixelHeight = pixelHeight
+        self.metersPerPixel = (radiusMeters * 2) / Double(pixelWidth)
+        self.capturedDate = Date()
+        self.fileName = "\(courseId.uuidString)_hole-\(holeNumber).jpg"
+    }
+}
+
+struct LargeSatelliteImageMetadata: Codable {
+    var fileName: String // "large_satellite.jpg"
+    var centerLatitude: Double
+    var centerLongitude: Double
+    var radiusMeters: Double // 1500 meters (3km diameter)
+    var pixelWidth: Int // 3000
+    var pixelHeight: Int // 3000
+    var metersPerPixel: Double
+    var capturedDate: Date
+
+    var centerCoordinate: CLLocationCoordinate2D {
+        CLLocationCoordinate2D(latitude: centerLatitude, longitude: centerLongitude)
+    }
+
+    init(center: CLLocationCoordinate2D, radiusMeters: Double = 1500.0, pixelWidth: Int = 3000, pixelHeight: Int = 3000) {
+        self.fileName = "large_satellite.jpg"
+        self.centerLatitude = center.latitude
+        self.centerLongitude = center.longitude
+        self.radiusMeters = radiusMeters
+        self.pixelWidth = pixelWidth
+        self.pixelHeight = pixelHeight
+        self.metersPerPixel = (radiusMeters * 2) / Double(pixelWidth)
+        self.capturedDate = Date()
+    }
+}
+
+struct CourseSatelliteCache: Codable {
+    var courseId: UUID
+    var courseName: String
+    var largeImage: LargeSatelliteImageMetadata? // The big 3km×3km image
+    var images: [SatelliteImageMetadata] // Per-hole crops
+    var lastUpdated: Date
+    var version: Int = 1
+
+    init(courseId: UUID, courseName: String, largeImage: LargeSatelliteImageMetadata? = nil, images: [SatelliteImageMetadata] = []) {
+        self.courseId = courseId
+        self.courseName = courseName
+        self.largeImage = largeImage
+        self.images = images
+        self.lastUpdated = Date()
+    }
+}

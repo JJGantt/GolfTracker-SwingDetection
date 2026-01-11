@@ -8,6 +8,11 @@ class WatchDataStore: ObservableObject {
     @Published var currentRound: Round?
     @Published var currentHoleIndex: Int = 0
     @Published var pendingStrokes: [Stroke] = []
+    @Published var satelliteModeEnabled: Bool = true {
+        didSet {
+            UserDefaults.standard.set(satelliteModeEnabled, forKey: "satelliteModeEnabled")
+        }
+    }
 
     private let connectivity = WatchConnectivityManager.shared
     private let roundKey = "currentRound"
@@ -43,14 +48,23 @@ class WatchDataStore: ObservableObject {
 
     func addStroke(club: Club, trajectoryHeading: Double? = nil) {
         guard var round = currentRound,
-              let hole = currentHole,
               let location = LocationManager.shared.location else { return }
 
-        let strokesForHole = round.strokes.filter { $0.holeNumber == hole.number }
+        // Determine hole number - use current hole if it exists, otherwise use next hole number
+        let holeNumber: Int
+        if let hole = currentHole {
+            holeNumber = hole.number
+        } else {
+            // No hole defined yet - use the next hole number
+            let course = getCourse(for: round)
+            holeNumber = (course?.holes.count ?? 0) + 1
+        }
+
+        let strokesForHole = round.strokes.filter { $0.holeNumber == holeNumber }
         let strokeNumber = strokesForHole.count + 1
 
         let stroke = Stroke(
-            holeNumber: hole.number,
+            holeNumber: holeNumber,
             strokeNumber: strokeNumber,
             coordinate: location.coordinate,
             club: club,
@@ -227,6 +241,11 @@ class WatchDataStore: ObservableObject {
         }
 
         currentHoleIndex = UserDefaults.standard.integer(forKey: "currentHoleIndex")
+
+        // Load satellite mode setting (defaults to true if not set)
+        if UserDefaults.standard.object(forKey: "satelliteModeEnabled") != nil {
+            satelliteModeEnabled = UserDefaults.standard.bool(forKey: "satelliteModeEnabled")
+        }
     }
 
     // MARK: - Hole Completion

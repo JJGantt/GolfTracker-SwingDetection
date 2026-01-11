@@ -151,6 +151,10 @@ extension WorkoutManager: HKWorkoutSessionDelegate {
             case .stopped:
                 print("⌚ [WorkoutManager] Workout session stopped")
                 self.isWorkoutActive = false
+            case .notStarted:
+                print("⌚ [WorkoutManager] Workout session not started")
+                self.isWorkoutActive = false
+                break
             @unknown default:
                 print("⌚ [WorkoutManager] Unknown workout session state")
             }
