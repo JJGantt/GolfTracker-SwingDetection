@@ -151,7 +151,7 @@ struct CourseEditorView: View {
                     // Only add hole if not tapping near an existing hole
                     if let coordinate = proxy.convert(screenCoord, from: .local),
                        !isTappingNearExistingHole(coordinate: coordinate) {
-                        store.addHole(to: currentCourse, coordinate: coordinate)
+                        store.addHole(to: currentCourse, coordinate: coordinate, par: nil, userLocation: locationManager.location?.coordinate)
                     }
                 }
             }
@@ -173,7 +173,9 @@ struct CourseEditorView: View {
 
     private func addHoleAtCurrentLocation() {
         guard let location = locationManager.location else { return }
-        store.addHole(to: currentCourse, coordinate: location.coordinate)
+        // When adding hole at current location, user and hole are at same spot
+        // Pass user location so crop can be centered properly
+        store.addHole(to: currentCourse, coordinate: location.coordinate, par: nil, userLocation: location.coordinate)
     }
 
     private func moveNearestHoleToCurrentLocation() {

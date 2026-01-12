@@ -703,15 +703,22 @@ struct ActiveRoundView: View {
     private func satelliteImageView(for hole: Hole) -> some View {
         if let round = store.currentRound,
            let userLocation = locationManager.location {
+
             let strokesForHole = round.strokes.filter { $0.holeNumber == hole.number }
             let targetsForHole = round.targets.filter { $0.holeNumber == hole.number }
 
-            // Calculate camera info for satellite view
-            let bearing = calculateBearing(from: userLocation.coordinate, to: hole.coordinate)
+            // Calculate camera info for satellite view - MUST match updateMapPosition behavior
+            // Determine start coordinate based on view mode (ternary to avoid if-else in @ViewBuilder)
+            let startCoord = (isFullViewMode && firstStroke != nil) ? firstStroke!.coordinate : userLocation.coordinate
+
+            let bearing = calculateBearing(from: startCoord, to: hole.coordinate)
             let holeLocation = CLLocation(latitude: hole.coordinate.latitude, longitude: hole.coordinate.longitude)
-            let distance = userLocation.distance(from: holeLocation)
-            let centerLat = userLocation.coordinate.latitude + (hole.coordinate.latitude - userLocation.coordinate.latitude) * 0.45
-            let centerLon = userLocation.coordinate.longitude + (hole.coordinate.longitude - userLocation.coordinate.longitude) * 0.5
+            let startLocation = CLLocation(latitude: startCoord.latitude, longitude: startCoord.longitude)
+            let distance = startLocation.distance(from: holeLocation)
+
+            // Calculate center point - 45%/50% between start and hole (SAME as regular map)
+            let centerLat = startCoord.latitude + (hole.coordinate.latitude - startCoord.latitude) * 0.45
+            let centerLon = startCoord.longitude + (hole.coordinate.longitude - startCoord.longitude) * 0.5
 
             let cameraInfo = MapCameraInfo(
                 centerCoordinate: CLLocationCoordinate2D(latitude: centerLat, longitude: centerLon),
@@ -731,8 +738,13 @@ struct ActiveRoundView: View {
                 heading: locationManager.heading,
                 mapCamera: cameraInfo,
                 isPlacingTarget: isPlacingTarget,
-                isPlacingPenalty: isPlacingPenalty
+                isPlacingPenalty: isPlacingPenalty,
+                onTap: { coordinate in
+                    handleSatelliteViewTap(coordinate: coordinate)
+                }
             )
+        } else {
+            Color.clear
         }
     }
 
@@ -1194,6 +1206,43 @@ struct ActiveRoundView: View {
     }
 
     // MARK: - Actions
+
+    private func handleSatelliteViewTap(coordinate: CLLocationCoordinate2D) {
+        if isPlacingTarget {
+            var coords = targetCoordinatesBinding.wrappedValue
+            let tappedLocation = CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude)
+
+            // Check if tap is within 20 yards (~18 meters) of any existing target
+            let deletionRadius: Double = 18.0 // meters (approximately 20 yards)
+            var deletedIndex: Int?
+
+            for (index, targetCoord) in coords.enumerated() {
+                let targetLocation = CLLocation(latitude: targetCoord.latitude, longitude: targetCoord.longitude)
+                let distance = tappedLocation.distance(from: targetLocation)
+
+                if distance <= deletionRadius {
+                    deletedIndex = index
+                    break
+                }
+            }
+
+            if let indexToDelete = deletedIndex {
+                // Delete the nearby target
+                coords.remove(at: indexToDelete)
+                targetCoordinatesBinding.wrappedValue = coords
+                WKInterfaceDevice.current().play(.click)
+            } else {
+                // Add new target
+                coords.append(coordinate)
+                targetCoordinatesBinding.wrappedValue = coords
+                WKInterfaceDevice.current().play(.success)
+            }
+        } else if isPlacingPenalty {
+            // Update penalty position
+            temporaryPenaltyPosition = coordinate
+            WKInterfaceDevice.current().play(.click)
+        }
+    }
 
     private func captureAimDirection() {
         print("⌚ [AimDirection] Button tapped")

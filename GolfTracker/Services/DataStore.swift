@@ -192,7 +192,7 @@ class DataStore: ObservableObject {
         }
     }
 
-    func addHole(to course: Course, coordinate: CLLocationCoordinate2D, par: Int? = nil) {
+    func addHole(to course: Course, coordinate: CLLocationCoordinate2D, par: Int? = nil, userLocation: CLLocationCoordinate2D? = nil) {
         guard let index = courses.firstIndex(where: { $0.id == course.id }) else { return }
         let holeNumber = courses[index].holes.count + 1
         let hole = Hole(number: holeNumber, coordinate: coordinate, par: par)
@@ -202,7 +202,7 @@ class DataStore: ObservableObject {
         print("📱 [DataStore] Added hole #\(holeNumber) to course \(course.name)")
 
         // Handle satellite imagery for new hole (crop and transfer to Watch)
-        handleNewHoleAdded(courseId: course.id, hole: hole)
+        handleNewHoleAdded(courseId: course.id, hole: hole, userLocation: userLocation)
 
         // Update city if this is the first hole or if city is not set
         if courses[index].city == nil {
@@ -396,7 +396,7 @@ class DataStore: ObservableObject {
         return CLLocationCoordinate2D(latitude: avgLat, longitude: avgLon)
     }
 
-    private func handleNewHoleAdded(courseId: UUID, hole: Hole) {
+    private func handleNewHoleAdded(courseId: UUID, hole: Hole, userLocation: CLLocationCoordinate2D? = nil) {
         let cacheManager = SatelliteCacheManager.shared
 
         let holeMsg = "🆕 New hole detected: #\(hole.number) at (\(hole.coordinate.latitude), \(hole.coordinate.longitude))"
@@ -441,17 +441,17 @@ class DataStore: ObservableObject {
         }
 
         // Crop and transfer this hole's image
-        cropAndTransferSingleHole(courseId: courseId, hole: hole)
+        cropAndTransferSingleHole(courseId: courseId, hole: hole, userLocation: userLocation)
     }
 
-    private func cropAndTransferSingleHole(courseId: UUID, hole: Hole) {
+    private func cropAndTransferSingleHole(courseId: UUID, hole: Hole, userLocation: CLLocationCoordinate2D? = nil) {
         let cacheManager = SatelliteCacheManager.shared
 
         let cropMsg = "📱 [DataStore] Cropping satellite image for hole \(hole.number)"
         print(cropMsg)
         SatelliteLogHandler.shared.log(cropMsg)
 
-        cacheManager.cropImageForHole(courseId: courseId, hole: hole) { result in
+        cacheManager.cropImageForHole(courseId: courseId, hole: hole, userLocation: userLocation) { result in
             switch result {
             case .success(_):
                 let successMsg = "✂️ Successfully cropped hole \(hole.number)"

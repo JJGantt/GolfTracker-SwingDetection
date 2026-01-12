@@ -22,9 +22,9 @@ class SatelliteCacheManager: ObservableObject {
 
     // MARK: - Public API
 
-    /// Download large 3km×3km satellite image for a course
+    /// Download large 2km×2km satellite image for a course
     func downloadLargeSatelliteImage(centerCoordinate: CLLocationCoordinate2D, courseId: UUID, completion: @escaping (Result<LargeSatelliteImageMetadata, Error>) -> Void) {
-        let startMsg = "📡 [SatelliteCache] Starting download - Center: (\(centerCoordinate.latitude), \(centerCoordinate.longitude)), Size: 3000x3000px, Radius: 1500m"
+        let startMsg = "📡 [SatelliteCache] Starting download - Center: (\(centerCoordinate.latitude), \(centerCoordinate.longitude)), Size: 2000x2000px, Radius: 1000m"
         print(startMsg)
         SatelliteLogHandler.shared.log(startMsg)
 
@@ -33,11 +33,17 @@ class SatelliteCacheManager: ObservableObject {
             self.downloadProgress[courseId] = 0.0
         }
 
-        let metadata = LargeSatelliteImageMetadata(center: centerCoordinate)
-
         // Configure snapshotter for 2000×2000 image covering 2km radius
         // (Reduced from 3000×3000 to avoid Apple Maps server errors)
         let radiusMeters: Double = 1000.0 // 2km diameter
+        let pixelSize = 2000
+
+        let metadata = LargeSatelliteImageMetadata(
+            center: centerCoordinate,
+            radiusMeters: radiusMeters,
+            pixelWidth: pixelSize,
+            pixelHeight: pixelSize
+        )
         let regionSpan = MKCoordinateRegion(
             center: centerCoordinate,
             latitudinalMeters: radiusMeters * 2,
@@ -114,7 +120,8 @@ class SatelliteCacheManager: ObservableObject {
     }
 
     /// Crop 2000×2000 image for a specific hole from the large satellite image
-    func cropImageForHole(courseId: UUID, hole: Hole, completion: @escaping (Result<SatelliteImageMetadata, Error>) -> Void) {
+    /// Centers crop on midpoint between userLocation (tee) and hole (pin)
+    func cropImageForHole(courseId: UUID, hole: Hole, userLocation: CLLocationCoordinate2D? = nil, completion: @escaping (Result<SatelliteImageMetadata, Error>) -> Void) {
         guard let cache = getCachedImages(for: courseId),
               let largeImageMetadata = cache.largeImage else {
             completion(.failure(NSError(domain: "SatelliteCache", code: -3, userInfo: [NSLocalizedDescriptionKey: "No large satellite image cached"])))
@@ -130,13 +137,40 @@ class SatelliteCacheManager: ObservableObject {
             return
         }
 
+        // Calculate crop center - use midpoint if userLocation provided (better utilization)
+        let cropCenter: CLLocationCoordinate2D
+        if let userLoc = userLocation {
+            // Center crop at 45%/50% between user (tee) and hole (pin)
+            // This matches the Watch display logic for optimal coverage
+            let centerLat = userLoc.latitude + (hole.coordinate.latitude - userLoc.latitude) * 0.45
+            let centerLon = userLoc.longitude + (hole.coordinate.longitude - userLoc.longitude) * 0.5
+            cropCenter = CLLocationCoordinate2D(latitude: centerLat, longitude: centerLon)
+            print("📡 [SatelliteCache] Cropping at midpoint between user and hole")
+        } else {
+            // Fallback: center on hole (legacy behavior)
+            cropCenter = hole.coordinate
+            print("📡 [SatelliteCache] Cropping at hole coordinate (no user location provided)")
+        }
+
         // Calculate crop rect
         let cropRect = calculateCropRect(
-            holeCoordinate: hole.coordinate,
+            holeCoordinate: cropCenter,
             largeImageCenter: largeImageMetadata.centerCoordinate,
             largeImageSize: CGSize(width: CGFloat(largeImageMetadata.pixelWidth), height: CGFloat(largeImageMetadata.pixelHeight)),
             metersPerPixel: largeImageMetadata.metersPerPixel,
             cropSize: CGSize(width: 2000, height: 2000)
+        )
+
+        // Calculate the actual center coordinate of the cropped region
+        // (may differ from hole coordinate if clamping occurred near edges)
+        let cropCenterX = cropRect.origin.x + cropRect.width / 2
+        let cropCenterY = cropRect.origin.y + cropRect.height / 2
+        let actualCenter = pixelToCoordinate(
+            pixelX: cropCenterX,
+            pixelY: cropCenterY,
+            imageCenter: largeImageMetadata.centerCoordinate,
+            imageSize: CGSize(width: CGFloat(largeImageMetadata.pixelWidth), height: CGFloat(largeImageMetadata.pixelHeight)),
+            metersPerPixel: largeImageMetadata.metersPerPixel
         )
 
         // Crop image
@@ -153,7 +187,8 @@ class SatelliteCacheManager: ObservableObject {
             return
         }
 
-        let metadata = SatelliteImageMetadata(courseId: courseId, holeNumber: hole.number, center: hole.coordinate)
+        // Use actual center of cropped region (accounts for edge clamping)
+        let metadata = SatelliteImageMetadata(courseId: courseId, holeNumber: hole.number, center: actualCenter)
         let imageURL = getImageURL(for: courseId, fileName: metadata.fileName)
 
         do {
@@ -199,6 +234,33 @@ class SatelliteCacheManager: ObservableObject {
     }
 
     // MARK: - Private Helpers
+
+    private func pixelToCoordinate(
+        pixelX: CGFloat,
+        pixelY: CGFloat,
+        imageCenter: CLLocationCoordinate2D,
+        imageSize: CGSize,
+        metersPerPixel: Double
+    ) -> CLLocationCoordinate2D {
+        // Convert pixel offset from image center to meters
+        let pixelOffsetX = pixelX - (imageSize.width / 2)
+        let pixelOffsetY = pixelY - (imageSize.height / 2)
+
+        let metersEast = Double(pixelOffsetX) * metersPerPixel
+        let metersNorth = -Double(pixelOffsetY) * metersPerPixel  // Negative because Y increases downward
+
+        // Convert meters to degrees
+        let metersPerDegreeLat = 111000.0
+        let metersPerDegreeLon = 111000.0 * cos(imageCenter.latitude * .pi / 180.0)
+
+        let deltaLat = metersNorth / metersPerDegreeLat
+        let deltaLon = metersEast / metersPerDegreeLon
+
+        return CLLocationCoordinate2D(
+            latitude: imageCenter.latitude + deltaLat,
+            longitude: imageCenter.longitude + deltaLon
+        )
+    }
 
     private func calculateCropRect(
         holeCoordinate: CLLocationCoordinate2D,

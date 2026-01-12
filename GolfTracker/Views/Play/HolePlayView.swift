@@ -703,8 +703,8 @@ struct HolePlayView: View {
     private func saveTemporaryHole(par: Int) {
         guard let coordinate = temporaryHolePosition else { return }
 
-        // Save the hole with par
-        store.addHole(to: currentCourse, coordinate: coordinate, par: par)
+        // Save the hole with par, passing user location for optimal crop centering
+        store.addHole(to: currentCourse, coordinate: coordinate, par: par, userLocation: locationManager.location?.coordinate)
 
         // Navigate to the newly added hole
         currentHoleIndex = currentCourse.holes.count - 1

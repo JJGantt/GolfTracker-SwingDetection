@@ -198,9 +198,9 @@ struct LargeSatelliteImageMetadata: Codable {
     var fileName: String // "large_satellite.jpg"
     var centerLatitude: Double
     var centerLongitude: Double
-    var radiusMeters: Double // 1500 meters (3km diameter)
-    var pixelWidth: Int // 3000
-    var pixelHeight: Int // 3000
+    var radiusMeters: Double // 1000 meters (2km diameter)
+    var pixelWidth: Int // 2000
+    var pixelHeight: Int // 2000
     var metersPerPixel: Double
     var capturedDate: Date
 
@@ -208,7 +208,7 @@ struct LargeSatelliteImageMetadata: Codable {
         CLLocationCoordinate2D(latitude: centerLatitude, longitude: centerLongitude)
     }
 
-    init(center: CLLocationCoordinate2D, radiusMeters: Double = 1500.0, pixelWidth: Int = 3000, pixelHeight: Int = 3000) {
+    init(center: CLLocationCoordinate2D, radiusMeters: Double = 1000.0, pixelWidth: Int = 2000, pixelHeight: Int = 2000) {
         self.fileName = "large_satellite.jpg"
         self.centerLatitude = center.latitude
         self.centerLongitude = center.longitude
