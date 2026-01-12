@@ -24,7 +24,9 @@ class SatelliteCacheManager: ObservableObject {
 
     /// Download large 3km×3km satellite image for a course
     func downloadLargeSatelliteImage(centerCoordinate: CLLocationCoordinate2D, courseId: UUID, completion: @escaping (Result<LargeSatelliteImageMetadata, Error>) -> Void) {
-        print("📡 [SatelliteCache] Starting download of large satellite image")
+        let startMsg = "📡 [SatelliteCache] Starting download - Center: (\(centerCoordinate.latitude), \(centerCoordinate.longitude)), Size: 3000x3000px, Radius: 1500m"
+        print(startMsg)
+        SatelliteLogHandler.shared.log(startMsg)
 
         DispatchQueue.main.async {
             self.isDownloading[courseId] = true
@@ -33,8 +35,9 @@ class SatelliteCacheManager: ObservableObject {
 
         let metadata = LargeSatelliteImageMetadata(center: centerCoordinate)
 
-        // Configure snapshotter for 3000×3000 image covering 3km radius
-        let radiusMeters: Double = 1500.0 // 3km diameter
+        // Configure snapshotter for 2000×2000 image covering 2km radius
+        // (Reduced from 3000×3000 to avoid Apple Maps server errors)
+        let radiusMeters: Double = 1000.0 // 2km diameter
         let regionSpan = MKCoordinateRegion(
             center: centerCoordinate,
             latitudinalMeters: radiusMeters * 2,
@@ -43,7 +46,7 @@ class SatelliteCacheManager: ObservableObject {
 
         let options = MKMapSnapshotter.Options()
         options.region = regionSpan
-        options.size = CGSize(width: 3000, height: 3000)
+        options.size = CGSize(width: 2000, height: 2000)
         options.mapType = .satellite
         options.showsBuildings = false
         options.pointOfInterestFilter = .excludingAll
@@ -52,6 +55,16 @@ class SatelliteCacheManager: ObservableObject {
 
         snapshotter.start { snapshot, error in
             if let error = error {
+                let errorMsg = "❌ [SatelliteCache] MapKit snapshotter failed: \(error.localizedDescription)"
+                print(errorMsg)
+                SatelliteLogHandler.shared.log(errorMsg)
+
+                if let mkError = error as? MKError {
+                    let mkErrorMsg = "MKError code: \(mkError.code.rawValue) - \(mkError.localizedDescription)"
+                    print(mkErrorMsg)
+                    SatelliteLogHandler.shared.log(mkErrorMsg)
+                }
+
                 DispatchQueue.main.async {
                     self.isDownloading[courseId] = false
                 }

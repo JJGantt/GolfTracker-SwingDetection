@@ -97,6 +97,16 @@ class LocationManager: NSObject, ObservableObject {
             return String(format: "%.2f miles", miles)
         }
     }
+
+    /// Get current location synchronously (uses last known location if available)
+    func getCurrentLocation() -> CLLocation? {
+        // First try the published location (most recent)
+        if let loc = location {
+            return loc
+        }
+        // Fall back to CLLocationManager's last known location
+        return locationManager.location
+    }
 }
 
 extension LocationManager: CLLocationManagerDelegate {

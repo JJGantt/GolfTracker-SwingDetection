@@ -172,7 +172,7 @@ class DataStore: ObservableObject {
     }
 
     func updateCourseCity(_ course: Course) {
-        guard let index = courses.firstIndex(where: { $0.id == course.id }),
+        guard courses.firstIndex(where: { $0.id == course.id }) != nil,
               let coordinate = course.coordinate else { return }
 
         let geocoder = CLGeocoder()
@@ -357,8 +357,8 @@ class DataStore: ObservableObject {
         // Case 3: Course has NO holes yet (first-time user flow)
         if course.holes.isEmpty {
             // Download large image centered on user's current location
-            guard let userLocation = LocationManager.shared.location?.coordinate else {
-                let errorMsg = "📱 [DataStore] Cannot download satellite: no user location and no holes"
+            guard let userLocation = LocationManager.shared.getCurrentLocation()?.coordinate else {
+                let errorMsg = "📱 [DataStore] Cannot download satellite: no user location yet. Will download when first hole is added."
                 print(errorMsg)
                 SatelliteLogHandler.shared.log(errorMsg)
                 return
@@ -404,16 +404,36 @@ class DataStore: ObservableObject {
         SatelliteLogHandler.shared.log(holeMsg)
 
         // Check if large image exists for this course
-        guard let cache = cacheManager.getCachedImages(for: courseId),
-              cache.largeImage != nil else {
-            let errorMsg = "📱 [DataStore] No large satellite image for course, cannot crop hole \(hole.number)"
-            print(errorMsg)
-            SatelliteLogHandler.shared.log(errorMsg)
+        let cache = cacheManager.getCachedImages(for: courseId)
+
+        if cache?.largeImage == nil {
+            // No large image exists yet - this is likely the first hole being added
+            // Try to download the large image now that we have a coordinate
+            let downloadMsg = "📱 [DataStore] No large satellite image yet. Downloading centered on hole #\(hole.number)..."
+            print(downloadMsg)
+            SatelliteLogHandler.shared.log(downloadMsg)
+
+            cacheManager.downloadLargeSatelliteImage(centerCoordinate: hole.coordinate, courseId: courseId) { result in
+                switch result {
+                case .success(_):
+                    let successMsg = "📱 [DataStore] ✅ Large image downloaded. Now cropping hole #\(hole.number)..."
+                    print(successMsg)
+                    SatelliteLogHandler.shared.log(successMsg)
+
+                    // Now crop and transfer this hole
+                    self.cropAndTransferSingleHole(courseId: courseId, hole: hole)
+
+                case .failure(let error):
+                    let errorMsg = "📱 [DataStore] ❌ Failed to download large image: \(error.localizedDescription)"
+                    print(errorMsg)
+                    SatelliteLogHandler.shared.log(errorMsg)
+                }
+            }
             return
         }
 
         // Check if we already have this hole's crop
-        if cache.images.contains(where: { $0.holeNumber == hole.number }) {
+        if let cache = cache, cache.images.contains(where: { $0.holeNumber == hole.number }) {
             let skipMsg = "📱 [DataStore] Hole \(hole.number) already has satellite crop, skipping"
             print(skipMsg)
             SatelliteLogHandler.shared.log(skipMsg)
@@ -421,7 +441,13 @@ class DataStore: ObservableObject {
         }
 
         // Crop and transfer this hole's image
-        let cropMsg = "📱 [DataStore] Cropping satellite image for newly added hole \(hole.number)"
+        cropAndTransferSingleHole(courseId: courseId, hole: hole)
+    }
+
+    private func cropAndTransferSingleHole(courseId: UUID, hole: Hole) {
+        let cacheManager = SatelliteCacheManager.shared
+
+        let cropMsg = "📱 [DataStore] Cropping satellite image for hole \(hole.number)"
         print(cropMsg)
         SatelliteLogHandler.shared.log(cropMsg)
 
@@ -465,9 +491,9 @@ class DataStore: ObservableObject {
             let hole = course.holes[index]
             cacheManager.cropImageForHole(courseId: course.id, hole: hole) { result in
                 switch result {
-                case .success(let metadata):
+                case .success(_):
                     // Transfer this hole's image to Watch
-                    guard let imageData = cacheManager.getImageData(for: course.id, holeNumber: hole.number) else {
+                    guard cacheManager.getImageData(for: course.id, holeNumber: hole.number) != nil else {
                         print("📱 [DataStore] ERROR: No image data for hole \(hole.number)")
                         processHole(at: index + 1)
                         return

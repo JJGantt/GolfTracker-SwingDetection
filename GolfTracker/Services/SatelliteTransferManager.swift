@@ -66,10 +66,13 @@ class SatelliteTransferManager {
 
     private func transferSingleImage(metadata: SatelliteImageMetadata, imageData: Data, completion: @escaping (Bool) -> Void) {
         guard WCSession.default.activationState == .activated else {
-            print("📡 [Transfer] WCSession not activated")
+            print("📡 [Transfer] ❌ WCSession not activated")
             completion(false)
             return
         }
+
+        print("📡 [Transfer] 📤 Preparing to transfer hole \(metadata.holeNumber), courseId: \(metadata.courseId)")
+        print("📡 [Transfer] Image size: \(imageData.count / 1024)KB")
 
         // Use WCSession.transferFile for large data transfers (automatically queued and reliable)
         do {
@@ -79,12 +82,14 @@ class SatelliteTransferManager {
             // Save image to temp file for transfer
             let tempURL = FileManager.default.temporaryDirectory.appendingPathComponent(metadata.fileName)
             try imageData.write(to: tempURL)
+            print("📡 [Transfer] 💾 Wrote temp file: \(tempURL.path)")
 
             WCSession.default.transferFile(tempURL, metadata: metadataDict)
-            print("📡 [Transfer] Queued file transfer for \(metadata.fileName)")
+            print("📡 [Transfer] ✅ Queued file transfer for \(metadata.fileName)")
+            print("📡 [Transfer] Outstanding transfers: \(WCSession.default.outstandingFileTransfers.count)")
             completion(true)
         } catch {
-            print("📡 [Transfer] ERROR: \(error)")
+            print("📡 [Transfer] ❌ ERROR: \(error)")
             completion(false)
         }
     }

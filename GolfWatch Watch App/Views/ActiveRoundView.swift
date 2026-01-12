@@ -8,6 +8,7 @@ struct ActiveRoundView: View {
     @StateObject private var workoutManager = WorkoutManager.shared
     @StateObject private var satelliteCache = WatchSatelliteCacheManager.shared
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.dismiss) private var dismiss
     @State private var selectedClubIndex: Double = 0
     @State private var position: MapCameraPosition = .automatic
     @State private var showingRecordedFeedback = false
@@ -1116,7 +1117,12 @@ struct ActiveRoundView: View {
                 Button(action: {
                     store.satelliteModeEnabled.toggle()
                     WKInterfaceDevice.current().play(.click)
+                    print("⌚ [ActiveRound] Satellite mode toggled to: \(store.satelliteModeEnabled)")
                 }) {
+                    let currentCourseId = store.currentRound?.courseId ?? UUID()
+                    let hasImages = satelliteCache.hasCachedImages(for: currentCourseId)
+                    let _ = print("⌚ [ActiveRound] Button render - CourseID: \(currentCourseId), Has images: \(hasImages)")
+
                     HStack(spacing: 6) {
                         Image(systemName: store.satelliteModeEnabled ? "map.fill" : "map")
                             .font(.system(size: 14, weight: .bold))
@@ -1137,7 +1143,7 @@ struct ActiveRoundView: View {
             }
             .padding(.horizontal, 8)
 
-            // Bottom row: Motion Test
+            // Fourth row: Motion Test
             HStack(spacing: 8) {
                 // Motion Test button
                 Button(action: {
@@ -1154,6 +1160,30 @@ struct ActiveRoundView: View {
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 12)
                     .background(Color.yellow.opacity(0.9))
+                    .cornerRadius(8)
+                }
+                .buttonStyle(PlainButtonStyle())
+            }
+            .padding(.horizontal, 8)
+
+            // Fifth row: Home button
+            HStack(spacing: 8) {
+                Button(action: {
+                    showingActionsSheet = false
+                    dismiss()
+                }) {
+                    HStack(spacing: 6) {
+                        Image(systemName: "house.fill")
+                            .font(.system(size: 14, weight: .bold))
+                        Text("Home")
+                            .font(.system(size: 12, weight: .semibold))
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.8)
+                    }
+                    .foregroundColor(.white)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 12)
+                    .background(Color.gray.opacity(0.9))
                     .cornerRadius(8)
                 }
                 .buttonStyle(PlainButtonStyle())
