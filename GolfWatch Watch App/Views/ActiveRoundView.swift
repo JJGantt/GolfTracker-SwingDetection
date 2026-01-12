@@ -27,6 +27,8 @@ struct ActiveRoundView: View {
     @State private var isPlacingHole = false
     @State private var temporaryHolePosition: CLLocationCoordinate2D?
     @State private var isFullViewMode = false
+    @State private var isCrownScrolling = false
+    @State private var crownScrollTimer: Timer?
     @FocusState private var isMapFocused: Bool
     @FocusState private var isMainViewFocused: Bool
 
@@ -158,18 +160,21 @@ struct ActiveRoundView: View {
     // Calculate the rotation angle for the aim arrow
     @ViewBuilder
     private func clubSelectorOverlay(clubFontSize: CGFloat) -> some View {
+        let animatedFontSize = isCrownScrolling ? clubFontSize * 1.8 : clubFontSize
+
         VStack {
             Spacer()
                 .frame(height: crownOffset)
             HStack {
                 Spacer()
                 Text(selectedClub.rawValue)
-                    .font(.system(size: clubFontSize, weight: .semibold))
+                    .font(.system(size: animatedFontSize, weight: .semibold))
                     .foregroundColor(.white)
                     .padding(.horizontal, 6)
                     .padding(.vertical, 3)
                     .background(Color.black.opacity(0.5))
                     .clipShape(RoundedRectangle(cornerRadius: 5))
+                    .animation(.easeInOut(duration: 0.2), value: isCrownScrolling)
             }
             .padding(.trailing, 2)
             Spacer()
@@ -633,6 +638,8 @@ struct ActiveRoundView: View {
         .onDisappear {
             // Stop swing detection when leaving the view
             swingDetector.stopMonitoring()
+            // Clean up crown scroll timer
+            crownScrollTimer?.invalidate()
             // Note: We don't stop the workout here - it should continue in background
             // Only stop when the round is explicitly ended
         }
@@ -653,6 +660,28 @@ struct ActiveRoundView: View {
         .onChange(of: store.currentHole) { _, _ in
             // Update map when hole changes (also covers new holes added from phone)
             updateMapPosition()
+        }
+        .onChange(of: showingActionsSheet) { _, isShowing in
+            // When actions sheet closes, restore focus to main view
+            if !isShowing {
+                isMainViewFocused = true
+            }
+        }
+        .onChange(of: selectedClubIndex) { _, _ in
+            // Crown is being scrolled - show enlarged text
+            withAnimation(.easeInOut(duration: 0.15)) {
+                isCrownScrolling = true
+            }
+
+            // Cancel existing timer
+            crownScrollTimer?.invalidate()
+
+            // Set new timer to detect when scrolling stops
+            crownScrollTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: false) { _ in
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    isCrownScrolling = false
+                }
+            }
         }
     }
 
@@ -802,63 +831,48 @@ struct ActiveRoundView: View {
                     }
                 }
 
-                // Stroke markers - show all strokes for current hole
-                if let round = store.currentRound {
+                // Stroke markers - show only in full view mode
+                if isFullViewMode, let round = store.currentRound {
                     let strokesForHole = round.strokes.filter { $0.holeNumber == hole.number }
                     ForEach(Array(strokesForHole.enumerated()), id: \.element.id) { index, stroke in
                         Annotation("", coordinate: stroke.coordinate) {
                             ZStack {
-                                if isFullViewMode {
-                                    // Full view mode - white circles
-                                    Circle()
-                                        .fill(stroke.isPenalty ? .orange : .white)
-                                        .frame(width: 12, height: 12)
-                                        .opacity(0.9)
-                                        .shadow(color: .black, radius: 2)
-                                } else {
-                                    // Default mode - numbered circles
-                                    Circle()
-                                        .fill(stroke.isPenalty ? .orange : .white)
-                                        .frame(width: 20, height: 20)
-                                        .opacity(0.85)
-                                        .shadow(color: .black, radius: 2)
+                                // Full view mode - white circles
+                                Circle()
+                                    .fill(stroke.isPenalty ? .orange : .white)
+                                    .frame(width: 12, height: 12)
+                                    .opacity(0.9)
+                                    .shadow(color: .black, radius: 2)
 
-                                    Text("\(stroke.strokeNumber)")
-                                        .font(.system(size: 12, weight: .bold))
-                                        .foregroundColor(stroke.isPenalty ? .white : .black)
-                                }
-
-                                // Show distance in full view mode or for last stroke in default mode
-                                if isFullViewMode || (stroke.id == lastRealStroke?.id) {
-                                    let distance: Int? = {
-                                        if let lastStroke = strokesForHole.last, stroke.id == lastStroke.id {
-                                            // Last stroke - dynamic distance to user
-                                            return distanceToTarget(stroke.coordinate)
-                                        } else if let nextIndex = strokesForHole.firstIndex(where: { $0.id == stroke.id }),
-                                                  nextIndex + 1 < strokesForHole.count {
-                                            // Not last stroke - static distance to next stroke
-                                            let nextStroke = strokesForHole[nextIndex + 1]
-                                            let loc1 = CLLocation(latitude: stroke.coordinate.latitude, longitude: stroke.coordinate.longitude)
-                                            let loc2 = CLLocation(latitude: nextStroke.coordinate.latitude, longitude: nextStroke.coordinate.longitude)
-                                            return Int(loc1.distance(from: loc2) * 1.09361)
-                                        }
-                                        return nil
-                                    }()
-
-                                    if let dist = distance {
-                                        VStack {
-                                            Text("\(dist)")
-                                                .font(.system(size: 10, weight: .bold))
-                                                .foregroundColor(.black)
-                                                .padding(.horizontal, 4)
-                                                .padding(.vertical, 2)
-                                                .background(Color.white.opacity(0.9))
-                                                .clipShape(RoundedRectangle(cornerRadius: 4))
-                                                .offset(y: isFullViewMode ? -12 : -16)
-                                            Spacer()
-                                        }
-                                        .frame(height: isFullViewMode ? 12 : 20)
+                                // Show distance for all strokes in full view mode
+                                let distance: Int? = {
+                                    if let lastStroke = strokesForHole.last, stroke.id == lastStroke.id {
+                                        // Last stroke - dynamic distance to user
+                                        return distanceToTarget(stroke.coordinate)
+                                    } else if let nextIndex = strokesForHole.firstIndex(where: { $0.id == stroke.id }),
+                                              nextIndex + 1 < strokesForHole.count {
+                                        // Not last stroke - static distance to next stroke
+                                        let nextStroke = strokesForHole[nextIndex + 1]
+                                        let loc1 = CLLocation(latitude: stroke.coordinate.latitude, longitude: stroke.coordinate.longitude)
+                                        let loc2 = CLLocation(latitude: nextStroke.coordinate.latitude, longitude: nextStroke.coordinate.longitude)
+                                        return Int(loc1.distance(from: loc2) * 1.09361)
                                     }
+                                    return nil
+                                }()
+
+                                if let dist = distance {
+                                    VStack {
+                                        Text("\(dist)")
+                                            .font(.system(size: 10, weight: .bold))
+                                            .foregroundColor(.black)
+                                            .padding(.horizontal, 4)
+                                            .padding(.vertical, 2)
+                                            .background(Color.white.opacity(0.9))
+                                            .clipShape(RoundedRectangle(cornerRadius: 4))
+                                            .offset(y: -12)
+                                        Spacer()
+                                    }
+                                    .frame(height: 12)
                                 }
                             }
                         }

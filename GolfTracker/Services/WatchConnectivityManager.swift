@@ -187,6 +187,35 @@ extension WatchConnectivityManager: WCSessionDelegate {
         }
     }
 
+    // MARK: - Receiving File Transfers
+
+    func session(_ session: WCSession, didReceive file: WCSessionFile) {
+        #if os(watchOS)
+        print("⌚ [Watch] Received file: \(file.fileURL.lastPathComponent)")
+
+        // Decode metadata
+        guard let metadataJSON = file.metadata?["metadata"] as? Data,
+              let metadata = try? JSONDecoder().decode(SatelliteImageMetadata.self, from: metadataJSON) else {
+            print("⌚ [Watch] ERROR: Failed to decode satellite metadata")
+            return
+        }
+
+        // Read image data from transferred file
+        guard let imageData = try? Data(contentsOf: file.fileURL) else {
+            print("⌚ [Watch] ERROR: Failed to read image data from \(file.fileURL.lastPathComponent)")
+            return
+        }
+
+        print("⌚ [Watch] Successfully read \(imageData.count / 1024)KB for hole \(metadata.holeNumber)")
+
+        // Save to Watch cache
+        WatchSatelliteCacheManager.shared.saveImage(metadata: metadata, imageData: imageData)
+        print("⌚ [Watch] ✅ Saved satellite image for hole \(metadata.holeNumber)")
+        #else
+        print("📱 [iPhone] Received file (unexpected on iPhone): \(file.fileURL.lastPathComponent)")
+        #endif
+    }
+
     // MARK: - Session Management
 
     func session(_ session: WCSession, activationDidCompleteWith activationState: WCSessionActivationState, error: Error?) {

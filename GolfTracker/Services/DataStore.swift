@@ -65,6 +65,12 @@ class DataStore: ObservableObject {
             return
         }
 
+        // Detect new holes before updating
+        let oldHoles = rounds[roundIndex].holes
+        let newHoles = watchRound.holes.filter { newHole in
+            !oldHoles.contains(where: { $0.number == newHole.number })
+        }
+
         // Update everything from Watch
         rounds[roundIndex].holes = watchRound.holes
         rounds[roundIndex].completedHoles = watchRound.completedHoles
@@ -80,6 +86,16 @@ class DataStore: ObservableObject {
 
         saveRounds()
         print("📱 [DataStore] Updated round from Watch: \(watchRound.strokes.count) strokes, \(watchRound.completedHoles.count) holes completed, current hole index: \(watchRound.currentHoleIndex)")
+
+        // Handle satellite imagery for new holes
+        if !newHoles.isEmpty {
+            let watchMsg = "⌚ Detected \(newHoles.count) new hole(s) from Watch sync"
+            print(watchMsg)
+            SatelliteLogHandler.shared.log(watchMsg)
+            for hole in newHoles {
+                handleNewHoleAdded(courseId: watchRound.courseId, hole: hole)
+            }
+        }
     }
 
     private var coursesFileURL: URL {
@@ -183,6 +199,11 @@ class DataStore: ObservableObject {
         courses[index].holes.append(hole)
         saveCourses()
 
+        print("📱 [DataStore] Added hole #\(holeNumber) to course \(course.name)")
+
+        // Handle satellite imagery for new hole (crop and transfer to Watch)
+        handleNewHoleAdded(courseId: course.id, hole: hole)
+
         // Update city if this is the first hole or if city is not set
         if courses[index].city == nil {
             updateCourseCity(courses[index])
@@ -272,6 +293,9 @@ class DataStore: ObservableObject {
         rounds.append(round)
         saveRounds()
 
+        // Start satellite log for this round
+        SatelliteLogHandler.shared.startNewLog(roundId: round.id, courseName: course.name)
+
         print("📱 [DataStore] About to send round to Watch, holes: \(round.holes.count)")
         // Send round to Watch
         WatchConnectivityManager.shared.sendRound(round)
@@ -284,31 +308,145 @@ class DataStore: ObservableObject {
 
     private func handleSatelliteImagesForRound(course: Course) {
         let cacheManager = SatelliteCacheManager.shared
+        let existingCache = cacheManager.getCachedImages(for: course.id)
 
-        // Check if we already have cached crops for this course
-        if let existingCache = cacheManager.getCachedImages(for: course.id),
-           existingCache.images.count == course.holes.count {
-            // We have all holes cached - transfer immediately
-            print("📱 [DataStore] Using cached satellite images for \(course.name)")
+        // Case 1: Course has holes AND we have all crops cached
+        if !course.holes.isEmpty,
+           let cache = existingCache,
+           cache.images.count == course.holes.count {
+            let msg = "📱 [DataStore] All \(course.holes.count) holes already cached, transferring to Watch"
+            print(msg)
+            SatelliteLogHandler.shared.log(msg)
             SatelliteTransferManager.shared.transferImages(for: course.id) { success in
                 if success {
-                    print("📱 [DataStore] Successfully transferred cached images to Watch")
+                    let successMsg = "📱 [DataStore] ✅ Successfully transferred cached images"
+                    print(successMsg)
+                    SatelliteLogHandler.shared.log(successMsg)
                 }
             }
-        } else {
-            // First round or incomplete cache - download large image
-            print("📱 [DataStore] Downloading large satellite image for \(course.name)")
-            let startLocation = course.holes.first?.coordinate ?? CLLocationCoordinate2D(latitude: 0, longitude: 0)
+            return
+        }
 
-            cacheManager.downloadLargeSatelliteImage(centerCoordinate: startLocation, courseId: course.id) { result in
+        // Case 2: Course has holes BUT incomplete/missing cache
+        if !course.holes.isEmpty {
+            let msg = "📱 [DataStore] Course has \(course.holes.count) holes but incomplete cache, downloading..."
+            print(msg)
+            SatelliteLogHandler.shared.log(msg)
+
+            let centerCoordinate = calculateCourseCentroid(course: course) ?? course.holes.first!.coordinate
+            let centroidMsg = "📍 Center coordinate: (\(centerCoordinate.latitude), \(centerCoordinate.longitude))"
+            print(centroidMsg)
+            SatelliteLogHandler.shared.log(centroidMsg)
+
+            cacheManager.downloadLargeSatelliteImage(centerCoordinate: centerCoordinate, courseId: course.id) { result in
                 switch result {
-                case .success(let metadata):
-                    print("📱 [DataStore] Large satellite image downloaded, cropping per-hole images")
-                    // Crop and transfer images for each hole
+                case .success(_):
+                    let successMsg = "📱 [DataStore] Large image downloaded, cropping all holes..."
+                    print(successMsg)
+                    SatelliteLogHandler.shared.log(successMsg)
                     self.cropAndTransferHoleImages(for: course)
                 case .failure(let error):
-                    print("📱 [DataStore] Failed to download satellite: \(error)")
+                    let errorMsg = "📱 [DataStore] ❌ Download failed: \(error.localizedDescription)"
+                    print(errorMsg)
+                    SatelliteLogHandler.shared.log(errorMsg)
                 }
+            }
+            return
+        }
+
+        // Case 3: Course has NO holes yet (first-time user flow)
+        if course.holes.isEmpty {
+            // Download large image centered on user's current location
+            guard let userLocation = LocationManager.shared.location?.coordinate else {
+                let errorMsg = "📱 [DataStore] Cannot download satellite: no user location and no holes"
+                print(errorMsg)
+                SatelliteLogHandler.shared.log(errorMsg)
+                return
+            }
+
+            let msg = "📱 [DataStore] Downloading satellite centered on user location (course has no holes yet)"
+            print(msg)
+            SatelliteLogHandler.shared.log(msg)
+
+            let locationMsg = "📍 User location: (\(userLocation.latitude), \(userLocation.longitude))"
+            print(locationMsg)
+            SatelliteLogHandler.shared.log(locationMsg)
+
+            cacheManager.downloadLargeSatelliteImage(centerCoordinate: userLocation, courseId: course.id) { result in
+                switch result {
+                case .success(_):
+                    let successMsg = "📱 [DataStore] ✅ Large image ready, waiting for holes to be added..."
+                    print(successMsg)
+                    SatelliteLogHandler.shared.log(successMsg)
+                    // Don't crop anything yet - holes will be added later
+                case .failure(let error):
+                    let errorMsg = "📱 [DataStore] ❌ Download failed: \(error.localizedDescription)"
+                    print(errorMsg)
+                    SatelliteLogHandler.shared.log(errorMsg)
+                }
+            }
+            return
+        }
+    }
+
+    private func calculateCourseCentroid(course: Course) -> CLLocationCoordinate2D? {
+        guard !course.holes.isEmpty else { return nil }
+        let avgLat = course.holes.map { $0.coordinate.latitude }.reduce(0, +) / Double(course.holes.count)
+        let avgLon = course.holes.map { $0.coordinate.longitude }.reduce(0, +) / Double(course.holes.count)
+        return CLLocationCoordinate2D(latitude: avgLat, longitude: avgLon)
+    }
+
+    private func handleNewHoleAdded(courseId: UUID, hole: Hole) {
+        let cacheManager = SatelliteCacheManager.shared
+
+        let holeMsg = "🆕 New hole detected: #\(hole.number) at (\(hole.coordinate.latitude), \(hole.coordinate.longitude))"
+        print(holeMsg)
+        SatelliteLogHandler.shared.log(holeMsg)
+
+        // Check if large image exists for this course
+        guard let cache = cacheManager.getCachedImages(for: courseId),
+              cache.largeImage != nil else {
+            let errorMsg = "📱 [DataStore] No large satellite image for course, cannot crop hole \(hole.number)"
+            print(errorMsg)
+            SatelliteLogHandler.shared.log(errorMsg)
+            return
+        }
+
+        // Check if we already have this hole's crop
+        if cache.images.contains(where: { $0.holeNumber == hole.number }) {
+            let skipMsg = "📱 [DataStore] Hole \(hole.number) already has satellite crop, skipping"
+            print(skipMsg)
+            SatelliteLogHandler.shared.log(skipMsg)
+            return
+        }
+
+        // Crop and transfer this hole's image
+        let cropMsg = "📱 [DataStore] Cropping satellite image for newly added hole \(hole.number)"
+        print(cropMsg)
+        SatelliteLogHandler.shared.log(cropMsg)
+
+        cacheManager.cropImageForHole(courseId: courseId, hole: hole) { result in
+            switch result {
+            case .success(_):
+                let successMsg = "✂️ Successfully cropped hole \(hole.number)"
+                print(successMsg)
+                SatelliteLogHandler.shared.log(successMsg)
+
+                SatelliteTransferManager.shared.transferHoleImage(courseId: courseId, holeNumber: hole.number) { success in
+                    if success {
+                        let transferMsg = "📱 [DataStore] ✅ Transferred satellite for hole \(hole.number)"
+                        print(transferMsg)
+                        SatelliteLogHandler.shared.log(transferMsg)
+                    } else {
+                        let failMsg = "📱 [DataStore] ⚠️ Failed to transfer satellite for hole \(hole.number)"
+                        print(failMsg)
+                        SatelliteLogHandler.shared.log(failMsg)
+                    }
+                }
+            case .failure(let error):
+                let errorMsg = "📱 [DataStore] ❌ Failed to crop hole \(hole.number): \(error.localizedDescription)"
+                print(errorMsg)
+                SatelliteLogHandler.shared.log(errorMsg)
             }
         }
     }
