@@ -7,7 +7,7 @@ enum TestFileType {
 
 struct TestFilesView: View {
     @EnvironmentObject var motionDataHandler: MotionDataHandler
-    @EnvironmentObject var satelliteLogHandler: SatelliteLogHandler
+    @ObservedObject var satelliteLogHandler = SatelliteLogHandler.shared
     @State private var selectedFiles: Set<UUID> = []
     @State private var showingShareSheet = false
     @State private var filesToShare: [URL] = []
@@ -36,6 +36,15 @@ struct TestFilesView: View {
                     selectedFiles.removeAll()
                 }
 
+                // Debug button for satellite logs
+                if selectedType == .satellite {
+                    Button("Create Test Log") {
+                        createTestLog()
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .padding(.bottom, 8)
+                }
+
                 if selectedType == .motion {
                     motionTestsView
                 } else {
@@ -47,6 +56,14 @@ struct TestFilesView: View {
                 ShareSheet(items: filesToShare)
             }
         }
+    }
+
+    private func createTestLog() {
+        let testRoundId = UUID()
+        satelliteLogHandler.startNewLog(roundId: testRoundId, courseName: "Test Course")
+        satelliteLogHandler.log("This is a test log entry")
+        satelliteLogHandler.log("Checking if logging system works")
+        satelliteLogHandler.log("Current log files count: \(satelliteLogHandler.logFiles.count)")
     }
 
     @ViewBuilder

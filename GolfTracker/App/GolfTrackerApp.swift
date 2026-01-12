@@ -11,7 +11,6 @@ import SwiftUI
 struct GolfTrackerApp: App {
     @StateObject private var store = DataStore()
     @StateObject private var motionDataHandler = MotionDataHandler()
-    @StateObject private var satelliteLogHandler = SatelliteLogHandler()
 
     init() {
         print("🚀🚀🚀 APP LAUNCHED - GolfTracker is starting! 🚀🚀🚀")
@@ -22,7 +21,6 @@ struct GolfTrackerApp: App {
             ContentView()
                 .environmentObject(store)
                 .environmentObject(motionDataHandler)
-                .environmentObject(satelliteLogHandler)
         }
     }
 }
@@ -171,11 +169,15 @@ class SatelliteLogHandler: ObservableObject {
     }
 
     func startNewLog(roundId: UUID, courseName: String) {
+        print("🚀🚀🚀 [SatelliteLogHandler] startNewLog called for \(courseName)")
+
         // Create new log file for this round
         let fileName = "satellite_log_\(Date().timeIntervalSince1970).txt"
         let fileURL = logFilesDirectory.appendingPathComponent(fileName)
         currentLogFile = fileURL
         currentRoundId = roundId
+
+        print("🚀 [SatelliteLogHandler] Log file path: \(fileURL.path)")
 
         // Write header
         let header = """
@@ -190,7 +192,12 @@ class SatelliteLogHandler: ObservableObject {
 
         """
 
-        try? header.write(to: fileURL, atomically: true, encoding: .utf8)
+        do {
+            try header.write(to: fileURL, atomically: true, encoding: .utf8)
+            print("🚀 [SatelliteLogHandler] Successfully wrote log file header")
+        } catch {
+            print("❌ [SatelliteLogHandler] Failed to write log file: \(error)")
+        }
 
         // Create metadata entry
         let logFile = SatelliteLogFile(
@@ -202,27 +209,40 @@ class SatelliteLogHandler: ObservableObject {
         )
 
         logFiles.append(logFile)
+        print("🚀 [SatelliteLogHandler] Added to logFiles array, now have \(logFiles.count) logs")
+
         saveLogFiles()
+        print("🚀 [SatelliteLogHandler] Saved log files metadata")
 
         log("📱 Satellite log started for round on \(courseName)")
     }
 
     func log(_ message: String) {
-        guard let fileURL = currentLogFile else { return }
+        guard let fileURL = currentLogFile else {
+            print("❌ [SatelliteLogHandler] log() called but currentLogFile is nil!")
+            return
+        }
 
         let timestamp = DateFormatter.localizedString(from: Date(), dateStyle: .none, timeStyle: .medium)
         let logEntry = "[\(timestamp)] \(message)\n"
 
         // Append to file
-        if let fileHandle = try? FileHandle(forWritingTo: fileURL) {
-            fileHandle.seekToEndOfFile()
-            if let data = logEntry.data(using: .utf8) {
-                fileHandle.write(data)
+        do {
+            if let fileHandle = try? FileHandle(forWritingTo: fileURL) {
+                fileHandle.seekToEndOfFile()
+                if let data = logEntry.data(using: .utf8) {
+                    fileHandle.write(data)
+                }
+                fileHandle.closeFile()
+            } else {
+                // File doesn't exist, create it with this entry
+                try logEntry.write(to: fileURL, atomically: true, encoding: .utf8)
             }
-            fileHandle.closeFile()
+        } catch {
+            print("❌ [SatelliteLogHandler] Failed to write log entry: \(error)")
         }
 
-        // Also print to console
+        // Also print to console for debugging in Xcode
         print(message)
     }
 

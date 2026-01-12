@@ -357,6 +357,30 @@ class WatchDataStore: ObservableObject {
         print("⌚ [WatchDataStore] Navigated to hole \(prevIndex + 1)")
     }
 
+    // MARK: - Quick Start Round
+
+    func startQuickRound() {
+        // Create a new round with "Quick Start" course
+        let quickStartCourseId = UUID()
+        let newRound = Round(
+            courseId: quickStartCourseId,
+            courseName: "Quick Start",
+            holes: [] // Empty - user will add holes as they play
+        )
+
+        // Set as current round
+        currentRound = newRound
+        currentHoleIndex = 0
+
+        // Save locally
+        saveToStorage()
+
+        // Sync to iPhone
+        WatchConnectivityManager.shared.sendRound(newRound)
+
+        print("⌚ [WatchDataStore] Started Quick Start round")
+    }
+
     // MARK: - Helpers
 
     func strokeCount(for hole: Hole) -> Int {

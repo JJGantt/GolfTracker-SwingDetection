@@ -17,6 +17,7 @@
 		6A62981D2F0A09F900303CB6 /* MapCalculations.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6A62981B2F0A09F900303CB6 /* MapCalculations.swift */; };
 		6A6298202F0A0A3700303CB6 /* StrokeDetailsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6A62981F2F0A0A3700303CB6 /* StrokeDetailsView.swift */; };
 		6A6298212F0A0A3700303CB6 /* FloatingButtonsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6A62981E2F0A0A3700303CB6 /* FloatingButtonsView.swift */; };
+		6A7A65B12F147F4E00A58C9D /* WatchHomeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6A7A65B02F147F4E00A58C9D /* WatchHomeView.swift */; };
 		6AB83CD22EDFADD200CE341C /* GolfTrackerApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6AB83CD12EDFADD200CE341C /* GolfTrackerApp.swift */; };
 		6AB83CD42EDFADD200CE341C /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6AB83CD32EDFADD200CE341C /* ContentView.swift */; };
 		6AB83CD62EDFADD400CE341C /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 6AB83CD52EDFADD400CE341C /* Assets.xcassets */; };
@@ -87,6 +88,7 @@
 		6A62981B2F0A09F900303CB6 /* MapCalculations.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MapCalculations.swift; sourceTree = "<group>"; };
 		6A62981E2F0A0A3700303CB6 /* FloatingButtonsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FloatingButtonsView.swift; sourceTree = "<group>"; };
 		6A62981F2F0A0A3700303CB6 /* StrokeDetailsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StrokeDetailsView.swift; sourceTree = "<group>"; };
+		6A7A65B02F147F4E00A58C9D /* WatchHomeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchHomeView.swift; sourceTree = "<group>"; };
 		6AB83CCE2EDFADD200CE341C /* GolfTracker.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = GolfTracker.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		6AB83CD12EDFADD200CE341C /* GolfTrackerApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GolfTrackerApp.swift; sourceTree = "<group>"; };
 		6AB83CD32EDFADD200CE341C /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
@@ -325,6 +327,7 @@
 		6AD5EAC52EE3B7CF00DDDCF0 /* Views */ = {
 			isa = PBXGroup;
 			children = (
+				6A7A65B02F147F4E00A58C9D /* WatchHomeView.swift */,
 				6AC7D0B62F0DC2F7005D4932 /* SatelliteImageView.swift */,
 				6A27A5732EF7ABA000D64047 /* AddHoleNavigationView.swift */,
 				6A3253AA2EF2E9C80022829E /* EditHoleView.swift */,
@@ -476,6 +479,7 @@
 				6A27A5752F0C000000000001 /* SwingDetectionManager.swift in Sources */,
 				6A27A5772F0C000000000003 /* WorkoutManager.swift in Sources */,
 				6AD5EACA2EE3B82E00DDDCF0 /* LocationManager.swift in Sources */,
+				6A7A65B12F147F4E00A58C9D /* WatchHomeView.swift in Sources */,
 				6A3253AB2EF2E9C80022829E /* EditHoleView.swift in Sources */,
 				FAEE76F6916D6EF479166310 /* AccelTestView.swift in Sources */,
 				6AD5EAC72EE3B7EB00DDDCF0 /* ActiveRoundView.swift in Sources */,
