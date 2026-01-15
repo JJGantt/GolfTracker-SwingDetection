@@ -13,6 +13,11 @@ struct ContentView: View {
 
     var body: some View {
         TabView {
+            HomeView()
+                .tabItem {
+                    Label("Home", systemImage: "house")
+                }
+
             CourseListView(store: store)
                 .tabItem {
                     Label("Courses", systemImage: "map")

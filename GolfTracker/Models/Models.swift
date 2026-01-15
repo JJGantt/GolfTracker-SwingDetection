@@ -1,24 +1,66 @@
 import Foundation
 import CoreLocation
 
-enum Club: String, Codable, CaseIterable {
-    case drive = "Drive"
-    case hybrid = "Hyb"
-    case threeIron = "3i"
-    case fourIron = "4i"
-    case fiveIron = "5i"
-    case sixIron = "6i"
-    case sevenIron = "7i"
-    case eightIron = "8i"
-    case nineIron = "9i"
-    case pitchingWedge = "PW"
-    case attackWedge = "A"
-    case pitch = "Pitch"
-    case chip = "Chip"
-    case putter = "Put"
-    case sand = "Sand"
-    case partial = "Partial"
-    case punch = "Punch"
+// MARK: - Club Models
+
+struct ClubTypeData: Identifiable, Codable, Hashable {
+    var id = UUID()
+    var name: String              // Display name (e.g., "Driver", "7-Iron", "Sand Wedge")
+    var isDefault: Bool           // Default types can't be deleted
+
+    static func defaultClubTypes() -> [ClubTypeData] {
+        return [
+            ClubTypeData(name: "Driver", isDefault: true),
+            ClubTypeData(name: "Hybrid", isDefault: true),
+            ClubTypeData(name: "3-Iron", isDefault: true),
+            ClubTypeData(name: "4-Iron", isDefault: true),
+            ClubTypeData(name: "5-Iron", isDefault: true),
+            ClubTypeData(name: "6-Iron", isDefault: true),
+            ClubTypeData(name: "7-Iron", isDefault: true),
+            ClubTypeData(name: "8-Iron", isDefault: true),
+            ClubTypeData(name: "9-Iron", isDefault: true),
+            ClubTypeData(name: "Wedge", isDefault: true),
+            ClubTypeData(name: "Putter", isDefault: true)
+        ]
+    }
+}
+
+struct ClubData: Identifiable, Codable, Hashable {
+    var id = UUID()
+    var name: String              // Display name (e.g., "3-Iron", "My TaylorMade 7-Iron")
+    var clubTypeId: UUID          // For stats grouping - references ClubTypeData
+    var isDefault: Bool           // Default clubs can't be deleted
+
+}
+
+struct TypeSelection: Codable, Hashable {
+    var typeId: UUID
+    var activeClubId: UUID?       // Which club of this type is active (nil if none selected)
+}
+
+struct ClubSet: Identifiable, Codable, Hashable {
+    var id = UUID()
+    var name: String              // e.g., "My Main Bag"
+    var typeSelections: [TypeSelection]  // Types in this set with their active club
+    var isActive: Bool            // Currently selected set
+    var dateCreated: Date
+    var dateModified: Date
+
+    init(name: String, typeSelections: [TypeSelection] = [], isActive: Bool = false) {
+        self.name = name
+        self.typeSelections = typeSelections
+        self.isActive = isActive
+        self.dateCreated = Date()
+        self.dateModified = Date()
+    }
+
+    func getActiveClubId(for typeId: UUID) -> UUID? {
+        typeSelections.first(where: { $0.typeId == typeId })?.activeClubId
+    }
+
+    func hasType(_ typeId: UUID) -> Bool {
+        typeSelections.contains(where: { $0.typeId == typeId })
+    }
 }
 
 
@@ -86,7 +128,7 @@ struct Stroke: Identifiable, Codable, Hashable {
     var strokeNumber: Int
     var latitude: Double
     var longitude: Double
-    var club: Club
+    var clubId: UUID              // References ClubData.id
     var timestamp: Date
     var direction: StrokeDirection?
     var landingLatitude: Double?
@@ -104,12 +146,12 @@ struct Stroke: Identifiable, Codable, Hashable {
         return CLLocationCoordinate2D(latitude: lat, longitude: lon)
     }
 
-    init(holeNumber: Int, strokeNumber: Int, coordinate: CLLocationCoordinate2D, club: Club, isPenalty: Bool = false, trajectoryHeading: Double? = nil, acceleration: Double? = nil) {
+    init(holeNumber: Int, strokeNumber: Int, coordinate: CLLocationCoordinate2D, clubId: UUID, isPenalty: Bool = false, trajectoryHeading: Double? = nil, acceleration: Double? = nil) {
         self.holeNumber = holeNumber
         self.strokeNumber = strokeNumber
         self.latitude = coordinate.latitude
         self.longitude = coordinate.longitude
-        self.club = club
+        self.clubId = clubId
         self.timestamp = Date()
         self.isPenalty = isPenalty
         self.trajectoryHeading = trajectoryHeading

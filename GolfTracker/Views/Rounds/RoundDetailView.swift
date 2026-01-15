@@ -102,6 +102,7 @@ struct RoundDetailView: View {
                         HoleScoreRow(
                             hole: hole,
                             strokes: holeData.strokes,
+                            store: store,
                             onLongPress: {
                                 selectedHoleNumber = hole.number
                                 showingHole = true
@@ -149,6 +150,7 @@ struct RoundDetailView: View {
 struct HoleScoreRow: View {
     let hole: Hole
     let strokes: [Stroke]
+    let store: DataStore
     let onLongPress: () -> Void
     @State private var isExpanded = false
 
@@ -190,7 +192,7 @@ struct HoleScoreRow: View {
             if isExpanded && !strokes.isEmpty {
                 VStack(alignment: .leading, spacing: 8) {
                     ForEach(strokes) { stroke in
-                        StrokeDetailRow(stroke: stroke)
+                        StrokeDetailRow(stroke: stroke, store: store)
                     }
                 }
                 .padding(.leading, 16)
@@ -211,6 +213,7 @@ struct HoleScoreRow: View {
 
 struct StrokeDetailRow: View {
     let stroke: Stroke
+    let store: DataStore
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -221,7 +224,7 @@ struct StrokeDetailRow: View {
 
                 Spacer()
 
-                Text(stroke.club.rawValue)
+                Text(store.getClub(byId: stroke.clubId)?.name ?? "Unknown")
                     .font(.caption)
                     .padding(.horizontal, 8)
                     .padding(.vertical, 4)

@@ -4,16 +4,59 @@ import CoreLocation
 class DataStore: ObservableObject {
     @Published var courses: [Course] = []
     @Published var rounds: [Round] = []
+    @Published var clubTypes: [ClubTypeData] = []
+    @Published var availableClubs: [ClubData] = []
+    @Published var clubSets: [ClubSet] = []
     @Published var errorMessage: String?
 
     private let coursesFileName = "courses.json"
     private let roundsFileName = "rounds.json"
+    private let clubTypesFileName = "clubTypes.json"
+    private let clubsFileName = "clubs.json"
+    private let clubSetsFileName = "clubSets.json"
 
     init() {
         print("🏌️ DataStore initialized!")
         loadCourses()
         loadRounds()
-        print("🏌️ DataStore loaded \(courses.count) courses and \(rounds.count) rounds")
+        loadClubTypes()
+        loadClubs()
+        loadClubSets()
+        print("🏌️ DataStore loaded \(courses.count) courses, \(rounds.count) rounds, \(clubTypes.count) club types, \(availableClubs.count) clubs, and \(clubSets.count) club sets")
+
+        // Initialize with default club types if needed
+        if clubTypes.isEmpty {
+            clubTypes = ClubTypeData.defaultClubTypes()
+            saveClubTypes()
+            print("🏌️ Initialized with \(clubTypes.count) default club types")
+        }
+
+        // Initialize with default clubs if needed
+        if availableClubs.isEmpty {
+            // Create default clubs using the club type IDs
+            for clubType in clubTypes {
+                let club = ClubData(name: "Default", clubTypeId: clubType.id, isDefault: true)
+                availableClubs.append(club)
+            }
+            saveClubs()
+            print("🏌️ Initialized with \(availableClubs.count) default clubs")
+        }
+
+        // Create default club set if no sets exist
+        if clubSets.isEmpty && !clubTypes.isEmpty {
+            // Create type selections with default clubs
+            let typeSelections = clubTypes.map { clubType -> TypeSelection in
+                let defaultClub = availableClubs.first(where: { $0.clubTypeId == clubType.id })
+                return TypeSelection(typeId: clubType.id, activeClubId: defaultClub?.id)
+            }
+            let defaultSet = ClubSet(
+                name: "Default Set",
+                typeSelections: typeSelections,
+                isActive: true
+            )
+            clubSets.append(defaultSet)
+            saveClubSets()
+        }
 
         // Set up Watch Connectivity callbacks
         setupWatchConnectivity()
@@ -28,6 +71,15 @@ class DataStore: ObservableObject {
         WatchConnectivityManager.shared.onReceiveRound = { [weak self] round in
             print("📱 [DataStore] Received round update from Watch: \(round.courseName)")
             self?.updateRoundFromWatch(round)
+        }
+
+        // Send clubs and club types to Watch on startup
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
+            guard let self = self else { return }
+            print("📱 [DataStore] Sending \(self.availableClubs.count) clubs to Watch on startup")
+            WatchConnectivityManager.shared.sendClubs(self.availableClubs)
+            print("📱 [DataStore] Sending \(self.clubTypes.count) club types to Watch on startup")
+            WatchConnectivityManager.shared.sendClubTypes(self.clubTypes)
         }
     }
 
@@ -107,6 +159,21 @@ class DataStore: ObservableObject {
         FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
             .appendingPathComponent(roundsFileName)
     }
+
+    private var clubTypesFileURL: URL {
+        FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent(clubTypesFileName)
+    }
+
+    private var clubsFileURL: URL {
+        FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent(clubsFileName)
+    }
+
+    private var clubSetsFileURL: URL {
+        FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent(clubSetsFileName)
+    }
     
     func loadCourses() {
         guard FileManager.default.fileExists(atPath: coursesFileURL.path) else { return }
@@ -149,6 +216,76 @@ class DataStore: ObservableObject {
             errorMessage = nil
         } catch {
             errorMessage = "Failed to save rounds: \(error.localizedDescription)"
+        }
+    }
+
+    func loadClubTypes() {
+        guard FileManager.default.fileExists(atPath: clubTypesFileURL.path) else { return }
+
+        do {
+            let data = try Data(contentsOf: clubTypesFileURL)
+            clubTypes = try JSONDecoder().decode([ClubTypeData].self, from: data)
+            errorMessage = nil
+        } catch {
+            errorMessage = "Failed to load club types: \(error.localizedDescription)"
+        }
+    }
+
+    func saveClubTypes() {
+        do {
+            let data = try JSONEncoder().encode(clubTypes)
+            try data.write(to: clubTypesFileURL)
+            errorMessage = nil
+            // Sync club types to Watch
+            WatchConnectivityManager.shared.sendClubTypes(clubTypes)
+        } catch {
+            errorMessage = "Failed to save club types: \(error.localizedDescription)"
+        }
+    }
+
+    func loadClubs() {
+        guard FileManager.default.fileExists(atPath: clubsFileURL.path) else { return }
+
+        do {
+            let data = try Data(contentsOf: clubsFileURL)
+            availableClubs = try JSONDecoder().decode([ClubData].self, from: data)
+            errorMessage = nil
+        } catch {
+            errorMessage = "Failed to load clubs: \(error.localizedDescription)"
+        }
+    }
+
+    func loadClubSets() {
+        guard FileManager.default.fileExists(atPath: clubSetsFileURL.path) else { return }
+
+        do {
+            let data = try Data(contentsOf: clubSetsFileURL)
+            clubSets = try JSONDecoder().decode([ClubSet].self, from: data)
+            errorMessage = nil
+        } catch {
+            errorMessage = "Failed to load club sets: \(error.localizedDescription)"
+        }
+    }
+
+    func saveClubs() {
+        do {
+            let data = try JSONEncoder().encode(availableClubs)
+            try data.write(to: clubsFileURL)
+            errorMessage = nil
+            // Sync clubs to Watch
+            WatchConnectivityManager.shared.sendClubs(availableClubs)
+        } catch {
+            errorMessage = "Failed to save clubs: \(error.localizedDescription)"
+        }
+    }
+
+    func saveClubSets() {
+        do {
+            let data = try JSONEncoder().encode(clubSets)
+            try data.write(to: clubSetsFileURL)
+            errorMessage = nil
+        } catch {
+            errorMessage = "Failed to save club sets: \(error.localizedDescription)"
         }
     }
     
@@ -518,13 +655,13 @@ class DataStore: ObservableObject {
         processHole(at: 0)
     }
 
-    func addStroke(to round: Round, holeNumber: Int, coordinate: CLLocationCoordinate2D, club: Club, trajectoryHeading: Double? = nil) {
+    func addStroke(to round: Round, holeNumber: Int, coordinate: CLLocationCoordinate2D, clubId: UUID, trajectoryHeading: Double? = nil) {
         guard let roundIndex = rounds.firstIndex(where: { $0.id == round.id }) else { return }
 
         let strokesForHole = rounds[roundIndex].strokes.filter { $0.holeNumber == holeNumber }
         let strokeNumber = strokesForHole.count + 1
 
-        let stroke = Stroke(holeNumber: holeNumber, strokeNumber: strokeNumber, coordinate: coordinate, club: club, trajectoryHeading: trajectoryHeading)
+        let stroke = Stroke(holeNumber: holeNumber, strokeNumber: strokeNumber, coordinate: coordinate, clubId: clubId, trajectoryHeading: trajectoryHeading)
         rounds[roundIndex].strokes.append(stroke)
         saveRounds()
 
@@ -589,13 +726,13 @@ class DataStore: ObservableObject {
         WatchConnectivityManager.shared.sendRound(rounds[roundIndex])
     }
 
-    func addPenaltyStroke(to round: Round, holeNumber: Int, coordinate: CLLocationCoordinate2D, club: Club) {
+    func addPenaltyStroke(to round: Round, holeNumber: Int, coordinate: CLLocationCoordinate2D, clubId: UUID) {
         guard let roundIndex = rounds.firstIndex(where: { $0.id == round.id }) else { return }
 
         let strokesForHole = rounds[roundIndex].strokes.filter { $0.holeNumber == holeNumber }
         let strokeNumber = strokesForHole.count + 1
 
-        let stroke = Stroke(holeNumber: holeNumber, strokeNumber: strokeNumber, coordinate: coordinate, club: club, isPenalty: true)
+        let stroke = Stroke(holeNumber: holeNumber, strokeNumber: strokeNumber, coordinate: coordinate, clubId: clubId, isPenalty: true)
         rounds[roundIndex].strokes.append(stroke)
         saveRounds()
 
@@ -669,5 +806,156 @@ class DataStore: ObservableObject {
 
         // Sync to Watch
         WatchConnectivityManager.shared.sendRound(rounds[roundIndex])
+    }
+
+    // MARK: - Club Type Management
+
+    func addClubType(name: String) {
+        let clubType = ClubTypeData(name: name, isDefault: false)
+        clubTypes.append(clubType)
+        saveClubTypes()
+        print("🏌️ Added club type: \(name), total types: \(clubTypes.count)")
+    }
+
+    func deleteClubType(_ clubType: ClubTypeData) {
+        // Don't allow deleting default types
+        guard !clubType.isDefault else { return }
+
+        clubTypes.removeAll { $0.id == clubType.id }
+
+        // Remove all clubs that use this type
+        availableClubs.removeAll { $0.clubTypeId == clubType.id }
+
+        saveClubTypes()
+        saveClubs()
+    }
+
+    func getClubType(byId id: UUID) -> ClubTypeData? {
+        return clubTypes.first { $0.id == id }
+    }
+
+    func updateClubType(_ clubType: ClubTypeData, name: String) {
+        guard let index = clubTypes.firstIndex(where: { $0.id == clubType.id }) else { return }
+        clubTypes[index].name = name
+        saveClubTypes()
+    }
+
+    func moveClubType(from source: IndexSet, to destination: Int) {
+        clubTypes.move(fromOffsets: source, toOffset: destination)
+        saveClubTypes()
+    }
+
+    // MARK: - Club Management
+
+    func addCustomClub(name: String, clubTypeId: UUID) {
+        let club = ClubData(name: name, clubTypeId: clubTypeId, isDefault: false)
+        availableClubs.append(club)
+        saveClubs()
+    }
+
+    func addCustomClubReturningId(name: String, clubTypeId: UUID) -> UUID {
+        let club = ClubData(name: name, clubTypeId: clubTypeId, isDefault: false)
+        availableClubs.append(club)
+        saveClubs()
+        return club.id
+    }
+
+    func updateClub(_ club: ClubData, name: String, clubTypeId: UUID) {
+        guard let index = availableClubs.firstIndex(where: { $0.id == club.id }) else { return }
+        availableClubs[index].name = name
+        availableClubs[index].clubTypeId = clubTypeId
+        saveClubs()
+    }
+
+    func moveClub(from source: IndexSet, to destination: Int) {
+        availableClubs.move(fromOffsets: source, toOffset: destination)
+        saveClubs()
+    }
+
+    func deleteClub(_ club: ClubData) {
+        // Don't allow deleting default clubs
+        guard !club.isDefault else { return }
+
+        availableClubs.removeAll { $0.id == club.id }
+
+        // Clear active club in any sets that used this club
+        for i in 0..<clubSets.count {
+            for j in 0..<clubSets[i].typeSelections.count {
+                if clubSets[i].typeSelections[j].activeClubId == club.id {
+                    clubSets[i].typeSelections[j].activeClubId = nil
+                }
+            }
+        }
+
+        saveClubs()
+        saveClubSets()
+    }
+
+    func getClub(byId id: UUID) -> ClubData? {
+        return availableClubs.first { $0.id == id }
+    }
+
+    func getClubs(forType typeId: UUID) -> [ClubData] {
+        return availableClubs.filter { $0.clubTypeId == typeId }
+    }
+
+    // MARK: - Club Set Management
+
+    func addClubSet(name: String, typeSelections: [TypeSelection]) {
+        let clubSet = ClubSet(name: name, typeSelections: typeSelections, isActive: false)
+        clubSets.append(clubSet)
+        saveClubSets()
+    }
+
+    func updateClubSet(_ clubSet: ClubSet, name: String, typeSelections: [TypeSelection]) {
+        guard let index = clubSets.firstIndex(where: { $0.id == clubSet.id }) else { return }
+
+        clubSets[index].name = name
+        clubSets[index].typeSelections = typeSelections
+        clubSets[index].dateModified = Date()
+        saveClubSets()
+    }
+
+    func setActiveClubForType(in clubSet: ClubSet, typeId: UUID, clubId: UUID?) {
+        guard let setIndex = clubSets.firstIndex(where: { $0.id == clubSet.id }),
+              let typeIndex = clubSets[setIndex].typeSelections.firstIndex(where: { $0.typeId == typeId }) else { return }
+
+        clubSets[setIndex].typeSelections[typeIndex].activeClubId = clubId
+        clubSets[setIndex].dateModified = Date()
+        saveClubSets()
+    }
+
+    func deleteClubSet(_ clubSet: ClubSet) {
+        clubSets.removeAll { $0.id == clubSet.id }
+        saveClubSets()
+    }
+
+    func setActiveClubSet(_ clubSet: ClubSet) {
+        for i in 0..<clubSets.count {
+            clubSets[i].isActive = false
+        }
+
+        if let index = clubSets.firstIndex(where: { $0.id == clubSet.id }) {
+            clubSets[index].isActive = true
+        }
+
+        saveClubSets()
+    }
+
+    var activeClubSet: ClubSet? {
+        return clubSets.first { $0.isActive }
+    }
+
+    func getTypesInActiveSet() -> [ClubTypeData] {
+        guard let activeSet = activeClubSet else { return [] }
+        return activeSet.typeSelections.compactMap { selection in
+            clubTypes.first { $0.id == selection.typeId }
+        }
+    }
+
+    func getActiveClubForType(_ typeId: UUID) -> ClubData? {
+        guard let activeSet = activeClubSet,
+              let clubId = activeSet.getActiveClubId(for: typeId) else { return nil }
+        return availableClubs.first { $0.id == clubId }
     }
 }

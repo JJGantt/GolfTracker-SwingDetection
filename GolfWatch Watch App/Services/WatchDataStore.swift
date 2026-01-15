@@ -8,6 +8,8 @@ class WatchDataStore: ObservableObject {
     @Published var currentRound: Round?
     @Published var currentHoleIndex: Int = 0
     @Published var pendingStrokes: [Stroke] = []
+    @Published var availableClubs: [ClubData] = []
+    @Published var clubTypes: [ClubTypeData] = []
     @Published var satelliteModeEnabled: Bool = true {
         didSet {
             UserDefaults.standard.set(satelliteModeEnabled, forKey: "satelliteModeEnabled")
@@ -17,6 +19,8 @@ class WatchDataStore: ObservableObject {
     private let connectivity = WatchConnectivityManager.shared
     private let roundKey = "currentRound"
     private let pendingStrokesKey = "pendingStrokes"
+    private let clubsKey = "availableClubs"
+    private let clubTypesKey = "clubTypes"
 
     private init() {
         loadFromStorage()
@@ -46,7 +50,7 @@ class WatchDataStore: ObservableObject {
 
     // MARK: - Stroke Management
 
-    func addStroke(club: Club, trajectoryHeading: Double? = nil) {
+    func addStroke(clubId: UUID, trajectoryHeading: Double? = nil) {
         guard var round = currentRound,
               let location = LocationManager.shared.location else { return }
 
@@ -67,7 +71,7 @@ class WatchDataStore: ObservableObject {
             holeNumber: holeNumber,
             strokeNumber: strokeNumber,
             coordinate: location.coordinate,
-            club: club,
+            clubId: clubId,
             trajectoryHeading: trajectoryHeading
         )
 
@@ -212,6 +216,24 @@ class WatchDataStore: ObservableObject {
                 print("⌚ [WatchDataStore] Current round set successfully, synced to hole \(round.currentHoleIndex)")
             }
         }
+
+        connectivity.onReceiveClubs = { [weak self] clubs in
+            print("⌚ [WatchDataStore] Received \(clubs.count) clubs from iPhone")
+            DispatchQueue.main.async {
+                self?.availableClubs = clubs
+                self?.saveToStorage()
+                print("⌚ [WatchDataStore] Clubs synced successfully")
+            }
+        }
+
+        connectivity.onReceiveClubTypes = { [weak self] types in
+            print("⌚ [WatchDataStore] Received \(types.count) club types from iPhone")
+            DispatchQueue.main.async {
+                self?.clubTypes = types
+                self?.saveToStorage()
+                print("⌚ [WatchDataStore] Club types synced successfully")
+            }
+        }
     }
 
     // MARK: - Persistence
@@ -226,6 +248,14 @@ class WatchDataStore: ObservableObject {
             UserDefaults.standard.set(data, forKey: pendingStrokesKey)
         }
 
+        if let data = try? JSONEncoder().encode(availableClubs) {
+            UserDefaults.standard.set(data, forKey: clubsKey)
+        }
+
+        if let data = try? JSONEncoder().encode(clubTypes) {
+            UserDefaults.standard.set(data, forKey: clubTypesKey)
+        }
+
         UserDefaults.standard.set(currentHoleIndex, forKey: "currentHoleIndex")
     }
 
@@ -238,6 +268,22 @@ class WatchDataStore: ObservableObject {
         if let data = UserDefaults.standard.data(forKey: pendingStrokesKey),
            let strokes = try? JSONDecoder().decode([Stroke].self, from: data) {
             pendingStrokes = strokes
+        }
+
+        if let data = UserDefaults.standard.data(forKey: clubsKey),
+           let clubs = try? JSONDecoder().decode([ClubData].self, from: data) {
+            availableClubs = clubs
+            print("⌚ [WatchDataStore] Loaded \(clubs.count) clubs from storage")
+        } else {
+            print("⌚ [WatchDataStore] No clubs in storage, waiting for sync from iPhone")
+        }
+
+        if let data = UserDefaults.standard.data(forKey: clubTypesKey),
+           let types = try? JSONDecoder().decode([ClubTypeData].self, from: data) {
+            clubTypes = types
+            print("⌚ [WatchDataStore] Loaded \(types.count) club types from storage")
+        } else {
+            print("⌚ [WatchDataStore] No club types in storage, waiting for sync from iPhone")
         }
 
         currentHoleIndex = UserDefaults.standard.integer(forKey: "currentHoleIndex")
@@ -385,5 +431,17 @@ class WatchDataStore: ObservableObject {
 
     func strokeCount(for hole: Hole) -> Int {
         currentRound?.strokes.filter { $0.holeNumber == hole.number }.count ?? 0
+    }
+
+    func getClub(byId id: UUID) -> ClubData? {
+        return availableClubs.first { $0.id == id }
+    }
+
+    func getClubType(byId id: UUID) -> ClubTypeData? {
+        return clubTypes.first { $0.id == id }
+    }
+
+    func getTypeName(for club: ClubData) -> String {
+        return clubTypes.first { $0.id == club.clubTypeId }?.name ?? club.name
     }
 }

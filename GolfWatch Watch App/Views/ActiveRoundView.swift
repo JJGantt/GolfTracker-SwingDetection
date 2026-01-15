@@ -1,5 +1,6 @@
 import SwiftUI
 import MapKit
+import WatchKit
 
 struct ActiveRoundView: View {
     @StateObject private var store = WatchDataStore.shared
@@ -20,7 +21,6 @@ struct ActiveRoundView: View {
     @State private var showingActionsSheet = false
     @State private var showingEditHole = false
     @State private var showingAddHole = false
-    @State private var showingAccelTest = false
     @State private var navigateToAddHole = false
     @State private var isLastStrokeViewMode = false
     @State private var undoHoldProgress: Double = 0.0
@@ -33,9 +33,12 @@ struct ActiveRoundView: View {
     @FocusState private var isMapFocused: Bool
     @FocusState private var isMainViewFocused: Bool
 
-    private let clubs = Club.allCases
+    private var clubs: [ClubData] {
+        return store.availableClubs
+    }
 
-    private var selectedClub: Club {
+    private var selectedClub: ClubData? {
+        guard !clubs.isEmpty else { return nil }
         let index = Int(selectedClubIndex.rounded()) % clubs.count
         return clubs[index]
     }
@@ -161,26 +164,149 @@ struct ActiveRoundView: View {
     // Calculate the rotation angle for the aim arrow
     @ViewBuilder
     private func clubSelectorOverlay(clubFontSize: CGFloat) -> some View {
-        let animatedFontSize = isCrownScrolling ? clubFontSize * 1.8 : clubFontSize
+        // Guard against empty clubs array to prevent division by zero
+        if clubs.isEmpty {
+            Text("No Clubs")
+                .font(.system(size: clubFontSize, weight: .semibold))
+                .foregroundColor(.white)
+        } else {
+            // Get surrounding clubs
+            let currentIndex = Int(selectedClubIndex.rounded()) % clubs.count
+            let previous2Index = (currentIndex - 2 + clubs.count) % clubs.count
+            let previous1Index = (currentIndex - 1 + clubs.count) % clubs.count
+            let next1Index = (currentIndex + 1) % clubs.count
+            let next2Index = (currentIndex + 2) % clubs.count
+
+            let previous2Club = clubs[previous2Index]
+            let previous1Club = clubs[previous1Index]
+            let next1Club = clubs[next1Index]
+            let next2Club = clubs[next2Index]
+
+            let currentSize = isCrownScrolling ? clubFontSize * 1.3 : clubFontSize
+            let adjacent1Size = clubFontSize * 0.8  // Directly adjacent clubs (bigger)
+            let adjacent2Size = clubFontSize * 0.65 // Further clubs (smaller)
+
+        // Calculate spacing based on actual text height (approximate)
+        let adjacent1Height: CGFloat = adjacent1Size + 4
+        let adjacent2Height: CGFloat = adjacent2Size + 4
 
         VStack {
             Spacer()
                 .frame(height: crownOffset)
             HStack {
                 Spacer()
-                Text(selectedClub.rawValue)
-                    .font(.system(size: animatedFontSize, weight: .semibold))
-                    .foregroundColor(.white)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 3)
-                    .background(Color.black.opacity(0.5))
-                    .clipShape(RoundedRectangle(cornerRadius: 5))
-                    .animation(.easeInOut(duration: 0.2), value: isCrownScrolling)
+
+                ZStack {
+                    // Current club - stays in the same position
+                    Text(selectedClub.map { store.getTypeName(for: $0) } ?? "No Club")
+                        .font(.system(size: currentSize, weight: .semibold))
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 3)
+                        .background(
+                            RoundedRectangle(cornerRadius: 5)
+                                .fill(.ultraThinMaterial)
+                                .opacity(0.9)
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 5)
+                                .stroke(Color.white.opacity(0.3), lineWidth: 0.5)
+                        )
+                        .shadow(color: .black.opacity(0.3), radius: 2, x: 0, y: 1)
+
+                    // Two clubs above when scrolling (only if not at top)
+                    if isCrownScrolling {
+                        // Previous -1 (directly above current) - only show if currentIndex >= 1
+                        if currentIndex >= 1 {
+                            Text(store.getTypeName(for: previous1Club))
+                                .font(.system(size: adjacent1Size, weight: .medium))
+                                .foregroundColor(.white.opacity(0.75))
+                                .padding(.horizontal, 5)
+                                .padding(.vertical, 2)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 4)
+                                        .fill(.ultraThinMaterial)
+                                        .opacity(0.7)
+                                )
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 4)
+                                        .stroke(Color.white.opacity(0.2), lineWidth: 0.5)
+                                )
+                                .offset(y: -adjacent1Height)
+                                .transition(.opacity.combined(with: .move(edge: .bottom)))
+                        }
+
+                        // Previous -2 (second from top) - only show if currentIndex >= 2
+                        if currentIndex >= 2 {
+                            Text(store.getTypeName(for: previous2Club))
+                                .font(.system(size: adjacent2Size, weight: .medium))
+                                .foregroundColor(.white.opacity(0.5))
+                                .padding(.horizontal, 4)
+                                .padding(.vertical, 1.5)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 3)
+                                        .fill(.ultraThinMaterial)
+                                        .opacity(0.45)
+                                )
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 3)
+                                        .stroke(Color.white.opacity(0.1), lineWidth: 0.5)
+                                )
+                                .offset(y: -(adjacent1Height + adjacent2Height))
+                                .transition(.opacity.combined(with: .move(edge: .bottom)))
+                        }
+                    }
+
+                    // Two clubs below when scrolling (only if not at bottom)
+                    if isCrownScrolling {
+                        // Next +1 (directly below current) - only show if not at last club
+                        if currentIndex < clubs.count - 1 {
+                            Text(store.getTypeName(for: next1Club))
+                                .font(.system(size: adjacent1Size, weight: .medium))
+                                .foregroundColor(.white.opacity(0.75))
+                                .padding(.horizontal, 5)
+                                .padding(.vertical, 2)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 4)
+                                        .fill(.ultraThinMaterial)
+                                        .opacity(0.7)
+                                )
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 4)
+                                        .stroke(Color.white.opacity(0.2), lineWidth: 0.5)
+                                )
+                                .offset(y: adjacent1Height)
+                                .transition(.opacity.combined(with: .move(edge: .top)))
+                        }
+
+                        // Next +2 (second from bottom) - only show if at least 2 clubs remaining
+                        if currentIndex < clubs.count - 2 {
+                            Text(store.getTypeName(for: next2Club))
+                                .font(.system(size: adjacent2Size, weight: .medium))
+                                .foregroundColor(.white.opacity(0.5))
+                                .padding(.horizontal, 4)
+                                .padding(.vertical, 1.5)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 3)
+                                        .fill(.ultraThinMaterial)
+                                        .opacity(0.45)
+                                )
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 3)
+                                        .stroke(Color.white.opacity(0.1), lineWidth: 0.5)
+                                )
+                                .offset(y: adjacent1Height + adjacent2Height)
+                                .transition(.opacity.combined(with: .move(edge: .top)))
+                        }
+                    }
+                }
             }
-            .padding(.trailing, 2)
+            .padding(.trailing, 8)
             Spacer()
         }
+        .animation(.easeInOut(duration: 0.2), value: isCrownScrolling)
         .opacity(isPlacingTarget || isPlacingPenalty ? 0 : 1)
+        } // end else clubs.isEmpty
     }
 
     @ViewBuilder
@@ -240,6 +366,25 @@ struct ActiveRoundView: View {
                     }
                 }
 
+                // Center: Swing detected button (appears when swing is detected)
+                if swingDetector.lastDetectedSwing != nil && store.currentHole != nil {
+                    Button(action: addStrokeFromLastSwing) {
+                        ZStack {
+                            Circle()
+                                .fill(Color.cyan.opacity(0.95))
+                                .frame(width: buttonSize * 1.3, height: buttonSize * 1.3)
+                                .shadow(color: .cyan.opacity(0.5), radius: 8, x: 0, y: 0)
+                                .shadow(color: .black.opacity(0.3), radius: 2, x: 0, y: 1)
+
+                            Image(systemName: "figure.golf")
+                                .font(.system(size: iconSize * 1.2, weight: .bold))
+                                .foregroundColor(.white)
+                        }
+                    }
+                    .buttonStyle(PlainButtonStyle())
+                    .transition(.scale.combined(with: .opacity))
+                }
+
                 Spacer()
 
                 // Right: Stack of buttons (bottom to top: shot, direction)
@@ -286,6 +431,7 @@ struct ActiveRoundView: View {
             }
             .padding(.horizontal, 4)
             .padding(.bottom, 16)
+            .animation(.easeInOut(duration: 0.2), value: swingDetector.lastDetectedSwing != nil)
         }
         .ignoresSafeArea()
     }
@@ -594,6 +740,7 @@ struct ActiveRoundView: View {
             isContinuous: false,
             isHapticFeedbackEnabled: true
         )
+        .digitalCrownAccessory(.hidden)
         .sheet(isPresented: $showingActionsSheet) {
             actionsSheet
         }
@@ -605,16 +752,13 @@ struct ActiveRoundView: View {
         .sheet(isPresented: $showingAddHole) {
             AddHoleView(store: store, locationManager: locationManager, isPresented: $showingAddHole)
         }
-        .sheet(isPresented: $showingAccelTest) {
-            AccelTestView()
-        }
         .navigationDestination(isPresented: $navigateToAddHole) {
             AddHoleNavigationView(store: store, locationManager: locationManager)
         }
         .onAppear {
             print("⌚ [ActiveRoundView] View appeared")
             print("⌚ [ActiveRoundView] Current location: \(locationManager.location?.description ?? "nil")")
-            print("⌚ [ActiveRoundView] Authorization status: \(locationManager.authorizationStatus.rawValue)")
+            print("⌚ [ActiveRoundView] Authorization status: \(locationManager.authorizationStatus)")
             locationManager.requestPermission()
             locationManager.startTracking()
             print("⌚ [ActiveRoundView] Called requestPermission and startTracking")
@@ -1155,30 +1299,7 @@ struct ActiveRoundView: View {
             }
             .padding(.horizontal, 8)
 
-            // Fourth row: Motion Test
-            HStack(spacing: 8) {
-                // Motion Test button
-                Button(action: {
-                    showingActionsSheet = false
-                    showingAccelTest = true
-                }) {
-                    HStack(spacing: 6) {
-                        Text("Motion Test")
-                            .font(.system(size: 12, weight: .semibold))
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.8)
-                    }
-                    .foregroundColor(.white)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 12)
-                    .background(Color.yellow.opacity(0.9))
-                    .cornerRadius(8)
-                }
-                .buttonStyle(PlainButtonStyle())
-            }
-            .padding(.horizontal, 8)
-
-            // Fifth row: Home button
+            // Fourth row: Home button
             HStack(spacing: 8) {
                 Button(action: {
                     showingActionsSheet = false
@@ -1289,7 +1410,11 @@ struct ActiveRoundView: View {
 
         // Pass the trajectory heading to the stroke
         // This works even if there's no hole - addStroke will use the next hole number
-        store.addStroke(club: selectedClub, trajectoryHeading: trajectoryHeading)
+        guard let club = selectedClub else {
+            print("⌚ [RecordStroke] ERROR: No club selected")
+            return
+        }
+        store.addStroke(clubId: club.id, trajectoryHeading: trajectoryHeading)
 
         // Reset aim direction after stroke is recorded
         capturedAimDirection = nil
@@ -1331,11 +1456,16 @@ struct ActiveRoundView: View {
             trajectoryHeading = calculateBearing(from: swing.location, to: hole.coordinate)
         }
 
+        guard let club = selectedClub else {
+            print("⌚ [RecordStrokeFromMotion] ERROR: No club selected")
+            return
+        }
+
         let stroke = Stroke(
             holeNumber: hole.number,
             strokeNumber: strokeNumber,
             coordinate: swing.location,
-            club: selectedClub,
+            clubId: club.id,
             trajectoryHeading: trajectoryHeading,
             acceleration: swing.peakAcceleration
         )
@@ -1377,6 +1507,11 @@ struct ActiveRoundView: View {
                   let hole = store.currentHole else { return }
 
             // Add penalty stroke using selected club
+            guard let club = selectedClub else {
+                print("⌚ [TogglePenaltyPlacement] ERROR: No club selected")
+                return
+            }
+
             let strokesForHole = round.strokes.filter { $0.holeNumber == hole.number }
             let strokeNumber = strokesForHole.count + 1
 
@@ -1384,7 +1519,7 @@ struct ActiveRoundView: View {
                 holeNumber: hole.number,
                 strokeNumber: strokeNumber,
                 coordinate: penaltyCoord,
-                club: selectedClub,
+                clubId: club.id,
                 isPenalty: true
             )
 
@@ -1570,7 +1705,7 @@ struct ActiveRoundView: View {
     }
 
     private func calculateCrownOffset(screenHeight: CGFloat) {
-        crownOffset = screenHeight * 0.05
+        crownOffset = screenHeight * 0.01
     }
 }
 

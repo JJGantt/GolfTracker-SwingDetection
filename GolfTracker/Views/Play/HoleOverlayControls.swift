@@ -10,6 +10,7 @@ struct HoleOverlayControls: View {
     let totalHoles: Int
     let strokes: [Stroke]
     let userLocation: CLLocation?
+    let store: DataStore
     let onPrevious: () -> Void
     let onNext: () -> Void
     let onAddHole: () -> Void
@@ -117,7 +118,7 @@ struct HoleOverlayControls: View {
             if !strokes.isEmpty {
                 VStack {
                     HStack {
-                        StrokeDataTable(strokes: strokes, userLocation: userLocation, hole: hole)
+                        StrokeDataTable(strokes: strokes, userLocation: userLocation, hole: hole, store: store)
                         Spacer()
                     }
                     .padding(.leading, 16)
@@ -133,6 +134,7 @@ struct StrokeDataTable: View {
     let strokes: [Stroke]
     let userLocation: CLLocation?
     let hole: Hole
+    let store: DataStore
 
     private func distanceForStroke(at index: Int) -> String {
         // Distance is from this stroke to the next stroke (where the ball landed)
@@ -189,23 +191,33 @@ struct StrokeDataTable: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
-            ForEach(Array(strokes.enumerated()), id: \.element.id) { index, stroke in
+            ForEach(Array(strokes.enumerated()), id: \.element.id) { item in
+                let index = item.offset
+                let stroke = item.element
+
                 HStack(spacing: 6) {
                     Text("\(index + 1)")
                         .font(.system(size: 13))
                         .foregroundColor(stroke.isPenalty ? .orange : .black)
                         .frame(width: 14, alignment: .center)
-                    Text(stroke.isPenalty ? "---" : distanceForStroke(at: index))
+
+                    let distance = stroke.isPenalty ? "---" : distanceForStroke(at: index)
+                    Text(distance)
                         .font(.system(size: 13))
                         .foregroundColor(.black)
                         .frame(width: 30, alignment: .trailing)
-                    Text(stroke.isPenalty ? "---" : angleForStroke(at: index))
+
+                    let angle = stroke.isPenalty ? "---" : angleForStroke(at: index)
+                    Text(angle)
                         .font(.system(size: 13))
                         .foregroundColor(.black)
                         .frame(width: 30, alignment: .trailing)
+
                     Spacer()
                         .frame(width: 4)
-                    Text(stroke.isPenalty ? "---" : stroke.club.rawValue)
+
+                    let clubName = stroke.isPenalty ? "---" : (store.getClub(byId: stroke.clubId)?.name ?? "?")
+                    Text(clubName)
                         .font(.system(size: 13))
                         .foregroundColor(.black)
                         .frame(width: 35, alignment: .leading)

@@ -306,6 +306,7 @@ struct HolePlayView: View {
                     totalHoles: currentCourse.holes.count,
                     strokes: strokesForCurrentHole,
                     userLocation: locationManager.location,
+                    store: store,
                     onPrevious: previousHole,
                     onNext: nextHole,
                     onAddHole: startAddingNextHole
@@ -392,9 +393,17 @@ struct HolePlayView: View {
                 moveCurrentHoleToUserLocation: moveCurrentHoleToUserLocation
             ))
             .confirmationDialog("Select Club", isPresented: $showingClubSelection) {
-                ForEach(Club.allCases, id: \.self) { club in
-                    Button(club.rawValue) {
-                        recordStroke(with: club)
+                let types = store.getTypesInActiveSet()
+                if types.isEmpty {
+                    Button("No clubs available") {}
+                        .disabled(true)
+                } else {
+                    ForEach(types) { clubType in
+                        Button(clubType.name) {
+                            if let club = store.getActiveClubForType(clubType.id) {
+                                recordStroke(with: club)
+                            }
+                        }
                     }
                 }
                 Button("Cancel", role: .cancel) {}
@@ -666,7 +675,7 @@ struct HolePlayView: View {
         store.updateHole(hole, in: currentCourse, newCoordinate: location.coordinate)
     }
 
-    private func recordStroke(with club: Club) {
+    private func recordStroke(with club: ClubData) {
         guard let round = activeRound,
               let hole = currentHole,
               let location = locationManager.location else { return }
@@ -674,7 +683,7 @@ struct HolePlayView: View {
         // Use manual trajectory if set, otherwise calculate bearing to hole
         let heading = trajectoryHeading ?? MapCalculations.calculateBearing(from: location.coordinate, to: hole.coordinate)
 
-        store.addStroke(to: round, holeNumber: hole.number, coordinate: location.coordinate, club: club, trajectoryHeading: heading)
+        store.addStroke(to: round, holeNumber: hole.number, coordinate: location.coordinate, clubId: club.id, trajectoryHeading: heading)
 
         // Reset aim direction after recording stroke
         trajectoryHeading = nil
@@ -686,9 +695,26 @@ struct HolePlayView: View {
               let coordinate = temporaryPosition else { return }
 
         // Use the club from the most recent stroke, or default to putter if no previous strokes
-        let club = mostRecentStroke?.club ?? .putter
+        let clubId: UUID = {
+            if let recentClubId = mostRecentStroke?.clubId {
+                return recentClubId
+            }
+            // Default to putter from active set, or first available type's club
+            let types = store.getTypesInActiveSet()
+            // Try to find a putter type
+            if let putterType = types.first(where: { $0.name.lowercased().contains("putter") }),
+               let putterClub = store.getActiveClubForType(putterType.id) {
+                return putterClub.id
+            }
+            // Fallback to first type's active club
+            if let firstType = types.first,
+               let firstClub = store.getActiveClubForType(firstType.id) {
+                return firstClub.id
+            }
+            return UUID() // Fallback to new UUID
+        }()
 
-        store.addPenaltyStroke(to: round, holeNumber: hole.number, coordinate: coordinate, club: club)
+        store.addPenaltyStroke(to: round, holeNumber: hole.number, coordinate: coordinate, clubId: clubId)
         isAddingPenaltyStroke = false
         temporaryPosition = nil
     }
