@@ -18,7 +18,23 @@ struct WatchHomeView: View {
                 Spacer()
 
                 // Main action button
-                if let round = store.currentRound, !round.holes.isEmpty {
+                if store.availableClubs.isEmpty {
+                    // No clubs synced yet - show waiting state
+                    VStack(spacing: 8) {
+                        ProgressView()
+                            .scaleEffect(0.8)
+                        Text("Waiting for clubs to sync...")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                        Text("Open iPhone app")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding()
+                    .background(Color.gray.opacity(0.3))
+                    .cornerRadius(10)
+                } else if let round = store.currentRound, !round.holes.isEmpty {
                     // Active round exists - show Continue button
                     NavigationLink(destination: ActiveRoundView()) {
                         Label("Continue Round", systemImage: "play.circle.fill")

@@ -434,6 +434,9 @@ class DataStore: ObservableObject {
         SatelliteLogHandler.shared.startNewLog(roundId: round.id, courseName: course.name)
 
         print("📱 [DataStore] About to send round to Watch, holes: \(round.holes.count)")
+        // Send clubs and club types first to ensure Watch has them before the round
+        WatchConnectivityManager.shared.sendClubs(availableClubs)
+        WatchConnectivityManager.shared.sendClubTypes(clubTypes)
         // Send round to Watch
         WatchConnectivityManager.shared.sendRound(round)
 

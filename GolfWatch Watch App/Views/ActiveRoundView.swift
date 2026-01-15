@@ -734,7 +734,7 @@ struct ActiveRoundView: View {
         .digitalCrownRotation(
             $selectedClubIndex,
             from: 0,
-            through: Double(clubs.count - 1),
+            through: Double(max(clubs.count - 1, 0)),
             by: 1,
             sensitivity: .low,
             isContinuous: false,
