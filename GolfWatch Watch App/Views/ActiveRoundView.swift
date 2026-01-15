@@ -13,7 +13,6 @@ struct ActiveRoundView: View {
     @State private var selectedClubIndex: Double = 0
     @State private var position: MapCameraPosition = .automatic
     @State private var showingRecordedFeedback = false
-    @State private var capturedAimDirection: Double? = nil
     @State private var crownOffset: CGFloat = 0
     @State private var isPlacingTarget = false
     @State private var isPlacingPenalty = false
@@ -30,6 +29,7 @@ struct ActiveRoundView: View {
     @State private var isFullViewMode = false
     @State private var isCrownScrolling = false
     @State private var crownScrollTimer: Timer?
+    @State private var isPulsing = false
     @FocusState private var isMapFocused: Bool
     @FocusState private var isMainViewFocused: Bool
 
@@ -187,7 +187,7 @@ struct ActiveRoundView: View {
             let adjacent2Size = clubFontSize * 0.65 // Further clubs (smaller)
 
         // Calculate spacing based on actual text height (approximate)
-        let adjacent1Height: CGFloat = adjacent1Size + 4
+        let adjacent1Height: CGFloat = adjacent1Size + 8  // Increased spacing for directly adjacent
         let adjacent2Height: CGFloat = adjacent2Size + 4
 
         VStack {
@@ -366,25 +366,6 @@ struct ActiveRoundView: View {
                     }
                 }
 
-                // Center: Swing detected button (appears when swing is detected)
-                if swingDetector.lastDetectedSwing != nil && store.currentHole != nil {
-                    Button(action: addStrokeFromLastSwing) {
-                        ZStack {
-                            Circle()
-                                .fill(Color.cyan.opacity(0.95))
-                                .frame(width: buttonSize * 1.3, height: buttonSize * 1.3)
-                                .shadow(color: .cyan.opacity(0.5), radius: 8, x: 0, y: 0)
-                                .shadow(color: .black.opacity(0.3), radius: 2, x: 0, y: 1)
-
-                            Image(systemName: "figure.golf")
-                                .font(.system(size: iconSize * 1.2, weight: .bold))
-                                .foregroundColor(.white)
-                        }
-                    }
-                    .buttonStyle(PlainButtonStyle())
-                    .transition(.scale.combined(with: .opacity))
-                }
-
                 Spacer()
 
                 // Right: Stack of buttons (bottom to top: shot, direction)
@@ -423,7 +404,6 @@ struct ActiveRoundView: View {
                         }
                     }
                     .buttonStyle(PlainButtonStyle())
-                    .handGestureShortcut(.primaryAction)
                     .disabled(store.currentHole.map { store.isHoleCompleted($0.number) } ?? false)
                     .opacity(store.currentHole.map { store.isHoleCompleted($0.number) } ?? false ? 0.3 : 0.95)
                 }
@@ -431,9 +411,79 @@ struct ActiveRoundView: View {
             }
             .padding(.horizontal, 4)
             .padding(.bottom, 16)
-            .animation(.easeInOut(duration: 0.2), value: swingDetector.lastDetectedSwing != nil)
         }
         .ignoresSafeArea()
+    }
+
+    @ViewBuilder
+    private func swingDetectedOverlay(buttonSize: CGFloat, iconSize: CGFloat) -> some View {
+        if swingDetector.lastDetectedSwing != nil && store.currentHole != nil && !isPlacingTarget && !isPlacingPenalty && !isPlacingHole {
+            VStack(spacing: 4) {
+                // Main swing button - tap to add stroke
+                Button(action: addStrokeFromLastSwing) {
+                    ZStack {
+                        // Outer pulse ring for motion effect
+                        Circle()
+                            .stroke(Color.cyan.opacity(0.3), lineWidth: 2)
+                            .frame(width: buttonSize * 1.7, height: buttonSize * 1.7)
+                            .scaleEffect(isPulsing ? 1.18 : 0.92)
+                            .opacity(isPulsing ? 0.0 : 0.8)
+                            .animation(.easeOut(duration: 1.0).repeatForever(autoreverses: false),
+                                       value: isPulsing)
+
+                        Circle()
+                            .fill(Color.cyan.opacity(0.7))
+                            .frame(width: buttonSize * 1.5, height: buttonSize * 1.5)
+                            .shadow(color: .cyan.opacity(0.4), radius: 8, x: 0, y: 0)
+
+                        // Motion lines behind the golfer
+                        HStack(spacing: 2) {
+                            ForEach(0..<3, id: \.self) { i in
+                                RoundedRectangle(cornerRadius: 1)
+                                    .fill(Color.white.opacity(0.4 - Double(i) * 0.1))
+                                    .frame(width: 2, height: CGFloat(8 - i * 2))
+                            }
+                            Spacer()
+                        }
+                        .frame(width: buttonSize * 1.2)
+                        .offset(x: -iconSize * 0.3)
+
+                        Image(systemName: "figure.golf")
+                            .font(.system(size: iconSize * 1.4, weight: .bold))
+                            .foregroundColor(.white)
+                            .rotationEffect(.degrees(-8))
+                    }
+                }
+                .buttonStyle(PlainButtonStyle())
+                .onAppear {
+                    // This single change starts the forever animation.
+                    isPulsing = true
+                }
+                .onDisappear {
+                    // Optional: helps if the view reappears and you want it to restart cleanly.
+                    isPulsing = false
+                }
+
+                // Dismiss button - smaller X below, closer
+                Button(action: {
+                    swingDetector.clearLastSwing()
+                    WKInterfaceDevice.current().play(.click)
+                }) {
+                    ZStack {
+                        Circle()
+                            .fill(Color.red.opacity(0.7))
+                            .frame(width: buttonSize * 0.6, height: buttonSize * 0.6)
+
+                        Image(systemName: "xmark")
+                            .font(.system(size: iconSize * 0.5, weight: .bold))
+                            .foregroundColor(.white)
+                    }
+                }
+                .buttonStyle(PlainButtonStyle())
+            }
+            .offset(y: -15)
+            .transition(.scale.combined(with: .opacity))
+        }
     }
 
     @ViewBuilder
@@ -654,7 +704,7 @@ struct ActiveRoundView: View {
     }
 
     private var aimArrowRotation: Double {
-        guard let capturedHeading = capturedAimDirection,
+        guard let capturedHeading = swingDetector.capturedAimDirection,
               let userLocation = locationManager.location,
               let hole = store.currentHole else {
             return 0 // Arrow points up when not set
@@ -677,7 +727,7 @@ struct ActiveRoundView: View {
     private func mainContent(geometry: GeometryProxy) -> some View {
         let buttonSize = geometry.size.width * 0.25
         let iconSize = buttonSize * 0.45
-        let clubFontSize = geometry.size.width * 0.065
+        let clubFontSize = geometry.size.width * 0.055
 
         ZStack {
             // Full screen map
@@ -701,6 +751,9 @@ struct ActiveRoundView: View {
                 buttonsOverlay(buttonSize: buttonSize, iconSize: iconSize)
             }
 
+            // Swing detected overlay (centered)
+            swingDetectedOverlay(buttonSize: buttonSize, iconSize: iconSize)
+
             // Bottom swipe-up indicator
             swipeUpIndicator
 
@@ -718,6 +771,16 @@ struct ActiveRoundView: View {
             if isPlacingHole {
                 holePlacementCancelButton(buttonSize: buttonSize, iconSize: iconSize)
             }
+
+            // Invisible button for double-tap gesture (clench fingers twice)
+            // Uses detected swing if available, otherwise adds regular stroke
+            Button(action: handleDoubleTapGesture) {
+                Color.clear
+                    .frame(width: 1, height: 1)
+            }
+            .buttonStyle(PlainButtonStyle())
+            .handGestureShortcut(.primaryAction)
+            .disabled(store.currentHole.map { store.isHoleCompleted($0.number) } ?? false || isPlacingTarget || isPlacingPenalty || isPlacingHole)
         }
         .task {
             calculateCrownOffset(screenHeight: geometry.size.height)
@@ -1390,8 +1453,8 @@ struct ActiveRoundView: View {
             return
         }
 
-        // Capture the current heading
-        capturedAimDirection = finalHeading
+        // Capture the current heading in SwingDetectionManager so it persists with detected swings
+        swingDetector.capturedAimDirection = finalHeading
         print("⌚ [AimDirection] Captured heading: \(finalHeading)")
 
         // Haptic feedback
@@ -1400,7 +1463,7 @@ struct ActiveRoundView: View {
 
     private func recordStroke() {
         // If no aim direction was captured, default to bearing towards the flag (if hole exists)
-        var trajectoryHeading = capturedAimDirection
+        var trajectoryHeading = swingDetector.capturedAimDirection
         if trajectoryHeading == nil,
            let userLocation = locationManager.location,
            let hole = store.currentHole {
@@ -1417,7 +1480,7 @@ struct ActiveRoundView: View {
         store.addStroke(clubId: club.id, trajectoryHeading: trajectoryHeading)
 
         // Reset aim direction after stroke is recorded
-        capturedAimDirection = nil
+        swingDetector.capturedAimDirection = nil
 
         // Haptic feedback
         WKInterfaceDevice.current().play(.success)
@@ -1431,6 +1494,15 @@ struct ActiveRoundView: View {
             withAnimation(.easeInOut(duration: 0.3)) {
                 showingRecordedFeedback = false
             }
+        }
+    }
+
+    private func handleDoubleTapGesture() {
+        // If there's a detected swing, add that. Otherwise, add a regular stroke.
+        if swingDetector.lastDetectedSwing != nil && store.currentHole != nil {
+            addStrokeFromLastSwing()
+        } else {
+            recordStroke()
         }
     }
 
@@ -1449,8 +1521,8 @@ struct ActiveRoundView: View {
         let strokesForHole = round.strokes.filter { $0.holeNumber == hole.number }
         let strokeNumber = strokesForHole.count + 1
 
-        // Calculate trajectory heading if we have a captured aim direction
-        var trajectoryHeading = capturedAimDirection
+        // Use aim direction captured at swing detection time, fall back to bearing towards flag
+        var trajectoryHeading = swing.trajectoryHeading
         if trajectoryHeading == nil {
             // Default to bearing towards the flag
             trajectoryHeading = calculateBearing(from: swing.location, to: hole.coordinate)
@@ -1481,7 +1553,7 @@ struct ActiveRoundView: View {
         WatchConnectivityManager.shared.sendRound(round)
 
         // Reset aim direction after stroke is recorded
-        capturedAimDirection = nil
+        swingDetector.capturedAimDirection = nil
 
         // Clear the last swing
         swingDetector.clearLastSwing()

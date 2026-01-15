@@ -216,7 +216,7 @@ struct StrokeDataTable: View {
                     Spacer()
                         .frame(width: 4)
 
-                    let clubName = stroke.isPenalty ? "---" : (store.getClub(byId: stroke.clubId)?.name ?? "?")
+                    let clubName = stroke.isPenalty ? "---" : (store.getClub(byId: stroke.clubId).flatMap { store.getClubType(byId: $0.clubTypeId) }?.name ?? "?")
                     Text(clubName)
                         .font(.system(size: 13))
                         .foregroundColor(.black)

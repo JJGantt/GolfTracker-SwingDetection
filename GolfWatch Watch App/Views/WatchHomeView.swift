@@ -3,17 +3,15 @@ import SwiftUI
 struct WatchHomeView: View {
     @StateObject private var store = WatchDataStore.shared
     @StateObject private var connectivity = WatchConnectivityManager.shared
+    @State private var navigateToActiveRound = false
 
     var body: some View {
         NavigationStack {
-            VStack(spacing: 20) {
+            VStack(spacing: 5) {
                 // App icon and title
                 Image(systemName: "figure.golf")
-                    .font(.system(size: 50))
+                    .font(.system(size: 40))
                     .foregroundColor(.green)
-
-                Text("Golf Tracker")
-                    .font(.headline)
 
                 Spacer()
 
@@ -45,20 +43,22 @@ struct WatchHomeView: View {
                             .cornerRadius(10)
                     }
                     .buttonStyle(.plain)
-                } else {
-                    // No active round - show Start Quick Round
-                    Button(action: {
-                        store.startQuickRound()
-                    }) {
-                        Label("Start Quick Round", systemImage: "flag.circle.fill")
-                            .frame(maxWidth: .infinity)
-                            .padding()
-                            .background(Color.green)
-                            .foregroundColor(.white)
-                            .cornerRadius(10)
-                    }
-                    .buttonStyle(.plain)
                 }
+                
+                
+                Button(action: {
+                    store.startQuickRound()
+                    navigateToActiveRound = true
+                }) {
+                    Label("Start New Round", systemImage: "flag.circle.fill")
+                        .frame(maxWidth: .infinity)
+                        .padding()
+                        .background(Color.green)
+                        .foregroundColor(.white)
+                        .cornerRadius(10)
+                }
+                .buttonStyle(.plain)
+                
 
                 // Motion Test button (always visible)
                 NavigationLink(destination: AccelTestView()) {
@@ -97,6 +97,9 @@ struct WatchHomeView: View {
                 }
             }
             .padding()
+            .navigationDestination(isPresented: $navigateToActiveRound) {
+                ActiveRoundView()
+            }
         }
     }
 }
