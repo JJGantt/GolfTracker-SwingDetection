@@ -7,20 +7,26 @@ struct ClubTypeData: Identifiable, Codable, Hashable {
     var id = UUID()
     var name: String              // Display name (e.g., "Driver", "7-Iron", "Sand Wedge")
     var isDefault: Bool           // Default types can't be deleted
+    var averageDistance: Int?     // Average distance in yards (for club prediction)
 
     static func defaultClubTypes() -> [ClubTypeData] {
         return [
-            ClubTypeData(name: "Driver", isDefault: true),
-            ClubTypeData(name: "Hybrid", isDefault: true),
-            ClubTypeData(name: "3-Iron", isDefault: true),
-            ClubTypeData(name: "4-Iron", isDefault: true),
-            ClubTypeData(name: "5-Iron", isDefault: true),
-            ClubTypeData(name: "6-Iron", isDefault: true),
-            ClubTypeData(name: "7-Iron", isDefault: true),
-            ClubTypeData(name: "8-Iron", isDefault: true),
-            ClubTypeData(name: "9-Iron", isDefault: true),
-            ClubTypeData(name: "Wedge", isDefault: true),
-            ClubTypeData(name: "Putter", isDefault: true)
+            ClubTypeData(name: "Driver", isDefault: true, averageDistance: 245),
+            ClubTypeData(name: "3-Wood", isDefault: true, averageDistance: 225),
+            ClubTypeData(name: "5-Wood", isDefault: true, averageDistance: 207),
+            ClubTypeData(name: "4-Hybrid", isDefault: true, averageDistance: 192),
+            ClubTypeData(name: "5-Hybrid", isDefault: true, averageDistance: 180),
+            ClubTypeData(name: "4-Iron", isDefault: true, averageDistance: 170),
+            ClubTypeData(name: "5-Iron", isDefault: true, averageDistance: 160),
+            ClubTypeData(name: "6-Iron", isDefault: true, averageDistance: 150),
+            ClubTypeData(name: "7-Iron", isDefault: true, averageDistance: 140),
+            ClubTypeData(name: "8-Iron", isDefault: true, averageDistance: 130),
+            ClubTypeData(name: "9-Iron", isDefault: true, averageDistance: 118),
+            ClubTypeData(name: "Pitch", isDefault: true, averageDistance: 106),
+            ClubTypeData(name: "Gap", isDefault: true, averageDistance: 93),
+            ClubTypeData(name: "Sand", isDefault: true, averageDistance: 78),
+            ClubTypeData(name: "Lob", isDefault: true, averageDistance: 45),
+            ClubTypeData(name: "Putter", isDefault: true, averageDistance: 10)
         ]
     }
 }

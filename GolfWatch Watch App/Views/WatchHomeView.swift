@@ -62,7 +62,7 @@ struct WatchHomeView: View {
 
                 // Motion Test button (always visible)
                 NavigationLink(destination: AccelTestView()) {
-                    Label("Motion Test", systemImage: "waveform.path.ecg")
+                    Label("Motion Config", systemImage: "waveform.path.ecg")
                         .frame(maxWidth: .infinity)
                         .padding()
                         .background(Color.blue)

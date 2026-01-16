@@ -30,6 +30,10 @@ struct ActiveRoundView: View {
     @State private var isCrownScrolling = false
     @State private var crownScrollTimer: Timer?
     @State private var isPulsing = false
+    @State private var showingUndoConfirmation = false
+    @State private var showingDistanceEditor = false
+    @State private var manualClubOverride = false       // True when user manually changed club
+    @State private var isAutoSelectingClub = false      // True when we're programmatically updating club
     @FocusState private var isMapFocused: Bool
     @FocusState private var isMainViewFocused: Bool
 
@@ -815,6 +819,9 @@ struct ActiveRoundView: View {
         .sheet(isPresented: $showingAddHole) {
             AddHoleView(store: store, locationManager: locationManager, isPresented: $showingAddHole)
         }
+        .sheet(isPresented: $showingDistanceEditor) {
+            ClubDistanceEditorView(store: store)
+        }
         .navigationDestination(isPresented: $navigateToAddHole) {
             AddHoleNavigationView(store: store, locationManager: locationManager)
         }
@@ -858,11 +865,30 @@ struct ActiveRoundView: View {
                 updateMapPosition()
             }
         }
+        .onChange(of: distanceToHole) { _, newDistance in
+            // Auto-predict club based on distance if enabled and not manually overridden
+            guard !manualClubOverride,
+                  store.clubPredictionMode != .off,
+                  let distance = newDistance else { return }
+
+            if let predictedIndex = ClubPredictionManager.shared.predictClubIndex(
+                forDistance: distance,
+                clubs: clubs,
+                clubTypes: store.clubTypes,
+                mode: store.clubPredictionMode,
+                customAverages: store.customClubAverages
+            ) {
+                isAutoSelectingClub = true
+                selectedClubIndex = Double(predictedIndex)
+                isAutoSelectingClub = false
+            }
+        }
         .onChange(of: locationManager.heading) { _, _ in
             // Trigger view refresh when heading updates (to rotate user arrow)
         }
         .onChange(of: store.currentHoleIndex) { _, _ in
             // Watch syncs hole index from phone - update map when it changes
+            manualClubOverride = false  // Reset manual override on hole change
             updateMapPosition()
         }
         .onChange(of: store.currentHole) { _, _ in
@@ -876,6 +902,11 @@ struct ActiveRoundView: View {
             }
         }
         .onChange(of: selectedClubIndex) { _, _ in
+            // Detect manual club change (user scrolling vs auto-prediction)
+            if !isAutoSelectingClub && store.clubPredictionMode != .off {
+                manualClubOverride = true
+            }
+
             // Crown is being scrolled - show enlarged text
             withAnimation(.easeInOut(duration: 0.15)) {
                 isCrownScrolling = true
@@ -1199,38 +1230,16 @@ struct ActiveRoundView: View {
 
     @ViewBuilder
     private var actionsSheet: some View {
-        VStack(spacing: 12) {
-            // Top row: Hole navigation
-            if let hole = store.currentHole, let round = store.currentRound, let course = store.getCourse(for: round) {
-                HStack(spacing: 12) {
-                    // Left arrow - previous hole
-                    Button(action: {
-                        store.navigateToPreviousHole()
-                    }) {
-                        Image(systemName: "chevron.left")
-                            .font(.system(size: 16, weight: .bold))
-                            .foregroundColor(.white)
-                            .frame(width: 40, height: 40)
-                            .background(Color.blue.opacity(0.9))
-                            .clipShape(Circle())
-                    }
-                    .buttonStyle(PlainButtonStyle())
-                    .disabled(store.currentHoleIndex == 0)
-                    .opacity(store.currentHoleIndex == 0 ? 0.3 : 1.0)
-
-                    // Hole number
-                    Text("Hole \(hole.number)")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundColor(.white)
-                        .frame(maxWidth: .infinity)
-
-                    // Right arrow or plus - next hole or add hole
-                    if store.currentHoleIndex < course.holes.count - 1 {
-                        // Next hole exists - show right arrow
+        ScrollView {
+            VStack(spacing: 12) {
+                // Top row: Hole navigation
+                if let hole = store.currentHole, let round = store.currentRound, let course = store.getCourse(for: round) {
+                    HStack(spacing: 12) {
+                        // Left arrow - previous hole
                         Button(action: {
-                            store.navigateToNextHole()
+                            store.navigateToPreviousHole()
                         }) {
-                            Image(systemName: "chevron.right")
+                            Image(systemName: "chevron.left")
                                 .font(.system(size: 16, weight: .bold))
                                 .foregroundColor(.white)
                                 .frame(width: 40, height: 40)
@@ -1238,155 +1247,242 @@ struct ActiveRoundView: View {
                                 .clipShape(Circle())
                         }
                         .buttonStyle(PlainButtonStyle())
-                    } else {
-                        // Last hole - show plus to add new hole
-                        Button(action: {
-                            showingActionsSheet = false
-                            navigateToAddHole = true
-                        }) {
-                            Image(systemName: "plus")
-                                .font(.system(size: 16, weight: .bold))
-                                .foregroundColor(.white)
-                                .frame(width: 40, height: 40)
-                                .background(Color.green.opacity(0.9))
-                                .clipShape(Circle())
+                        .disabled(store.currentHoleIndex == 0)
+                        .opacity(store.currentHoleIndex == 0 ? 0.3 : 1.0)
+
+                        // Hole number
+                        Text("Hole \(hole.number)")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundColor(.white)
+                            .frame(maxWidth: .infinity)
+
+                        // Right arrow or plus - next hole or add hole
+                        if store.currentHoleIndex < course.holes.count - 1 {
+                            // Next hole exists - show right arrow
+                            Button(action: {
+                                store.navigateToNextHole()
+                            }) {
+                                Image(systemName: "chevron.right")
+                                    .font(.system(size: 16, weight: .bold))
+                                    .foregroundColor(.white)
+                                    .frame(width: 40, height: 40)
+                                    .background(Color.blue.opacity(0.9))
+                                    .clipShape(Circle())
+                            }
+                            .buttonStyle(PlainButtonStyle())
+                        } else {
+                            // Last hole - show plus to add new hole
+                            Button(action: {
+                                showingActionsSheet = false
+                                navigateToAddHole = true
+                            }) {
+                                Image(systemName: "plus")
+                                    .font(.system(size: 16, weight: .bold))
+                                    .foregroundColor(.white)
+                                    .frame(width: 40, height: 40)
+                                    .background(Color.green.opacity(0.9))
+                                    .clipShape(Circle())
+                            }
+                            .buttonStyle(PlainButtonStyle())
                         }
-                        .buttonStyle(PlainButtonStyle())
+                    }
+                    .padding(.horizontal, 8)
+                }
+
+                // Second row: Undo and Edit buttons
+                HStack(spacing: 8) {
+                    // Undo button - shows confirmation
+                    Button(action: {
+                        showingUndoConfirmation = true
+                    }) {
+                        HStack(spacing: 6) {
+                            Image(systemName: "arrow.uturn.backward")
+                                .font(.system(size: 14, weight: .bold))
+                            Text("Undo")
+                                .font(.system(size: 12, weight: .semibold))
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.8)
+                        }
+                        .foregroundColor(.white)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 12)
+                        .background(Color.red.opacity(0.9))
+                        .cornerRadius(8)
+                    }
+                    .buttonStyle(PlainButtonStyle())
+                    .disabled(!canUndo)
+                    .opacity(canUndo ? 1.0 : 0.5)
+
+                    // Edit Hole button
+                    Button(action: {
+                        showingActionsSheet = false
+                        showingEditHole = true
+                    }) {
+                        HStack(spacing: 8) {
+                            Image(systemName: "flag")
+                                .font(.system(size: 16, weight: .bold))
+                            Text("Edit")
+                                .font(.system(size: 13, weight: .semibold))
+                        }
+                        .foregroundColor(.white)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 12)
+                        .background(Color.orange.opacity(0.9))
+                        .cornerRadius(8)
+                    }
+                    .buttonStyle(PlainButtonStyle())
+                }
+                .padding(.horizontal, 8)
+
+                // Third row: Home button (moved above options)
+                HStack(spacing: 8) {
+                    Button(action: {
+                        showingActionsSheet = false
+                        dismiss()
+                    }) {
+                        HStack(spacing: 6) {
+                            Image(systemName: "house.fill")
+                                .font(.system(size: 14, weight: .bold))
+                            Text("Home")
+                                .font(.system(size: 12, weight: .semibold))
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.8)
+                        }
+                        .foregroundColor(.white)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 12)
+                        .background(Color.gray.opacity(0.9))
+                        .cornerRadius(8)
+                    }
+                    .buttonStyle(PlainButtonStyle())
+                }
+                .padding(.horizontal, 8)
+
+                // Fourth row: Full View and Satellite toggles
+                HStack(spacing: 8) {
+                    // Full View Mode Toggle (left)
+                    Button(action: {
+                        isFullViewMode.toggle()
+                        WKInterfaceDevice.current().play(.click)
+                        // Update map position based on new mode
+                        if store.currentHole != nil {
+                            updateMapPosition()
+                        } else {
+                            updateNoHoleMapPosition()
+                        }
+                    }) {
+                        HStack(spacing: 6) {
+                            Image(systemName: isFullViewMode ? "scope" : "scope")
+                                .font(.system(size: 14, weight: .bold))
+                            Text(isFullViewMode ? "Full: ON" : "Full: OFF")
+                                .font(.system(size: 12, weight: .semibold))
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.8)
+                        }
+                        .foregroundColor(.white)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 12)
+                        .background((isFullViewMode ? Color.green : Color.gray).opacity(0.9))
+                        .cornerRadius(8)
+                    }
+                    .buttonStyle(PlainButtonStyle())
+
+                    // Satellite Mode Toggle (right)
+                    Button(action: {
+                        store.satelliteModeEnabled.toggle()
+                        WKInterfaceDevice.current().play(.click)
+                        print("⌚ [ActiveRound] Satellite mode toggled to: \(store.satelliteModeEnabled)")
+                    }) {
+                        let currentCourseId = store.currentRound?.courseId ?? UUID()
+                        let hasImages = satelliteCache.hasCachedImages(for: currentCourseId)
+                        let _ = print("⌚ [ActiveRound] Button render - CourseID: \(currentCourseId), Has images: \(hasImages)")
+
+                        HStack(spacing: 6) {
+                            Image(systemName: store.satelliteModeEnabled ? "map.fill" : "map")
+                                .font(.system(size: 14, weight: .bold))
+                            Text(store.satelliteModeEnabled ? "Sat: ON" : "Sat: OFF")
+                                .font(.system(size: 12, weight: .semibold))
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.8)
+                        }
+                        .foregroundColor(.white)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 12)
+                        .background((store.satelliteModeEnabled ? Color.green : Color.gray).opacity(0.9))
+                        .cornerRadius(8)
+                    }
+                    .buttonStyle(PlainButtonStyle())
+                    .disabled(!satelliteCache.hasCachedImages(for: store.currentRound?.courseId ?? UUID()))
+                    .opacity(satelliteCache.hasCachedImages(for: store.currentRound?.courseId ?? UUID()) ? 1.0 : 0.5)
+                }
+                .padding(.horizontal, 8)
+
+                // Fifth row: Predict Club setting
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Predict Club")
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundColor(.white)
+                            Text("auto-select club based on distance")
+                                .font(.system(size: 9))
+                                .foregroundColor(.secondary)
+                        }
+                        Spacer()
+                        // Edit button for Manual mode
+                        if store.clubPredictionMode == .manual {
+                            Button(action: {
+                                showingActionsSheet = false
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                                    showingDistanceEditor = true
+                                }
+                            }) {
+                                Image(systemName: "slider.horizontal.3")
+                                    .font(.system(size: 14, weight: .bold))
+                                    .foregroundColor(.white)
+                                    .padding(8)
+                                    .background(Color.blue.opacity(0.9))
+                                    .clipShape(Circle())
+                            }
+                            .buttonStyle(PlainButtonStyle())
+                        }
+                    }
+                    .padding(.bottom, 2)
+
+                    // Mode selector buttons
+                    HStack(spacing: 4) {
+                        ForEach(ClubPredictionMode.allCases, id: \.self) { mode in
+                            Button(action: {
+                                store.clubPredictionMode = mode
+                                manualClubOverride = false  // Reset override when mode changes
+                                WKInterfaceDevice.current().play(.click)
+                            }) {
+                                Text(mode.rawValue)
+                                    .font(.system(size: 10, weight: .semibold))
+                                    .foregroundColor(store.clubPredictionMode == mode ? .white : .gray)
+                                    .padding(.horizontal, 6)
+                                    .padding(.vertical, 6)
+                                    .frame(maxWidth: .infinity)
+                                    .background(
+                                        store.clubPredictionMode == mode ? Color.green.opacity(0.9) : Color.gray.opacity(0.3)
+                                    )
+                                    .cornerRadius(6)
+                            }
+                            .buttonStyle(PlainButtonStyle())
+                        }
                     }
                 }
                 .padding(.horizontal, 8)
             }
-
-            // Middle row: Undo and Edit buttons
-            HStack(spacing: 8) {
-                // Undo button
-                Button(action: {
-                    deleteLastStroke()
-                    showingActionsSheet = false
-                }) {
-                    HStack(spacing: 6) {
-                        Image(systemName: "arrow.uturn.backward")
-                            .font(.system(size: 14, weight: .bold))
-                        Text("Undo")
-                            .font(.system(size: 12, weight: .semibold))
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.8)
-                    }
-                    .foregroundColor(.white)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 12)
-                    .background(Color.red.opacity(0.9))
-                    .cornerRadius(8)
-                }
-                .buttonStyle(PlainButtonStyle())
-                .disabled(!canUndo)
-                .opacity(canUndo ? 1.0 : 0.5)
-
-                // Edit Hole button
-                Button(action: {
-                    showingActionsSheet = false
-                    showingEditHole = true
-                }) {
-                    HStack(spacing: 8) {
-                        Image(systemName: "flag")
-                            .font(.system(size: 16, weight: .bold))
-                        Text("Edit")
-                            .font(.system(size: 13, weight: .semibold))
-                    }
-                    .foregroundColor(.white)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 12)
-                    .background(Color.orange.opacity(0.9))
-                    .cornerRadius(8)
-                }
-                .buttonStyle(PlainButtonStyle())
-            }
-            .padding(.horizontal, 8)
-
-            // Third row: Full View and Satellite toggles
-            HStack(spacing: 8) {
-                // Full View Mode Toggle (left)
-                Button(action: {
-                    isFullViewMode.toggle()
-                    WKInterfaceDevice.current().play(.click)
-                    // Update map position based on new mode
-                    if store.currentHole != nil {
-                        updateMapPosition()
-                    } else {
-                        updateNoHoleMapPosition()
-                    }
-                }) {
-                    HStack(spacing: 6) {
-                        Image(systemName: isFullViewMode ? "scope" : "scope")
-                            .font(.system(size: 14, weight: .bold))
-                        Text(isFullViewMode ? "Full: ON" : "Full: OFF")
-                            .font(.system(size: 12, weight: .semibold))
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.8)
-                    }
-                    .foregroundColor(.white)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 12)
-                    .background((isFullViewMode ? Color.green : Color.gray).opacity(0.9))
-                    .cornerRadius(8)
-                }
-                .buttonStyle(PlainButtonStyle())
-
-                // Satellite Mode Toggle (right)
-                Button(action: {
-                    store.satelliteModeEnabled.toggle()
-                    WKInterfaceDevice.current().play(.click)
-                    print("⌚ [ActiveRound] Satellite mode toggled to: \(store.satelliteModeEnabled)")
-                }) {
-                    let currentCourseId = store.currentRound?.courseId ?? UUID()
-                    let hasImages = satelliteCache.hasCachedImages(for: currentCourseId)
-                    let _ = print("⌚ [ActiveRound] Button render - CourseID: \(currentCourseId), Has images: \(hasImages)")
-
-                    HStack(spacing: 6) {
-                        Image(systemName: store.satelliteModeEnabled ? "map.fill" : "map")
-                            .font(.system(size: 14, weight: .bold))
-                        Text(store.satelliteModeEnabled ? "Sat: ON" : "Sat: OFF")
-                            .font(.system(size: 12, weight: .semibold))
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.8)
-                    }
-                    .foregroundColor(.white)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 12)
-                    .background((store.satelliteModeEnabled ? Color.green : Color.gray).opacity(0.9))
-                    .cornerRadius(8)
-                }
-                .buttonStyle(PlainButtonStyle())
-                .disabled(!satelliteCache.hasCachedImages(for: store.currentRound?.courseId ?? UUID()))
-                .opacity(satelliteCache.hasCachedImages(for: store.currentRound?.courseId ?? UUID()) ? 1.0 : 0.5)
-            }
-            .padding(.horizontal, 8)
-
-            // Fourth row: Home button
-            HStack(spacing: 8) {
-                Button(action: {
-                    showingActionsSheet = false
-                    dismiss()
-                }) {
-                    HStack(spacing: 6) {
-                        Image(systemName: "house.fill")
-                            .font(.system(size: 14, weight: .bold))
-                        Text("Home")
-                            .font(.system(size: 12, weight: .semibold))
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.8)
-                    }
-                    .foregroundColor(.white)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 12)
-                    .background(Color.gray.opacity(0.9))
-                    .cornerRadius(8)
-                }
-                .buttonStyle(PlainButtonStyle())
-            }
-            .padding(.horizontal, 8)
+            .padding()
         }
-        .padding()
+        .confirmationDialog("Undo Last Stroke?", isPresented: $showingUndoConfirmation, titleVisibility: .visible) {
+            Button("Undo", role: .destructive) {
+                deleteLastStroke()
+                showingActionsSheet = false
+            }
+            Button("Cancel", role: .cancel) { }
+        }
     }
 
     // MARK: - Actions
@@ -1479,6 +1575,9 @@ struct ActiveRoundView: View {
         }
         store.addStroke(clubId: club.id, trajectoryHeading: trajectoryHeading)
 
+        // Reset manual club override so auto-prediction resumes
+        manualClubOverride = false
+
         // Reset aim direction after stroke is recorded
         swingDetector.capturedAimDirection = nil
 
@@ -1551,6 +1650,9 @@ struct ActiveRoundView: View {
 
         // Sync to iPhone
         WatchConnectivityManager.shared.sendRound(round)
+
+        // Reset manual club override so auto-prediction resumes
+        manualClubOverride = false
 
         // Reset aim direction after stroke is recorded
         swingDetector.capturedAimDirection = nil
@@ -1778,6 +1880,142 @@ struct ActiveRoundView: View {
 
     private func calculateCrownOffset(screenHeight: CGFloat) {
         crownOffset = screenHeight * 0.01
+    }
+}
+
+// MARK: - Club Distance Editor View
+
+struct ClubDistanceEditorView: View {
+    @ObservedObject var store: WatchDataStore
+    @Environment(\.dismiss) private var dismiss
+    @State private var selectedIndex: Int = 0
+    @State private var editingDistance: Double = 100
+    @FocusState private var isCrownFocused: Bool
+
+    // Get enabled clubs with their type names
+    private var enabledClubs: [(club: ClubData, typeName: String)] {
+        store.availableClubs.compactMap { club in
+            guard let clubType = store.clubTypes.first(where: { $0.id == club.clubTypeId }) else {
+                return nil
+            }
+            return (club, clubType.name)
+        }
+    }
+
+    private var currentClubName: String {
+        guard selectedIndex < enabledClubs.count else { return "" }
+        return enabledClubs[selectedIndex].typeName
+    }
+
+    private var currentDistance: Int {
+        Int(editingDistance.rounded())
+    }
+
+    var body: some View {
+        VStack(spacing: 8) {
+            Text("Adjust Distances")
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundColor(.secondary)
+
+            // Club name
+            Text(currentClubName)
+                .font(.system(size: 18, weight: .bold))
+                .foregroundColor(.white)
+
+            // Distance display
+            HStack(alignment: .firstTextBaseline, spacing: 2) {
+                Text("\(currentDistance)")
+                    .font(.system(size: 44, weight: .bold, design: .rounded))
+                    .foregroundColor(.green)
+                Text("yd")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundColor(.secondary)
+            }
+
+            // Instructions
+            Text("Crown: adjust distance")
+                .font(.system(size: 10))
+                .foregroundColor(.secondary)
+
+            // Navigation buttons
+            HStack(spacing: 20) {
+                Button(action: previousClub) {
+                    Image(systemName: "chevron.left")
+                        .font(.system(size: 18, weight: .bold))
+                        .foregroundColor(selectedIndex > 0 ? .white : .gray)
+                }
+                .buttonStyle(PlainButtonStyle())
+                .disabled(selectedIndex == 0)
+
+                Button(action: nextClub) {
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 18, weight: .bold))
+                        .foregroundColor(selectedIndex < enabledClubs.count - 1 ? .white : .gray)
+                }
+                .buttonStyle(PlainButtonStyle())
+                .disabled(selectedIndex >= enabledClubs.count - 1)
+            }
+            .padding(.top, 4)
+
+            // Done button
+            Button("Done") {
+                saveCurrentDistance()
+                dismiss()
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(.green)
+            .padding(.top, 8)
+        }
+        .focusable()
+        .focused($isCrownFocused)
+        .digitalCrownRotation(
+            $editingDistance,
+            from: 10,
+            through: 350,
+            by: 1,
+            sensitivity: .medium,
+            isContinuous: false,
+            isHapticFeedbackEnabled: true
+        )
+        .onAppear {
+            isCrownFocused = true
+            loadCurrentClubDistance()
+        }
+    }
+
+    private func loadCurrentClubDistance() {
+        guard selectedIndex < enabledClubs.count else { return }
+        let typeName = enabledClubs[selectedIndex].typeName
+        let average = ClubPredictionManager.shared.getAverage(
+            for: typeName,
+            mode: .manual,
+            customAverages: store.customClubAverages
+        )
+        editingDistance = Double(average)
+    }
+
+    private func saveCurrentDistance() {
+        guard selectedIndex < enabledClubs.count else { return }
+        let typeName = enabledClubs[selectedIndex].typeName
+        var averages = store.customClubAverages
+        averages[typeName] = currentDistance
+        store.customClubAverages = averages
+    }
+
+    private func previousClub() {
+        guard selectedIndex > 0 else { return }
+        saveCurrentDistance()
+        selectedIndex -= 1
+        loadCurrentClubDistance()
+        WKInterfaceDevice.current().play(.click)
+    }
+
+    private func nextClub() {
+        guard selectedIndex < enabledClubs.count - 1 else { return }
+        saveCurrentDistance()
+        selectedIndex += 1
+        loadCurrentClubDistance()
+        WKInterfaceDevice.current().play(.click)
     }
 }
 

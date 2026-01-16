@@ -2,6 +2,15 @@ import Foundation
 import Combine
 import CoreLocation
 
+// MARK: - Club Prediction Mode
+
+enum ClubPredictionMode: String, Codable, CaseIterable {
+    case off = "Off"
+    case naive = "Naive"
+    case smart = "Smart"
+    case manual = "Manual"
+}
+
 class WatchDataStore: ObservableObject {
     static let shared = WatchDataStore()
 
@@ -13,6 +22,21 @@ class WatchDataStore: ObservableObject {
     @Published var satelliteModeEnabled: Bool = true {
         didSet {
             UserDefaults.standard.set(satelliteModeEnabled, forKey: "satelliteModeEnabled")
+        }
+    }
+
+    @Published var clubPredictionMode: ClubPredictionMode = .off {
+        didSet {
+            UserDefaults.standard.set(clubPredictionMode.rawValue, forKey: "clubPredictionMode")
+        }
+    }
+
+    // Custom club averages for Manual mode (keyed by club type name)
+    @Published var customClubAverages: [String: Int] = [:] {
+        didSet {
+            if let data = try? JSONEncoder().encode(customClubAverages) {
+                UserDefaults.standard.set(data, forKey: "customClubAverages")
+            }
         }
     }
 
@@ -292,6 +316,18 @@ class WatchDataStore: ObservableObject {
         if UserDefaults.standard.object(forKey: "satelliteModeEnabled") != nil {
             satelliteModeEnabled = UserDefaults.standard.bool(forKey: "satelliteModeEnabled")
         }
+
+        // Load club prediction mode setting (defaults to .off)
+        if let modeString = UserDefaults.standard.string(forKey: "clubPredictionMode"),
+           let mode = ClubPredictionMode(rawValue: modeString) {
+            clubPredictionMode = mode
+        }
+
+        // Load custom club averages for Manual mode
+        if let data = UserDefaults.standard.data(forKey: "customClubAverages"),
+           let averages = try? JSONDecoder().decode([String: Int].self, from: data) {
+            customClubAverages = averages
+        }
     }
 
     // MARK: - Hole Completion
@@ -443,5 +479,92 @@ class WatchDataStore: ObservableObject {
 
     func getTypeName(for club: ClubData) -> String {
         return clubTypes.first { $0.id == club.clubTypeId }?.name ?? club.name
+    }
+}
+
+// MARK: - Club Prediction Manager
+
+class ClubPredictionManager {
+    static let shared = ClubPredictionManager()
+
+    // Naive mode default distances (in yards) - used when clubType.averageDistance is nil
+    private let naiveDistances: [String: Int] = [
+        "Driver": 245,
+        "3-Wood": 225,
+        "5-Wood": 207,
+        "4-Hybrid": 192,
+        "5-Hybrid": 180,
+        "4-Iron": 170,
+        "5-Iron": 160,
+        "6-Iron": 150,
+        "7-Iron": 140,
+        "8-Iron": 130,
+        "9-Iron": 118,
+        "Pitch": 106,
+        "Gap": 93,
+        "Sand": 78,
+        "Lob": 45,
+        "Putter": 10
+    ]
+
+    private init() {}
+
+    /// Get the average distance for a club type based on mode and custom settings
+    func getAverage(for clubTypeName: String, mode: ClubPredictionMode, customAverages: [String: Int]) -> Int {
+        switch mode {
+        case .naive, .smart:
+            return naiveDistances[clubTypeName] ?? 100
+        case .manual:
+            return customAverages[clubTypeName] ?? naiveDistances[clubTypeName] ?? 100
+        case .off:
+            return naiveDistances[clubTypeName] ?? 100
+        }
+    }
+
+    /// Find the best club index for a given distance
+    func predictClubIndex(forDistance yards: Int, clubs: [ClubData], clubTypes: [ClubTypeData], mode: ClubPredictionMode, customAverages: [String: Int] = [:]) -> Int? {
+        guard mode != .off, !clubs.isEmpty else { return nil }
+
+        // Build list of (clubIndex, averageDistance) for all available clubs
+        var clubDistances: [(index: Int, average: Int, name: String)] = []
+
+        for (index, club) in clubs.enumerated() {
+            guard let clubType = clubTypes.first(where: { $0.id == club.clubTypeId }) else { continue }
+
+            let average = getAverage(for: clubType.name, mode: mode, customAverages: customAverages)
+            clubDistances.append((index, average, clubType.name))
+        }
+
+        guard !clubDistances.isEmpty else { return nil }
+
+        // Sort by average distance (descending - longest clubs first)
+        clubDistances.sort { $0.average > $1.average }
+
+        // Calculate ranges as midpoints between adjacent clubs
+        for i in 0..<clubDistances.count {
+            let current = clubDistances[i]
+
+            let maxYards: Int
+            if i == 0 {
+                maxYards = Int.max
+            } else {
+                let previous = clubDistances[i - 1]
+                maxYards = (current.average + previous.average) / 2
+            }
+
+            let minYards: Int
+            if i == clubDistances.count - 1 {
+                minYards = 0
+            } else {
+                let next = clubDistances[i + 1]
+                minYards = (current.average + next.average) / 2
+            }
+
+            if yards >= minYards && yards < maxYards {
+                return current.index
+            }
+        }
+
+        return clubDistances.last?.index
     }
 }
