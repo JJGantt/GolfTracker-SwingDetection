@@ -11,11 +11,11 @@ struct ClubTypeData: Identifiable, Codable, Hashable {
 
     static func defaultClubTypes() -> [ClubTypeData] {
         return [
-            ClubTypeData(name: "Driver", isDefault: true, averageDistance: 245),
+            ClubTypeData(name: "Drive", isDefault: true, averageDistance: 245),
             ClubTypeData(name: "3-Wood", isDefault: true, averageDistance: 225),
             ClubTypeData(name: "5-Wood", isDefault: true, averageDistance: 207),
-            ClubTypeData(name: "4-Hybrid", isDefault: true, averageDistance: 192),
-            ClubTypeData(name: "5-Hybrid", isDefault: true, averageDistance: 180),
+            ClubTypeData(name: "4-Hyb", isDefault: true, averageDistance: 192),
+            ClubTypeData(name: "5-Hyb", isDefault: true, averageDistance: 180),
             ClubTypeData(name: "4-Iron", isDefault: true, averageDistance: 170),
             ClubTypeData(name: "5-Iron", isDefault: true, averageDistance: 160),
             ClubTypeData(name: "6-Iron", isDefault: true, averageDistance: 150),
@@ -26,7 +26,7 @@ struct ClubTypeData: Identifiable, Codable, Hashable {
             ClubTypeData(name: "Gap", isDefault: true, averageDistance: 93),
             ClubTypeData(name: "Sand", isDefault: true, averageDistance: 78),
             ClubTypeData(name: "Lob", isDefault: true, averageDistance: 45),
-            ClubTypeData(name: "Putter", isDefault: true, averageDistance: 10)
+            ClubTypeData(name: "Put", isDefault: true, averageDistance: 10)
         ]
     }
 }
@@ -112,19 +112,31 @@ struct Course: Identifiable, Codable, Hashable {
 struct Hole: Identifiable, Codable, Hashable {
     var id = UUID()
     var number: Int
-    var latitude: Double
-    var longitude: Double
+    var latitude: Double?
+    var longitude: Double?
     var par: Int?
 
-    var coordinate: CLLocationCoordinate2D {
-        CLLocationCoordinate2D(latitude: latitude, longitude: longitude)
+    var coordinate: CLLocationCoordinate2D? {
+        guard let lat = latitude, let lon = longitude else { return nil }
+        return CLLocationCoordinate2D(latitude: lat, longitude: lon)
     }
 
-    init(number: Int, coordinate: CLLocationCoordinate2D, par: Int? = nil) {
+    /// Whether this hole has a flag location set
+    var hasLocation: Bool {
+        latitude != nil && longitude != nil
+    }
+
+    init(number: Int, coordinate: CLLocationCoordinate2D? = nil, par: Int? = nil) {
         self.number = number
+        self.latitude = coordinate?.latitude
+        self.longitude = coordinate?.longitude
+        self.par = par
+    }
+
+    /// Update the hole's flag location
+    mutating func setCoordinate(_ coordinate: CLLocationCoordinate2D) {
         self.latitude = coordinate.latitude
         self.longitude = coordinate.longitude
-        self.par = par
     }
 }
 

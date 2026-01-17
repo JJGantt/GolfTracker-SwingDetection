@@ -351,6 +351,33 @@ class WatchDataStore: ObservableObject {
 
     // MARK: - Hole Management
 
+    /// Adds the next hole without coordinates (user will place flag)
+    func addNextHole() {
+        guard var round = currentRound else { return }
+
+        // Determine next hole number
+        let nextHoleNumber = round.holes.count + 1
+
+        // Create new hole without coordinates
+        let newHole = Hole(number: nextHoleNumber)
+
+        // Add hole to round's holes array
+        round.holes.append(newHole)
+
+        // Update hole index to the new hole
+        round.currentHoleIndex = nextHoleNumber - 1
+
+        // Update local state
+        currentRound = round
+        currentHoleIndex = nextHoleNumber - 1
+
+        // Save and sync
+        saveToStorage()
+        WatchConnectivityManager.shared.sendRound(round)
+
+        print("⌚ [WatchDataStore] Added hole \(nextHoleNumber) (awaiting flag placement)")
+    }
+
     func addHole(coordinate: CLLocationCoordinate2D, par: Int? = nil) {
         guard var round = currentRound else { return }
 
@@ -442,12 +469,13 @@ class WatchDataStore: ObservableObject {
     // MARK: - Quick Start Round
 
     func startQuickRound() {
-        // Create a new round with "Quick Start" course
+        // Create a new round with "Quick Start" course and hole 1 (no location yet)
         let quickStartCourseId = UUID()
+        let firstHole = Hole(number: 1)  // No coordinates - user will place flag
         let newRound = Round(
             courseId: quickStartCourseId,
             courseName: "Quick Start",
-            holes: [] // Empty - user will add holes as they play
+            holes: [firstHole]
         )
 
         // Set as current round
@@ -460,7 +488,7 @@ class WatchDataStore: ObservableObject {
         // Sync to iPhone
         WatchConnectivityManager.shared.sendRound(newRound)
 
-        print("⌚ [WatchDataStore] Started Quick Start round")
+        print("⌚ [WatchDataStore] Started Quick Start round with hole 1 (awaiting flag placement)")
     }
 
     // MARK: - Helpers
@@ -492,8 +520,8 @@ class ClubPredictionManager {
         "Driver": 245,
         "3-Wood": 225,
         "5-Wood": 207,
-        "4-Hybrid": 192,
-        "5-Hybrid": 180,
+        "4-Hyb": 192,
+        "5-Hyb": 180,
         "4-Iron": 170,
         "5-Iron": 160,
         "6-Iron": 150,

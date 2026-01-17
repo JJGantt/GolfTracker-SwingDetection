@@ -24,13 +24,15 @@ struct HoleMapView: View {
         MapReader { proxy in
             Map(position: $position) {
                 // Show current hole marker (green if completed, yellow if not)
-                Annotation("", coordinate: hole.coordinate) {
-                    Image(systemName: "flag.fill")
-                        .foregroundColor(isHoleCompleted ? .green : .yellow)
-                        .font(.title)
-                        .onTapGesture {
-                            onHoleTap()
-                        }
+                if let holeCoord = hole.coordinate {
+                    Annotation("", coordinate: holeCoord) {
+                        Image(systemName: "flag.fill")
+                            .foregroundColor(isHoleCompleted ? .green : .yellow)
+                            .font(.title)
+                            .onTapGesture {
+                                onHoleTap()
+                            }
+                    }
                 }
 
                 // Show strokes for current hole

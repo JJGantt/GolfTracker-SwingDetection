@@ -12,29 +12,18 @@ struct HomeView: View {
     var body: some View {
         NavigationView {
             VStack(spacing: 20) {
-                Spacer()
-
                 // Manage Clubs Button
                 Button(action: {
                     showingClubManagement = true
                 }) {
-                    VStack(spacing: 12) {
-                        Image(systemName: "figure.golf")
-                            .font(.system(size: 60))
-                        Text("Manage Clubs")
-                            .font(.title2)
-                            .fontWeight(.semibold)
-                    }
-                    .frame(maxWidth: .infinity)
-                    .padding(40)
-                    .background(Color.blue.opacity(0.1))
-                    .cornerRadius(20)
+                    Label("Manage Clubs", systemImage: "figure.golf")
+                        .frame(maxWidth: .infinity)
                 }
-                .foregroundColor(.blue)
-                .padding(.horizontal, 40)
+                .buttonStyle(.borderedProminent)
 
                 Spacer()
             }
+            .padding()
             .navigationTitle("Home")
             .sheet(isPresented: $showingClubManagement) {
                 ClubManagementView()

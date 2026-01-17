@@ -76,15 +76,7 @@ struct SatelliteImageView: View {
         }
         .focusable(isPlacingTarget || isPlacingPenalty)
         .focused($isFocused)
-        .digitalCrownRotation(
-            $scale,
-            from: 0.5,
-            through: 3.0,
-            by: 0.05,
-            sensitivity: .medium,
-            isContinuous: true,
-            isHapticFeedbackEnabled: true
-        )
+        .modifier(ZoomCrownRotationModifier(scale: $scale))
         .onChange(of: isPlacingTarget) { _, newValue in
             if !newValue && !isPlacingPenalty {
                 scale = 1.0  // Reset zoom when exiting placement mode
@@ -133,9 +125,9 @@ struct SatelliteImageView: View {
     private func annotationsOverlay(metadata: SatelliteImageMetadata, geometry: GeometryProxy) -> some View {
         ZStack {
             // Hole flag marker
-            if !isPlacingTarget && !isPlacingPenalty {
+            if !isPlacingTarget && !isPlacingPenalty, let holeCoord = hole.coordinate {
                 annotationView(
-                    for: hole.coordinate,
+                    for: holeCoord,
                     metadata: metadata,
                     geometry: geometry,
                     content: {

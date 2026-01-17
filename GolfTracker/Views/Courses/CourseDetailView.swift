@@ -28,19 +28,22 @@ struct CourseDetailView: View {
     var body: some View {
         ScrollView {
             VStack(spacing: 20) {
-                // Map showing all holes
-                if !currentCourse.holes.isEmpty {
+                // Map showing all holes with coordinates
+                let holesWithCoords = currentCourse.holes.filter { $0.hasLocation }
+                if !holesWithCoords.isEmpty {
                     Map(position: $position) {
-                        ForEach(currentCourse.holes) { hole in
-                            Annotation("", coordinate: hole.coordinate) {
-                                ZStack {
-                                    Circle()
-                                        .fill(.red)
-                                        .frame(width: 25, height: 25)
-                                    Text("\(hole.number)")
-                                        .font(.caption2)
-                                        .fontWeight(.bold)
-                                        .foregroundColor(.white)
+                        ForEach(holesWithCoords) { hole in
+                            if let coord = hole.coordinate {
+                                Annotation("", coordinate: coord) {
+                                    ZStack {
+                                        Circle()
+                                            .fill(.red)
+                                            .frame(width: 25, height: 25)
+                                        Text("\(hole.number)")
+                                            .font(.caption2)
+                                            .fontWeight(.bold)
+                                            .foregroundColor(.white)
+                                    }
                                 }
                             }
                         }
@@ -173,10 +176,11 @@ struct CourseDetailView: View {
     }
 
     private func updateMapPosition() {
-        guard !currentCourse.holes.isEmpty else { return }
+        // Only consider holes with coordinates
+        let coordinates = currentCourse.holes.compactMap { $0.coordinate }
+        guard !coordinates.isEmpty else { return }
 
         // Calculate region that fits all holes
-        let coordinates = currentCourse.holes.map { $0.coordinate }
         let minLat = coordinates.map { $0.latitude }.min() ?? 0
         let maxLat = coordinates.map { $0.latitude }.max() ?? 0
         let minLon = coordinates.map { $0.longitude }.min() ?? 0

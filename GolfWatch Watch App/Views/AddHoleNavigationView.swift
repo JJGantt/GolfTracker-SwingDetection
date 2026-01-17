@@ -11,10 +11,8 @@ struct AddHoleNavigationView: View {
     @FocusState private var isMapFocused: Bool
     @State private var shouldMaintainFocus = true
 
-    private var nextHoleNumber: Int {
-        guard let round = store.currentRound,
-              let course = store.getCourse(for: round) else { return 1 }
-        return course.holes.count + 1
+    private var currentHoleNumber: Int {
+        store.currentHole?.number ?? 1
     }
 
     var body: some View {
@@ -44,11 +42,7 @@ struct AddHoleNavigationView: View {
                         }
                     }
                 }
-                .mapStyle(.standard)
-                .mapControls {
-                    // Disable default map controls
-                }
-                .mapControlVisibility(.hidden)
+                .modifier(HideMapControlsModifier(isInteractive: true))
                 .focusable()
                 .focused($isMapFocused)
                 .onTapGesture { screenCoord in
@@ -62,7 +56,7 @@ struct AddHoleNavigationView: View {
 
             // Top hole number overlay
             VStack {
-                Text("Hole \(nextHoleNumber)")
+                Text("Hole \(currentHoleNumber)")
                     .font(.system(size: 16, weight: .bold))
                     .foregroundColor(.white)
                     .padding(.horizontal, 12)
@@ -133,6 +127,7 @@ struct AddHoleNavigationView: View {
         }
         .navigationBarTitleDisplayMode(.inline)
         .toolbar(.hidden, for: .navigationBar)
+        .navigationBarBackButtonHidden(true)
         .onAppear {
             // Start location tracking
             locationManager.requestPermission()
@@ -163,18 +158,19 @@ struct AddHoleNavigationView: View {
     }
 
     private func saveHole(par: Int) {
-        guard let coordinate = temporaryHolePosition else { return }
+        guard let coordinate = temporaryHolePosition,
+              let currentHole = store.currentHole else { return }
 
-        // Stop maintaining focus before dismissing
+        // Stop maintaining focus
         shouldMaintainFocus = false
 
-        // Add hole to course via store with par
-        store.addHole(coordinate: coordinate, par: par)
+        // Update the current hole's coordinates and par
+        store.updateHole(holeNumber: currentHole.number, newCoordinate: coordinate, par: par)
 
         // Haptic feedback
         WKInterfaceDevice.current().play(.success)
 
-        // Dismiss view
-        dismiss()
+        // No need to dismiss - parent view will automatically switch
+        // when it detects the hole now has a location
     }
 }

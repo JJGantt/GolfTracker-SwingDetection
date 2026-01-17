@@ -17,22 +17,18 @@ struct ActiveRoundView: View {
     @State private var isPlacingTarget = false
     @State private var isPlacingPenalty = false
     @State private var temporaryPenaltyPosition: CLLocationCoordinate2D?
-    @State private var showingActionsSheet = false
+    @State private var showingOptions = false
     @State private var showingEditHole = false
-    @State private var showingAddHole = false
-    @State private var navigateToAddHole = false
     @State private var isLastStrokeViewMode = false
     @State private var undoHoldProgress: Double = 0.0
     @State private var undoHoldTimer: Timer?
-    @State private var isPlacingHole = false
-    @State private var temporaryHolePosition: CLLocationCoordinate2D?
     @State private var isFullViewMode = false
     @State private var isCrownScrolling = false
     @State private var crownScrollTimer: Timer?
     @State private var isPulsing = false
-    @State private var showingUndoConfirmation = false
     @State private var showingDistanceEditor = false
     @State private var manualClubOverride = false       // True when user manually changed club
+    @State private var navigateToAccelTest = false
     @State private var isAutoSelectingClub = false      // True when we're programmatically updating club
     @FocusState private var isMapFocused: Bool
     @FocusState private var isMainViewFocused: Bool
@@ -77,14 +73,15 @@ struct ActiveRoundView: View {
         print("⌚ [Distance] currentHole: \(store.currentHole?.number.description ?? "nil")")
 
         guard let userLocation = locationManager.location,
-              let hole = store.currentHole else {
+              let hole = store.currentHole,
+              let holeCoord = hole.coordinate else {
             print("⌚ [Distance] Returning nil - missing location or hole")
             return nil
         }
 
         let holeLocation = CLLocation(
-            latitude: hole.coordinate.latitude,
-            longitude: hole.coordinate.longitude
+            latitude: holeCoord.latitude,
+            longitude: holeCoord.longitude
         )
 
         let distanceInMeters = userLocation.distance(from: holeLocation)
@@ -168,30 +165,39 @@ struct ActiveRoundView: View {
     // Calculate the rotation angle for the aim arrow
     @ViewBuilder
     private func clubSelectorOverlay(clubFontSize: CGFloat) -> some View {
-        // Guard against empty clubs array to prevent division by zero
-        if clubs.isEmpty {
-            Text("No Clubs")
-                .font(.system(size: clubFontSize, weight: .semibold))
-                .foregroundColor(.white)
-        } else {
-            // Get surrounding clubs
-            let currentIndex = Int(selectedClubIndex.rounded()) % clubs.count
-            let previous2Index = (currentIndex - 2 + clubs.count) % clubs.count
-            let previous1Index = (currentIndex - 1 + clubs.count) % clubs.count
-            let next1Index = (currentIndex + 1) % clubs.count
-            let next2Index = (currentIndex + 2) % clubs.count
+        // On watchOS 10, club selector is integrated into buttonsOverlay instead
+        if #available(watchOS 11.0, *) {
+            if clubs.isEmpty {
+                Text("No Clubs")
+                    .font(.system(size: clubFontSize, weight: .semibold))
+                    .foregroundColor(.white)
+            } else {
+                clubSelectorOverlayModern(clubFontSize: clubFontSize)
+            }
+        }
+        // watchOS 10: club selector is shown in buttonsOverlay via legacyClubSelector()
+    }
 
-            let previous2Club = clubs[previous2Index]
-            let previous1Club = clubs[previous1Index]
-            let next1Club = clubs[next1Index]
-            let next2Club = clubs[next2Index]
+    // MARK: - watchOS 11+ Club Selector (crown-based with expanding clubs)
+    @available(watchOS 11.0, *)
+    @ViewBuilder
+    private func clubSelectorOverlayModern(clubFontSize: CGFloat) -> some View {
+        let currentIndex = Int(selectedClubIndex.rounded()) % clubs.count
+        let previous2Index = (currentIndex - 2 + clubs.count) % clubs.count
+        let previous1Index = (currentIndex - 1 + clubs.count) % clubs.count
+        let next1Index = (currentIndex + 1) % clubs.count
+        let next2Index = (currentIndex + 2) % clubs.count
 
-            let currentSize = isCrownScrolling ? clubFontSize * 1.3 : clubFontSize
-            let adjacent1Size = clubFontSize * 0.8  // Directly adjacent clubs (bigger)
-            let adjacent2Size = clubFontSize * 0.65 // Further clubs (smaller)
+        let previous2Club = clubs[previous2Index]
+        let previous1Club = clubs[previous1Index]
+        let next1Club = clubs[next1Index]
+        let next2Club = clubs[next2Index]
 
-        // Calculate spacing based on actual text height (approximate)
-        let adjacent1Height: CGFloat = adjacent1Size + 8  // Increased spacing for directly adjacent
+        let currentSize = isCrownScrolling ? clubFontSize * 1.3 : clubFontSize
+        let adjacent1Size = clubFontSize * 0.8
+        let adjacent2Size = clubFontSize * 0.65
+
+        let adjacent1Height: CGFloat = adjacent1Size + 8
         let adjacent2Height: CGFloat = adjacent2Size + 4
 
         VStack {
@@ -201,7 +207,6 @@ struct ActiveRoundView: View {
                 Spacer()
 
                 ZStack {
-                    // Current club - stays in the same position
                     Text(selectedClub.map { store.getTypeName(for: $0) } ?? "No Club")
                         .font(.system(size: currentSize, weight: .semibold))
                         .foregroundColor(.white)
@@ -218,9 +223,7 @@ struct ActiveRoundView: View {
                         )
                         .shadow(color: .black.opacity(0.3), radius: 2, x: 0, y: 1)
 
-                    // Two clubs above when scrolling (only if not at top)
                     if isCrownScrolling {
-                        // Previous -1 (directly above current) - only show if currentIndex >= 1
                         if currentIndex >= 1 {
                             Text(store.getTypeName(for: previous1Club))
                                 .font(.system(size: adjacent1Size, weight: .medium))
@@ -240,7 +243,6 @@ struct ActiveRoundView: View {
                                 .transition(.opacity.combined(with: .move(edge: .bottom)))
                         }
 
-                        // Previous -2 (second from top) - only show if currentIndex >= 2
                         if currentIndex >= 2 {
                             Text(store.getTypeName(for: previous2Club))
                                 .font(.system(size: adjacent2Size, weight: .medium))
@@ -261,9 +263,7 @@ struct ActiveRoundView: View {
                         }
                     }
 
-                    // Two clubs below when scrolling (only if not at bottom)
                     if isCrownScrolling {
-                        // Next +1 (directly below current) - only show if not at last club
                         if currentIndex < clubs.count - 1 {
                             Text(store.getTypeName(for: next1Club))
                                 .font(.system(size: adjacent1Size, weight: .medium))
@@ -283,7 +283,6 @@ struct ActiveRoundView: View {
                                 .transition(.opacity.combined(with: .move(edge: .top)))
                         }
 
-                        // Next +2 (second from bottom) - only show if at least 2 clubs remaining
                         if currentIndex < clubs.count - 2 {
                             Text(store.getTypeName(for: next2Club))
                                 .font(.system(size: adjacent2Size, weight: .medium))
@@ -310,7 +309,69 @@ struct ActiveRoundView: View {
         }
         .animation(.easeInOut(duration: 0.2), value: isCrownScrolling)
         .opacity(isPlacingTarget || isPlacingPenalty ? 0 : 1)
-        } // end else clubs.isEmpty
+    }
+
+    // MARK: - watchOS 10 Club Selector (inline in button stack)
+    @ViewBuilder
+    private func legacyClubSelector(buttonSize: CGFloat) -> some View {
+        let currentIndex = Int(selectedClubIndex.rounded()) % clubs.count
+        let arrowButtonSize: CGFloat = buttonSize * 0.6
+        let arrowSize: CGFloat = arrowButtonSize * 0.45
+
+        VStack(spacing: 2) {
+            // Up arrow button - previous club
+            Button(action: {
+                if currentIndex > 0 {
+                    selectedClubIndex = Double(currentIndex - 1)
+                    WKInterfaceDevice.current().play(.click)
+                }
+            }) {
+                Image(systemName: "chevron.up")
+                    .font(.system(size: arrowSize, weight: .bold))
+                    .foregroundColor(currentIndex > 0 ? .white : .white.opacity(0.3))
+                    .frame(width: arrowButtonSize, height: arrowButtonSize)
+                    .background(
+                        Circle()
+                            .fill(.ultraThinMaterial)
+                            .opacity(0.7)
+                    )
+            }
+            .buttonStyle(PlainButtonStyle())
+            .disabled(currentIndex <= 0)
+
+            // Current club name
+            Text(selectedClub.map { store.getTypeName(for: $0) } ?? "—")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundColor(.white)
+                .padding(.horizontal, 4)
+                .padding(.vertical, 2)
+                .background(
+                    RoundedRectangle(cornerRadius: 4)
+                        .fill(.ultraThinMaterial)
+                        .opacity(0.9)
+                )
+                .shadow(color: .black.opacity(0.3), radius: 1, x: 0, y: 1)
+
+            // Down arrow button - next club
+            Button(action: {
+                if currentIndex < clubs.count - 1 {
+                    selectedClubIndex = Double(currentIndex + 1)
+                    WKInterfaceDevice.current().play(.click)
+                }
+            }) {
+                Image(systemName: "chevron.down")
+                    .font(.system(size: arrowSize, weight: .bold))
+                    .foregroundColor(currentIndex < clubs.count - 1 ? .white : .white.opacity(0.3))
+                    .frame(width: arrowButtonSize, height: arrowButtonSize)
+                    .background(
+                        Circle()
+                            .fill(.ultraThinMaterial)
+                            .opacity(0.7)
+                    )
+            }
+            .buttonStyle(PlainButtonStyle())
+            .disabled(currentIndex >= clubs.count - 1)
+        }
     }
 
     @ViewBuilder
@@ -372,56 +433,66 @@ struct ActiveRoundView: View {
 
                 Spacer()
 
-                // Right: Stack of buttons (bottom to top: shot, direction)
+                // Right side column
                 VStack(spacing: 4) {
-                    // Blue aim direction button (top) - hide when no hole
-                    if store.currentHole != nil {
-                        Button(action: captureAimDirection) {
+                    // watchOS 10: Club selector above the buttons
+                    if #unavailable(watchOS 11.0) {
+                        if !clubs.isEmpty {
+                            legacyClubSelector(buttonSize: buttonSize)
+                        }
+                    }
+
+                    // Buttons stack (bottom to top: shot, direction)
+                    VStack(spacing: 4) {
+                        // Blue aim direction button (top) - hide when no hole
+                        if store.currentHole != nil {
+                            Button(action: captureAimDirection) {
+                                ZStack {
+                                    Circle()
+                                        .fill(Color.blue.opacity(0.95))
+                                        .frame(width: buttonSize, height: buttonSize)
+                                        .shadow(color: .black.opacity(0.3), radius: 2, x: 0, y: 1)
+
+                                    Image(systemName: "location.north.fill")
+                                        .font(.system(size: iconSize, weight: .bold))
+                                        .foregroundColor(.white)
+                                        .rotationEffect(.degrees(aimArrowRotation))
+                                }
+                            }
+                            .buttonStyle(PlainButtonStyle())
+                            .disabled(store.currentHole.map { store.isHoleCompleted($0.number) } ?? false)
+                            .opacity(store.currentHole.map { store.isHoleCompleted($0.number) } ?? false ? 0.3 : 0.95)
+                        }
+
+                        // Green stroke button (bottom) - always show
+                        Button(action: recordStroke) {
                             ZStack {
                                 Circle()
-                                    .fill(Color.blue.opacity(0.95))
+                                    .fill(showingRecordedFeedback ? Color.white.opacity(0.95) : Color.green.opacity(0.95))
                                     .frame(width: buttonSize, height: buttonSize)
                                     .shadow(color: .black.opacity(0.3), radius: 2, x: 0, y: 1)
 
-                                Image(systemName: "location.north.fill")
+                                Image(systemName: showingRecordedFeedback ? "checkmark" : "plus")
                                     .font(.system(size: iconSize, weight: .bold))
-                                    .foregroundColor(.white)
-                                    .rotationEffect(.degrees(aimArrowRotation))
+                                    .foregroundColor(showingRecordedFeedback ? .green : .white)
                             }
                         }
                         .buttonStyle(PlainButtonStyle())
                         .disabled(store.currentHole.map { store.isHoleCompleted($0.number) } ?? false)
                         .opacity(store.currentHole.map { store.isHoleCompleted($0.number) } ?? false ? 0.3 : 0.95)
                     }
-
-                    // Green stroke button (bottom) - always show
-                    Button(action: recordStroke) {
-                        ZStack {
-                            Circle()
-                                .fill(showingRecordedFeedback ? Color.white.opacity(0.95) : Color.green.opacity(0.95))
-                                .frame(width: buttonSize, height: buttonSize)
-                                .shadow(color: .black.opacity(0.3), radius: 2, x: 0, y: 1)
-
-                            Image(systemName: showingRecordedFeedback ? "checkmark" : "plus")
-                                .font(.system(size: iconSize, weight: .bold))
-                                .foregroundColor(showingRecordedFeedback ? .green : .white)
-                        }
-                    }
-                    .buttonStyle(PlainButtonStyle())
-                    .disabled(store.currentHole.map { store.isHoleCompleted($0.number) } ?? false)
-                    .opacity(store.currentHole.map { store.isHoleCompleted($0.number) } ?? false ? 0.3 : 0.95)
                 }
                 .opacity(isPlacingTarget || isPlacingPenalty ? 0 : 1)
             }
             .padding(.horizontal, 4)
-            .padding(.bottom, 16)
+            .modifier(ButtonsBottomPaddingModifier())
         }
         .ignoresSafeArea()
     }
 
     @ViewBuilder
     private func swingDetectedOverlay(buttonSize: CGFloat, iconSize: CGFloat) -> some View {
-        if swingDetector.lastDetectedSwing != nil && store.currentHole != nil && !isPlacingTarget && !isPlacingPenalty && !isPlacingHole {
+        if swingDetector.lastDetectedSwing != nil && store.currentHole != nil && !isPlacingTarget && !isPlacingPenalty {
             VStack(spacing: 4) {
                 // Main swing button - tap to add stroke
                 Button(action: addStrokeFromLastSwing) {
@@ -504,7 +575,7 @@ struct ActiveRoundView: View {
                     .frame(width: 30, height: 5)
                     .padding(.bottom, 4)
                     .onTapGesture {
-                        showingActionsSheet = true
+                        showingOptions = true
                     }
 
                 Spacer()
@@ -528,102 +599,6 @@ struct ActiveRoundView: View {
                     isMapFocused = false
                     isMainViewFocused = true
                     updateMapPosition()
-                    WKInterfaceDevice.current().play(.click)
-                }) {
-                    ZStack {
-                        Circle()
-                            .fill(Color.red.opacity(0.95))
-                            .frame(width: buttonSize, height: buttonSize)
-                            .shadow(color: .black.opacity(0.3), radius: 2, x: 0, y: 1)
-
-                        Image(systemName: "xmark")
-                            .font(.system(size: iconSize, weight: .bold))
-                            .foregroundColor(.white)
-                    }
-                }
-                .buttonStyle(PlainButtonStyle())
-            }
-            .padding(.horizontal, 4)
-            .padding(.bottom, 16)
-        }
-        .ignoresSafeArea()
-    }
-
-    @ViewBuilder
-    private func parButtonsOverlay() -> some View {
-        VStack {
-            Spacer()
-
-            HStack(spacing: 8) {
-                // Par 3 button
-                Button(action: { saveHole(par: 3) }) {
-                    ZStack {
-                        Circle()
-                            .fill(Color.green.opacity(0.95))
-                            .frame(width: 50, height: 50)
-                            .shadow(color: .black.opacity(0.3), radius: 4, x: 0, y: 2)
-
-                        Text("3")
-                            .font(.system(size: 24, weight: .bold))
-                            .foregroundColor(.white)
-                    }
-                }
-                .buttonStyle(PlainButtonStyle())
-
-                // Par 4 button
-                Button(action: { saveHole(par: 4) }) {
-                    ZStack {
-                        Circle()
-                            .fill(Color.green.opacity(0.95))
-                            .frame(width: 50, height: 50)
-                            .shadow(color: .black.opacity(0.3), radius: 4, x: 0, y: 2)
-
-                        Text("4")
-                            .font(.system(size: 24, weight: .bold))
-                            .foregroundColor(.white)
-                    }
-                }
-                .buttonStyle(PlainButtonStyle())
-
-                // Par 5 button
-                Button(action: { saveHole(par: 5) }) {
-                    ZStack {
-                        Circle()
-                            .fill(Color.green.opacity(0.95))
-                            .frame(width: 50, height: 50)
-                            .shadow(color: .black.opacity(0.3), radius: 4, x: 0, y: 2)
-
-                        Text("5")
-                            .font(.system(size: 24, weight: .bold))
-                            .foregroundColor(.white)
-                    }
-                }
-                .buttonStyle(PlainButtonStyle())
-            }
-            .padding(.horizontal, 6)
-            .padding(.bottom, 16)
-        }
-        .ignoresSafeArea()
-    }
-
-    @ViewBuilder
-    private func holePlacementCancelButton(buttonSize: CGFloat, iconSize: CGFloat) -> some View {
-        VStack {
-            Spacer()
-
-            HStack(alignment: .bottom) {
-                Spacer()
-
-                Button(action: {
-                    isPlacingHole = false
-                    temporaryHolePosition = nil
-                    isMapFocused = false
-                    isMainViewFocused = true
-                    if store.currentHole != nil {
-                        updateMapPosition()
-                    } else {
-                        updateNoHoleMapPosition()
-                    }
                     WKInterfaceDevice.current().play(.click)
                 }) {
                     ZStack {
@@ -680,23 +655,8 @@ struct ActiveRoundView: View {
                         .background(Color.black.opacity(0.4))
                         .clipShape(RoundedRectangle(cornerRadius: 8))
                         .fixedSize()
-                } else {
-                    // No hole defined - show flag button
-                    Button(action: {
-                        isPlacingHole = true
-                        isMapFocused = true
-                        isMainViewFocused = false
-                        WKInterfaceDevice.current().play(.click)
-                    }) {
-                        Image(systemName: "flag.fill")
-                            .font(.system(size: 32, weight: .bold))
-                            .foregroundColor(.yellow)
-                            .padding(8)
-                            .background(Color.black.opacity(0.5))
-                            .clipShape(RoundedRectangle(cornerRadius: 8))
-                    }
-                    .buttonStyle(PlainButtonStyle())
                 }
+                // No else case - when no hole exists, onAppear navigates to AddHoleNavigationView
             }
             .padding(.leading, 6)
 
@@ -704,18 +664,19 @@ struct ActiveRoundView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .ignoresSafeArea()
-        .opacity(isPlacingTarget || isPlacingPenalty || isPlacingHole ? 0 : 1)
+        .opacity(isPlacingTarget || isPlacingPenalty ? 0 : 1)
     }
 
     private var aimArrowRotation: Double {
         guard let capturedHeading = swingDetector.capturedAimDirection,
               let userLocation = locationManager.location,
-              let hole = store.currentHole else {
+              let hole = store.currentHole,
+              let holeCoord = hole.coordinate else {
             return 0 // Arrow points up when not set
         }
 
         // Calculate bearing to hole
-        let bearingToHole = calculateBearing(from: userLocation.coordinate, to: hole.coordinate)
+        let bearingToHole = calculateBearing(from: userLocation.coordinate, to: holeCoord)
 
         // Calculate offset: how much the aim direction differs from hole bearing
         // Positive = aiming right of hole, Negative = aiming left of hole
@@ -739,7 +700,7 @@ struct ActiveRoundView: View {
                 mapView(for: hole)
                     .ignoresSafeArea()
             } else {
-                // No hole defined - show map centered on user
+                // No hole defined - show map centered on user (briefly, before navigating to AddHoleNavigationView)
                 noHoleMapView()
                     .ignoresSafeArea()
             }
@@ -747,13 +708,11 @@ struct ActiveRoundView: View {
             // Club selector overlay (positioned at crown height)
             clubSelectorOverlay(clubFontSize: clubFontSize)
 
-            // Info overlay (top left) - distance and hole info (or flag button when no hole)
+            // Info overlay (top left) - distance and hole info
             holeInfoOverlay
 
-            // Buttons overlay (bottom) - show unless placing hole
-            if !isPlacingHole {
-                buttonsOverlay(buttonSize: buttonSize, iconSize: iconSize)
-            }
+            // Buttons overlay (bottom)
+            buttonsOverlay(buttonSize: buttonSize, iconSize: iconSize)
 
             // Swing detected overlay (centered)
             swingDetectedOverlay(buttonSize: buttonSize, iconSize: iconSize)
@@ -766,16 +725,6 @@ struct ActiveRoundView: View {
                 penaltyCancelButton(buttonSize: buttonSize, iconSize: iconSize)
             }
 
-            // Par buttons for hole placement
-            if isPlacingHole && temporaryHolePosition != nil {
-                parButtonsOverlay()
-            }
-
-            // Cancel button for hole placement
-            if isPlacingHole {
-                holePlacementCancelButton(buttonSize: buttonSize, iconSize: iconSize)
-            }
-
             // Invisible button for double-tap gesture (clench fingers twice)
             // Uses detected swing if available, otherwise adds regular stroke
             Button(action: handleDoubleTapGesture) {
@@ -783,47 +732,65 @@ struct ActiveRoundView: View {
                     .frame(width: 1, height: 1)
             }
             .buttonStyle(PlainButtonStyle())
-            .handGestureShortcut(.primaryAction)
-            .disabled(store.currentHole.map { store.isHoleCompleted($0.number) } ?? false || isPlacingTarget || isPlacingPenalty || isPlacingHole)
+            .modifier(HandGestureShortcutModifier())
+            .disabled(store.currentHole.map { store.isHoleCompleted($0.number) } ?? false || isPlacingTarget || isPlacingPenalty)
         }
         .task {
             calculateCrownOffset(screenHeight: geometry.size.height)
         }
     }
 
+    /// Whether the current hole needs its flag location to be set
+    private var needsFlagPlacement: Bool {
+        guard let hole = store.currentHole else { return false }
+        return !hole.hasLocation
+    }
+
     var body: some View {
-        GeometryReader { geometry in
-            mainContent(geometry: geometry)
+        Group {
+            if needsFlagPlacement {
+                // Current hole exists but has no flag location - show placement view
+                AddHoleNavigationView(store: store, locationManager: locationManager)
+            } else {
+                // Normal active round view
+                GeometryReader { geometry in
+                    mainContent(geometry: geometry)
+                }
+                .toolbar(.hidden, for: .navigationBar)
+                .navigationBarBackButtonHidden(true)
+                .focusable()
+                .focused($isMainViewFocused)
+                .modifier(ClubCrownRotationModifier(selectedClubIndex: $selectedClubIndex, clubCount: clubs.count))
+                .digitalCrownAccessory(.hidden)
+            }
         }
-        .toolbar(.hidden, for: .navigationBar)
-        .focusable()
-        .focused($isMainViewFocused)
-        .digitalCrownRotation(
-            $selectedClubIndex,
-            from: 0,
-            through: Double(max(clubs.count - 1, 0)),
-            by: 1,
-            sensitivity: .low,
-            isContinuous: false,
-            isHapticFeedbackEnabled: true
-        )
-        .digitalCrownAccessory(.hidden)
-        .sheet(isPresented: $showingActionsSheet) {
-            actionsSheet
+        .sheet(isPresented: $showingOptions) {
+            OptionsView(
+                store: store,
+                satelliteCache: satelliteCache,
+                showingOptions: $showingOptions,
+                showingEditHole: $showingEditHole,
+                showingDistanceEditor: $showingDistanceEditor,
+                isFullViewMode: $isFullViewMode,
+                manualClubOverride: $manualClubOverride,
+                navigateToAccelTest: $navigateToAccelTest,
+                updateMapPosition: updateMapPosition,
+                updateNoHoleMapPosition: updateNoHoleMapPosition,
+                deleteLastStroke: deleteLastStroke,
+                dismissParent: { dismiss() },
+                canUndo: canUndo
+            )
         }
         .sheet(isPresented: $showingEditHole) {
             if let hole = store.currentHole {
                 EditHoleView(store: store, locationManager: locationManager, hole: hole, isPresented: $showingEditHole)
             }
         }
-        .sheet(isPresented: $showingAddHole) {
-            AddHoleView(store: store, locationManager: locationManager, isPresented: $showingAddHole)
-        }
         .sheet(isPresented: $showingDistanceEditor) {
             ClubDistanceEditorView(store: store)
         }
-        .navigationDestination(isPresented: $navigateToAddHole) {
-            AddHoleNavigationView(store: store, locationManager: locationManager)
+        .navigationDestination(isPresented: $navigateToAccelTest) {
+            AccelTestView()
         }
         .onAppear {
             print("⌚ [ActiveRoundView] View appeared")
@@ -895,7 +862,7 @@ struct ActiveRoundView: View {
             // Update map when hole changes (also covers new holes added from phone)
             updateMapPosition()
         }
-        .onChange(of: showingActionsSheet) { _, isShowing in
+        .onChange(of: showingOptions) { _, isShowing in
             // When actions sheet closes, restore focus to main view
             if !isShowing {
                 isMainViewFocused = true
@@ -940,7 +907,8 @@ struct ActiveRoundView: View {
     @ViewBuilder
     private func satelliteImageView(for hole: Hole) -> some View {
         if let round = store.currentRound,
-           let userLocation = locationManager.location {
+           let userLocation = locationManager.location,
+           let holeCoord = hole.coordinate {
 
             let strokesForHole = round.strokes.filter { $0.holeNumber == hole.number }
             let targetsForHole = round.targets.filter { $0.holeNumber == hole.number }
@@ -949,14 +917,14 @@ struct ActiveRoundView: View {
             // Determine start coordinate based on view mode (ternary to avoid if-else in @ViewBuilder)
             let startCoord = (isFullViewMode && firstStroke != nil) ? firstStroke!.coordinate : userLocation.coordinate
 
-            let bearing = calculateBearing(from: startCoord, to: hole.coordinate)
-            let holeLocation = CLLocation(latitude: hole.coordinate.latitude, longitude: hole.coordinate.longitude)
+            let bearing = calculateBearing(from: startCoord, to: holeCoord)
+            let holeLocation = CLLocation(latitude: holeCoord.latitude, longitude: holeCoord.longitude)
             let startLocation = CLLocation(latitude: startCoord.latitude, longitude: startCoord.longitude)
             let distance = startLocation.distance(from: holeLocation)
 
             // Calculate center point - 45%/50% between start and hole (SAME as regular map)
-            let centerLat = startCoord.latitude + (hole.coordinate.latitude - startCoord.latitude) * 0.45
-            let centerLon = startCoord.longitude + (hole.coordinate.longitude - startCoord.longitude) * 0.5
+            let centerLat = startCoord.latitude + (holeCoord.latitude - startCoord.latitude) * 0.45
+            let centerLon = startCoord.longitude + (holeCoord.longitude - startCoord.longitude) * 0.5
 
             let cameraInfo = MapCameraInfo(
                 centerCoordinate: CLLocationCoordinate2D(latitude: centerLat, longitude: centerLon),
@@ -1025,27 +993,8 @@ struct ActiveRoundView: View {
                     }
                 }
 
-                // Temporary hole position marker
-                if isPlacingHole, let holePos = temporaryHolePosition {
-                    Annotation("", coordinate: holePos) {
-                        Image(systemName: "flag.fill")
-                            .foregroundColor(.yellow)
-                            .font(.system(size: 24))
-                            .shadow(color: .black, radius: 2)
-                    }
-                }
             }
-            .mapStyle(.standard)
-            .mapControls {}
-            .mapControlVisibility(.hidden)
-            .allowsHitTesting(isPlacingHole)
-            .focusable(isPlacingHole)
-            .focused($isMapFocused)
-            .onTapGesture { screenLocation in
-                guard isPlacingHole, let coordinate = proxy.convert(screenLocation, from: .local) else { return }
-                temporaryHolePosition = coordinate
-                WKInterfaceDevice.current().play(.click)
-            }
+            .modifier(HideMapControlsModifier(isInteractive: false))
         }
         .onAppear {
             updateNoHoleMapPosition()
@@ -1054,10 +1003,12 @@ struct ActiveRoundView: View {
 
     @ViewBuilder
     private func standardMapView(for hole: Hole) -> some View {
+        // Note: This view is only called when hole.hasLocation is true (via needsFlagPlacement check)
+        let holeCoord = hole.coordinate!
         MapReader { proxy in
             Map(position: $position) {
                 // Hole marker (top) - green if completed, yellow if not
-                Annotation("", coordinate: hole.coordinate) {
+                Annotation("", coordinate: holeCoord) {
                     Image(systemName: "flag.fill")
                         .font(.system(size: 20))
                         .foregroundColor(store.isHoleCompleted(hole.number) ? .green : .yellow)
@@ -1069,7 +1020,7 @@ struct ActiveRoundView: View {
                         let relativeHeading: Double = {
                             guard let heading = locationManager.heading else { return 0 }
                             // Map is rotated by bearing to hole, so arrow needs to compensate
-                            let bearingToHole = calculateBearing(from: userLocation.coordinate, to: hole.coordinate)
+                            let bearingToHole = calculateBearing(from: userLocation.coordinate, to: holeCoord)
                             return (heading - bearingToHole + 360).truncatingRemainder(dividingBy: 360)
                         }()
 
@@ -1177,11 +1128,7 @@ struct ActiveRoundView: View {
                     }
                 }
             }
-            .mapStyle(.standard)
-            .mapControls {
-                // Disable default map controls (including crown zoom and legal label)
-            }
-            .mapControlVisibility(.hidden) // Hide legal/attribution label
+            .modifier(HideMapControlsModifier(isInteractive: isPlacingTarget || isPlacingPenalty))
             .allowsHitTesting(isPlacingTarget || isPlacingPenalty)
             .focusable(isPlacingTarget || isPlacingPenalty)
             .focused($isMapFocused)
@@ -1223,265 +1170,6 @@ struct ActiveRoundView: View {
                     WKInterfaceDevice.current().play(.click)
                 }
             }
-        }
-    }
-
-    // MARK: - Actions Sheet
-
-    @ViewBuilder
-    private var actionsSheet: some View {
-        ScrollView {
-            VStack(spacing: 12) {
-                // Top row: Hole navigation
-                if let hole = store.currentHole, let round = store.currentRound, let course = store.getCourse(for: round) {
-                    HStack(spacing: 12) {
-                        // Left arrow - previous hole
-                        Button(action: {
-                            store.navigateToPreviousHole()
-                        }) {
-                            Image(systemName: "chevron.left")
-                                .font(.system(size: 16, weight: .bold))
-                                .foregroundColor(.white)
-                                .frame(width: 40, height: 40)
-                                .background(Color.blue.opacity(0.9))
-                                .clipShape(Circle())
-                        }
-                        .buttonStyle(PlainButtonStyle())
-                        .disabled(store.currentHoleIndex == 0)
-                        .opacity(store.currentHoleIndex == 0 ? 0.3 : 1.0)
-
-                        // Hole number
-                        Text("Hole \(hole.number)")
-                            .font(.system(size: 12, weight: .semibold))
-                            .foregroundColor(.white)
-                            .frame(maxWidth: .infinity)
-
-                        // Right arrow or plus - next hole or add hole
-                        if store.currentHoleIndex < course.holes.count - 1 {
-                            // Next hole exists - show right arrow
-                            Button(action: {
-                                store.navigateToNextHole()
-                            }) {
-                                Image(systemName: "chevron.right")
-                                    .font(.system(size: 16, weight: .bold))
-                                    .foregroundColor(.white)
-                                    .frame(width: 40, height: 40)
-                                    .background(Color.blue.opacity(0.9))
-                                    .clipShape(Circle())
-                            }
-                            .buttonStyle(PlainButtonStyle())
-                        } else {
-                            // Last hole - show plus to add new hole
-                            Button(action: {
-                                showingActionsSheet = false
-                                navigateToAddHole = true
-                            }) {
-                                Image(systemName: "plus")
-                                    .font(.system(size: 16, weight: .bold))
-                                    .foregroundColor(.white)
-                                    .frame(width: 40, height: 40)
-                                    .background(Color.green.opacity(0.9))
-                                    .clipShape(Circle())
-                            }
-                            .buttonStyle(PlainButtonStyle())
-                        }
-                    }
-                    .padding(.horizontal, 8)
-                }
-
-                // Second row: Undo and Edit buttons
-                HStack(spacing: 8) {
-                    // Undo button - shows confirmation
-                    Button(action: {
-                        showingUndoConfirmation = true
-                    }) {
-                        HStack(spacing: 6) {
-                            Image(systemName: "arrow.uturn.backward")
-                                .font(.system(size: 14, weight: .bold))
-                            Text("Undo")
-                                .font(.system(size: 12, weight: .semibold))
-                                .lineLimit(1)
-                                .minimumScaleFactor(0.8)
-                        }
-                        .foregroundColor(.white)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 12)
-                        .background(Color.red.opacity(0.9))
-                        .cornerRadius(8)
-                    }
-                    .buttonStyle(PlainButtonStyle())
-                    .disabled(!canUndo)
-                    .opacity(canUndo ? 1.0 : 0.5)
-
-                    // Edit Hole button
-                    Button(action: {
-                        showingActionsSheet = false
-                        showingEditHole = true
-                    }) {
-                        HStack(spacing: 8) {
-                            Image(systemName: "flag")
-                                .font(.system(size: 16, weight: .bold))
-                            Text("Edit")
-                                .font(.system(size: 13, weight: .semibold))
-                        }
-                        .foregroundColor(.white)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 12)
-                        .background(Color.orange.opacity(0.9))
-                        .cornerRadius(8)
-                    }
-                    .buttonStyle(PlainButtonStyle())
-                }
-                .padding(.horizontal, 8)
-
-                // Third row: Home button (moved above options)
-                HStack(spacing: 8) {
-                    Button(action: {
-                        showingActionsSheet = false
-                        dismiss()
-                    }) {
-                        HStack(spacing: 6) {
-                            Image(systemName: "house.fill")
-                                .font(.system(size: 14, weight: .bold))
-                            Text("Home")
-                                .font(.system(size: 12, weight: .semibold))
-                                .lineLimit(1)
-                                .minimumScaleFactor(0.8)
-                        }
-                        .foregroundColor(.white)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 12)
-                        .background(Color.gray.opacity(0.9))
-                        .cornerRadius(8)
-                    }
-                    .buttonStyle(PlainButtonStyle())
-                }
-                .padding(.horizontal, 8)
-
-                // Fourth row: Full View and Satellite toggles
-                HStack(spacing: 8) {
-                    // Full View Mode Toggle (left)
-                    Button(action: {
-                        isFullViewMode.toggle()
-                        WKInterfaceDevice.current().play(.click)
-                        // Update map position based on new mode
-                        if store.currentHole != nil {
-                            updateMapPosition()
-                        } else {
-                            updateNoHoleMapPosition()
-                        }
-                    }) {
-                        HStack(spacing: 6) {
-                            Image(systemName: isFullViewMode ? "scope" : "scope")
-                                .font(.system(size: 14, weight: .bold))
-                            Text(isFullViewMode ? "Full: ON" : "Full: OFF")
-                                .font(.system(size: 12, weight: .semibold))
-                                .lineLimit(1)
-                                .minimumScaleFactor(0.8)
-                        }
-                        .foregroundColor(.white)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 12)
-                        .background((isFullViewMode ? Color.green : Color.gray).opacity(0.9))
-                        .cornerRadius(8)
-                    }
-                    .buttonStyle(PlainButtonStyle())
-
-                    // Satellite Mode Toggle (right)
-                    Button(action: {
-                        store.satelliteModeEnabled.toggle()
-                        WKInterfaceDevice.current().play(.click)
-                        print("⌚ [ActiveRound] Satellite mode toggled to: \(store.satelliteModeEnabled)")
-                    }) {
-                        let currentCourseId = store.currentRound?.courseId ?? UUID()
-                        let hasImages = satelliteCache.hasCachedImages(for: currentCourseId)
-                        let _ = print("⌚ [ActiveRound] Button render - CourseID: \(currentCourseId), Has images: \(hasImages)")
-
-                        HStack(spacing: 6) {
-                            Image(systemName: store.satelliteModeEnabled ? "map.fill" : "map")
-                                .font(.system(size: 14, weight: .bold))
-                            Text(store.satelliteModeEnabled ? "Sat: ON" : "Sat: OFF")
-                                .font(.system(size: 12, weight: .semibold))
-                                .lineLimit(1)
-                                .minimumScaleFactor(0.8)
-                        }
-                        .foregroundColor(.white)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 12)
-                        .background((store.satelliteModeEnabled ? Color.green : Color.gray).opacity(0.9))
-                        .cornerRadius(8)
-                    }
-                    .buttonStyle(PlainButtonStyle())
-                    .disabled(!satelliteCache.hasCachedImages(for: store.currentRound?.courseId ?? UUID()))
-                    .opacity(satelliteCache.hasCachedImages(for: store.currentRound?.courseId ?? UUID()) ? 1.0 : 0.5)
-                }
-                .padding(.horizontal, 8)
-
-                // Fifth row: Predict Club setting
-                VStack(alignment: .leading, spacing: 6) {
-                    HStack {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("Predict Club")
-                                .font(.system(size: 13, weight: .semibold))
-                                .foregroundColor(.white)
-                            Text("auto-select club based on distance")
-                                .font(.system(size: 9))
-                                .foregroundColor(.secondary)
-                        }
-                        Spacer()
-                        // Edit button for Manual mode
-                        if store.clubPredictionMode == .manual {
-                            Button(action: {
-                                showingActionsSheet = false
-                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                                    showingDistanceEditor = true
-                                }
-                            }) {
-                                Image(systemName: "slider.horizontal.3")
-                                    .font(.system(size: 14, weight: .bold))
-                                    .foregroundColor(.white)
-                                    .padding(8)
-                                    .background(Color.blue.opacity(0.9))
-                                    .clipShape(Circle())
-                            }
-                            .buttonStyle(PlainButtonStyle())
-                        }
-                    }
-                    .padding(.bottom, 2)
-
-                    // Mode selector buttons
-                    HStack(spacing: 4) {
-                        ForEach(ClubPredictionMode.allCases, id: \.self) { mode in
-                            Button(action: {
-                                store.clubPredictionMode = mode
-                                manualClubOverride = false  // Reset override when mode changes
-                                WKInterfaceDevice.current().play(.click)
-                            }) {
-                                Text(mode.rawValue)
-                                    .font(.system(size: 10, weight: .semibold))
-                                    .foregroundColor(store.clubPredictionMode == mode ? .white : .gray)
-                                    .padding(.horizontal, 6)
-                                    .padding(.vertical, 6)
-                                    .frame(maxWidth: .infinity)
-                                    .background(
-                                        store.clubPredictionMode == mode ? Color.green.opacity(0.9) : Color.gray.opacity(0.3)
-                                    )
-                                    .cornerRadius(6)
-                            }
-                            .buttonStyle(PlainButtonStyle())
-                        }
-                    }
-                }
-                .padding(.horizontal, 8)
-            }
-            .padding()
-        }
-        .confirmationDialog("Undo Last Stroke?", isPresented: $showingUndoConfirmation, titleVisibility: .visible) {
-            Button("Undo", role: .destructive) {
-                deleteLastStroke()
-                showingActionsSheet = false
-            }
-            Button("Cancel", role: .cancel) { }
         }
     }
 
@@ -1534,10 +1222,11 @@ struct ActiveRoundView: View {
         if let realHeading = locationManager.heading {
             heading = realHeading
         } else if let userLocation = locationManager.location,
-                  let hole = store.currentHole {
+                  let hole = store.currentHole,
+                  let holeCoord = hole.coordinate {
             // Fallback: Use bearing to hole + 45 degrees as simulated offset
             // This allows testing in simulator
-            let bearingToHole = calculateBearing(from: userLocation.coordinate, to: hole.coordinate)
+            let bearingToHole = calculateBearing(from: userLocation.coordinate, to: holeCoord)
             heading = (bearingToHole + 45).truncatingRemainder(dividingBy: 360)
             print("⌚ [AimDirection] Using simulated heading (bearing + 45°)")
         }
@@ -1562,8 +1251,9 @@ struct ActiveRoundView: View {
         var trajectoryHeading = swingDetector.capturedAimDirection
         if trajectoryHeading == nil,
            let userLocation = locationManager.location,
-           let hole = store.currentHole {
-            trajectoryHeading = calculateBearing(from: userLocation.coordinate, to: hole.coordinate)
+           let hole = store.currentHole,
+           let holeCoord = hole.coordinate {
+            trajectoryHeading = calculateBearing(from: userLocation.coordinate, to: holeCoord)
             print("⌚ [RecordStroke] No captured heading, using bearing to flag: \(trajectoryHeading!)")
         }
 
@@ -1622,9 +1312,9 @@ struct ActiveRoundView: View {
 
         // Use aim direction captured at swing detection time, fall back to bearing towards flag
         var trajectoryHeading = swing.trajectoryHeading
-        if trajectoryHeading == nil {
+        if trajectoryHeading == nil, let holeCoord = hole.coordinate {
             // Default to bearing towards the flag
-            trajectoryHeading = calculateBearing(from: swing.location, to: hole.coordinate)
+            trajectoryHeading = calculateBearing(from: swing.location, to: holeCoord)
         }
 
         guard let club = selectedClub else {
@@ -1738,10 +1428,10 @@ struct ActiveRoundView: View {
         // Haptic feedback - directionUp for hole completion
         WKInterfaceDevice.current().play(.directionUp)
 
-        // If this was the last hole, automatically show add hole view
+        // If this was the last hole, automatically add next hole (which will show flag placement)
         if isLastHole {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                navigateToAddHole = true
+                store.addNextHole()
             }
         }
     }
@@ -1764,34 +1454,12 @@ struct ActiveRoundView: View {
         }
     }
 
-    private func saveHole(par: Int) {
-        guard let coordinate = temporaryHolePosition else { return }
-
-        // Add hole to course via store with par
-        store.addHole(coordinate: coordinate, par: par)
-
-        // Exit placement mode
-        isPlacingHole = false
-        temporaryHolePosition = nil
-        isMapFocused = false
-        isMainViewFocused = true
-
-        // Haptic feedback
-        WKInterfaceDevice.current().play(.success)
-
-        // Update map position to show hole at top, user at bottom
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-            updateMapPosition()
-        }
-    }
-
     private func updateMapPosition() {
         // Don't update map during target placement mode
         guard !isPlacingTarget else { return }
 
-        guard let hole = store.currentHole else { return }
-
-        let holeCoord = hole.coordinate
+        guard let hole = store.currentHole,
+              let holeCoord = hole.coordinate else { return }
 
         // Determine start coordinate based on view mode
         let startCoord: CLLocationCoordinate2D
@@ -1968,15 +1636,7 @@ struct ClubDistanceEditorView: View {
         }
         .focusable()
         .focused($isCrownFocused)
-        .digitalCrownRotation(
-            $editingDistance,
-            from: 10,
-            through: 350,
-            by: 1,
-            sensitivity: .medium,
-            isContinuous: false,
-            isHapticFeedbackEnabled: true
-        )
+        .modifier(DistanceCrownRotationModifier(distance: $editingDistance))
         .onAppear {
             isCrownFocused = true
             loadCurrentClubDistance()
@@ -2018,4 +1678,5 @@ struct ClubDistanceEditorView: View {
         WKInterfaceDevice.current().play(.click)
     }
 }
+
 

@@ -95,10 +95,10 @@ struct HolePlayView: View {
 
         // Calculate heading toward hole from user location
         guard let userLocation = locationManager.location,
-              let hole = currentHole else { return nil }
+              let hole = currentHole,
+              let holeCoord = hole.coordinate else { return nil }
 
         let userCoord = userLocation.coordinate
-        let holeCoord = hole.coordinate
         return MapCalculations.calculateBearing(from: userCoord, to: holeCoord)
     }
 
@@ -180,12 +180,13 @@ struct HolePlayView: View {
     private var aimArrowRotation: Double {
         guard let capturedHeading = trajectoryHeading,
               let userLocation = locationManager.location,
-              let hole = currentHole else {
+              let hole = currentHole,
+              let holeCoord = hole.coordinate else {
             return 0 // Arrow points up when not set
         }
 
         // Calculate bearing to hole
-        let bearingToHole = MapCalculations.calculateBearing(from: userLocation.coordinate, to: hole.coordinate)
+        let bearingToHole = MapCalculations.calculateBearing(from: userLocation.coordinate, to: holeCoord)
 
         // Calculate offset: how much the aim direction differs from hole bearing
         let offset = (capturedHeading - bearingToHole + 360).truncatingRemainder(dividingBy: 360)
@@ -576,9 +577,10 @@ struct HolePlayView: View {
         if let realHeading = locationManager.heading {
             heading = realHeading
         } else if let userLocation = locationManager.location,
-                  let hole = currentHole {
+                  let hole = currentHole,
+                  let holeCoord = hole.coordinate {
             // Fallback: Use bearing to hole + 45 degrees as simulated offset
-            let bearingToHole = MapCalculations.calculateBearing(from: userLocation.coordinate, to: hole.coordinate)
+            let bearingToHole = MapCalculations.calculateBearing(from: userLocation.coordinate, to: holeCoord)
             heading = (bearingToHole + 45).truncatingRemainder(dividingBy: 360)
         }
 
@@ -621,9 +623,8 @@ struct HolePlayView: View {
 
     // MARK: - Map Region Functions
     private func saveCurrentMapRegion() {
-        guard let hole = currentHole else { return }
-
-        let holeCoord = hole.coordinate
+        guard let hole = currentHole,
+              let holeCoord = hole.coordinate else { return }
 
         // Use user location as the start
         let startCoord: CLLocationCoordinate2D
@@ -680,8 +681,13 @@ struct HolePlayView: View {
               let hole = currentHole,
               let location = locationManager.location else { return }
 
-        // Use manual trajectory if set, otherwise calculate bearing to hole
-        let heading = trajectoryHeading ?? MapCalculations.calculateBearing(from: location.coordinate, to: hole.coordinate)
+        // Use manual trajectory if set, otherwise calculate bearing to hole (if hole has coordinates)
+        var heading: Double = 0
+        if let traj = trajectoryHeading {
+            heading = traj
+        } else if let holeCoord = hole.coordinate {
+            heading = MapCalculations.calculateBearing(from: location.coordinate, to: holeCoord)
+        }
 
         store.addStroke(to: round, holeNumber: hole.number, coordinate: location.coordinate, clubId: club.id, trajectoryHeading: heading)
 
@@ -757,11 +763,11 @@ struct HolePlayView: View {
     }
 
     private func updateMapPosition() {
-        guard let hole = currentHole else { return }
+        guard let hole = currentHole,
+              let holeCoord = hole.coordinate else { return }
 
         if let userLocation = locationManager.location {
             let userCoord = userLocation.coordinate
-            let holeCoord = hole.coordinate
             let holeLocation = CLLocation(latitude: holeCoord.latitude, longitude: holeCoord.longitude)
 
             // ALWAYS show user-to-hole view (user at bottom, hole at top)
@@ -793,7 +799,7 @@ struct HolePlayView: View {
         } else {
             // No user location - just center on the hole
             position = .region(MKCoordinateRegion(
-                center: hole.coordinate,
+                center: holeCoord,
                 span: MKCoordinateSpan(latitudeDelta: 0.0005, longitudeDelta: 0.0005)
             ))
         }

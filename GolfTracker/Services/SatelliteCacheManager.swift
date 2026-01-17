@@ -122,6 +122,11 @@ class SatelliteCacheManager: ObservableObject {
     /// Crop 2000×2000 image for a specific hole from the large satellite image
     /// Centers crop on midpoint between userLocation (tee) and hole (pin)
     func cropImageForHole(courseId: UUID, hole: Hole, userLocation: CLLocationCoordinate2D? = nil, completion: @escaping (Result<SatelliteImageMetadata, Error>) -> Void) {
+        guard let holeCoordinate = hole.coordinate else {
+            completion(.failure(NSError(domain: "SatelliteCache", code: -2, userInfo: [NSLocalizedDescriptionKey: "Hole has no coordinate"])))
+            return
+        }
+
         guard let cache = getCachedImages(for: courseId),
               let largeImageMetadata = cache.largeImage else {
             completion(.failure(NSError(domain: "SatelliteCache", code: -3, userInfo: [NSLocalizedDescriptionKey: "No large satellite image cached"])))
@@ -142,13 +147,13 @@ class SatelliteCacheManager: ObservableObject {
         if let userLoc = userLocation {
             // Center crop at 45%/50% between user (tee) and hole (pin)
             // This matches the Watch display logic for optimal coverage
-            let centerLat = userLoc.latitude + (hole.coordinate.latitude - userLoc.latitude) * 0.45
-            let centerLon = userLoc.longitude + (hole.coordinate.longitude - userLoc.longitude) * 0.5
+            let centerLat = userLoc.latitude + (holeCoordinate.latitude - userLoc.latitude) * 0.45
+            let centerLon = userLoc.longitude + (holeCoordinate.longitude - userLoc.longitude) * 0.5
             cropCenter = CLLocationCoordinate2D(latitude: centerLat, longitude: centerLon)
             print("📡 [SatelliteCache] Cropping at midpoint between user and hole")
         } else {
             // Fallback: center on hole (legacy behavior)
-            cropCenter = hole.coordinate
+            cropCenter = holeCoordinate
             print("📡 [SatelliteCache] Cropping at hole coordinate (no user location provided)")
         }
 

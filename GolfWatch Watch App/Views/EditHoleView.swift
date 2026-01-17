@@ -30,19 +30,16 @@ struct EditHoleView: View {
                     }
 
                     // Show temporary or current hole position
-                    let holePosition = temporaryHolePosition ?? hole.coordinate
-                    Annotation("", coordinate: holePosition) {
-                        Image(systemName: "flag.fill")
-                            .foregroundColor(.yellow)
-                            .font(.system(size: 24))
-                            .shadow(color: .black, radius: 2)
+                    if let holePosition = temporaryHolePosition ?? hole.coordinate {
+                        Annotation("", coordinate: holePosition) {
+                            Image(systemName: "flag.fill")
+                                .foregroundColor(.yellow)
+                                .font(.system(size: 24))
+                                .shadow(color: .black, radius: 2)
+                        }
                     }
                 }
-                .mapStyle(.standard)
-                .mapControls {
-                    // Disable default map controls
-                }
-                .mapControlVisibility(.hidden)
+                .modifier(HideMapControlsModifier(isInteractive: true))
                 .focusable()
                 .focused($isMapFocused)
                 .onTapGesture { screenCoord in
@@ -147,14 +144,16 @@ struct EditHoleView: View {
             // Focus the map immediately for crown zoom
             isMapFocused = true
 
-            // Center map on hole location
+            // Center map on hole location or user location
             let spanInMeters: CLLocationDistance = 320.0 // ~350 yards
             let spanDegrees = spanInMeters / 111000.0
 
-            position = .region(MKCoordinateRegion(
-                center: hole.coordinate,
-                span: MKCoordinateSpan(latitudeDelta: spanDegrees, longitudeDelta: spanDegrees)
-            ))
+            if let center = hole.coordinate ?? locationManager.location?.coordinate {
+                position = .region(MKCoordinateRegion(
+                    center: center,
+                    span: MKCoordinateSpan(latitudeDelta: spanDegrees, longitudeDelta: spanDegrees)
+                ))
+            }
         }
         .onChange(of: isMapFocused) { _, newValue in
             // If focus is lost and we should maintain it, re-focus

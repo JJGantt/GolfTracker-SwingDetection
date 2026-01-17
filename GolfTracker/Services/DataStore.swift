@@ -473,7 +473,12 @@ class DataStore: ObservableObject {
             print(msg)
             SatelliteLogHandler.shared.log(msg)
 
-            let centerCoordinate = calculateCourseCentroid(course: course) ?? course.holes.first!.coordinate
+            guard let centerCoordinate = calculateCourseCentroid(course: course) else {
+                let errorMsg = "📱 [DataStore] Cannot calculate centroid: no holes with coordinates"
+                print(errorMsg)
+                SatelliteLogHandler.shared.log(errorMsg)
+                return
+            }
             let centroidMsg = "📍 Center coordinate: (\(centerCoordinate.latitude), \(centerCoordinate.longitude))"
             print(centroidMsg)
             SatelliteLogHandler.shared.log(centroidMsg)
@@ -530,16 +535,26 @@ class DataStore: ObservableObject {
     }
 
     private func calculateCourseCentroid(course: Course) -> CLLocationCoordinate2D? {
-        guard !course.holes.isEmpty else { return nil }
-        let avgLat = course.holes.map { $0.coordinate.latitude }.reduce(0, +) / Double(course.holes.count)
-        let avgLon = course.holes.map { $0.coordinate.longitude }.reduce(0, +) / Double(course.holes.count)
+        // Only include holes that have coordinates
+        let holesWithCoords = course.holes.compactMap { $0.coordinate }
+        guard !holesWithCoords.isEmpty else { return nil }
+        let avgLat = holesWithCoords.map { $0.latitude }.reduce(0, +) / Double(holesWithCoords.count)
+        let avgLon = holesWithCoords.map { $0.longitude }.reduce(0, +) / Double(holesWithCoords.count)
         return CLLocationCoordinate2D(latitude: avgLat, longitude: avgLon)
     }
 
     private func handleNewHoleAdded(courseId: UUID, hole: Hole, userLocation: CLLocationCoordinate2D? = nil) {
         let cacheManager = SatelliteCacheManager.shared
 
-        let holeMsg = "🆕 New hole detected: #\(hole.number) at (\(hole.coordinate.latitude), \(hole.coordinate.longitude))"
+        // Only process holes that have coordinates
+        guard let holeCoordinate = hole.coordinate else {
+            let skipMsg = "📱 [DataStore] Hole #\(hole.number) has no coordinate yet, skipping satellite processing"
+            print(skipMsg)
+            SatelliteLogHandler.shared.log(skipMsg)
+            return
+        }
+
+        let holeMsg = "🆕 New hole detected: #\(hole.number) at (\(holeCoordinate.latitude), \(holeCoordinate.longitude))"
         print(holeMsg)
         SatelliteLogHandler.shared.log(holeMsg)
 
@@ -553,7 +568,7 @@ class DataStore: ObservableObject {
             print(downloadMsg)
             SatelliteLogHandler.shared.log(downloadMsg)
 
-            cacheManager.downloadLargeSatelliteImage(centerCoordinate: hole.coordinate, courseId: courseId) { result in
+            cacheManager.downloadLargeSatelliteImage(centerCoordinate: holeCoordinate, courseId: courseId) { result in
                 switch result {
                 case .success(_):
                     let successMsg = "📱 [DataStore] ✅ Large image downloaded. Now cropping hole #\(hole.number)..."

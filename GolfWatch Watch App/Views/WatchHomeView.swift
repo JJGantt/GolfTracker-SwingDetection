@@ -32,7 +32,7 @@ struct WatchHomeView: View {
                     .padding()
                     .background(Color.gray.opacity(0.3))
                     .cornerRadius(10)
-                } else if let round = store.currentRound, !round.holes.isEmpty {
+                } else if store.currentRound != nil {
                     // Active round exists - show Continue button
                     NavigationLink(destination: ActiveRoundView()) {
                         Label("Continue Round", systemImage: "play.circle.fill")
@@ -44,8 +44,8 @@ struct WatchHomeView: View {
                     }
                     .buttonStyle(.plain)
                 }
-                
-                
+
+
                 Button(action: {
                     store.startQuickRound()
                     navigateToActiveRound = true
@@ -54,18 +54,6 @@ struct WatchHomeView: View {
                         .frame(maxWidth: .infinity)
                         .padding()
                         .background(Color.green)
-                        .foregroundColor(.white)
-                        .cornerRadius(10)
-                }
-                .buttonStyle(.plain)
-                
-
-                // Motion Test button (always visible)
-                NavigationLink(destination: AccelTestView()) {
-                    Label("Motion Config", systemImage: "waveform.path.ecg")
-                        .frame(maxWidth: .infinity)
-                        .padding()
-                        .background(Color.blue)
                         .foregroundColor(.white)
                         .cornerRadius(10)
                 }

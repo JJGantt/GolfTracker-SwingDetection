@@ -20,11 +20,15 @@ struct CourseEditorView: View {
 
     private var nearestHole: Hole? {
         guard let userLocation = locationManager.location else { return nil }
-        guard !currentCourse.holes.isEmpty else { return nil }
+        // Only consider holes that have coordinates
+        let holesWithCoords = currentCourse.holes.filter { $0.hasLocation }
+        guard !holesWithCoords.isEmpty else { return nil }
 
-        return currentCourse.holes.min { hole1, hole2 in
-            let loc1 = CLLocation(latitude: hole1.latitude, longitude: hole1.longitude)
-            let loc2 = CLLocation(latitude: hole2.latitude, longitude: hole2.longitude)
+        return holesWithCoords.min { hole1, hole2 in
+            guard let lat1 = hole1.latitude, let lon1 = hole1.longitude,
+                  let lat2 = hole2.latitude, let lon2 = hole2.longitude else { return false }
+            let loc1 = CLLocation(latitude: lat1, longitude: lon1)
+            let loc2 = CLLocation(latitude: lat2, longitude: lon2)
             return userLocation.distance(from: loc1) < userLocation.distance(from: loc2)
         }
     }
@@ -104,9 +108,11 @@ struct CourseEditorView: View {
         }
         .onAppear {
             locationManager.requestPermission()
-            if let firstHole = currentCourse.holes.first {
+            // Find first hole with coordinates
+            if let firstHole = currentCourse.holes.first(where: { $0.hasLocation }),
+               let coord = firstHole.coordinate {
                 position = .region(MKCoordinateRegion(
-                    center: firstHole.coordinate,
+                    center: coord,
                     span: MKCoordinateSpan(latitudeDelta: 0.001, longitudeDelta: 0.001)
                 ))
             }
@@ -116,24 +122,27 @@ struct CourseEditorView: View {
     private var mapView: some View {
         MapReader { proxy in
             Map(position: $position) {
-                ForEach(currentCourse.holes) { hole in
-                    Annotation("", coordinate: hole.coordinate) {
-                        if showingOverviewMap {
-                            ZStack {
-                                Circle()
-                                    .fill(.red)
-                                    .frame(width: 25, height: 25)
-                                Text("\(hole.number)")
-                                    .font(.caption2)
-                                    .fontWeight(.bold)
-                                    .foregroundColor(.white)
-                            }
-                        } else {
-                            HoleMarker(number: hole.number, isNearest: nearestHole?.id == hole.id)
-                                .onTapGesture {
-                                    selectedHole = hole
-                                    showingHoleActions = true
+                // Only show holes that have coordinates
+                ForEach(currentCourse.holes.filter { $0.hasLocation }) { hole in
+                    if let coord = hole.coordinate {
+                        Annotation("", coordinate: coord) {
+                            if showingOverviewMap {
+                                ZStack {
+                                    Circle()
+                                        .fill(.red)
+                                        .frame(width: 25, height: 25)
+                                    Text("\(hole.number)")
+                                        .font(.caption2)
+                                        .fontWeight(.bold)
+                                        .foregroundColor(.white)
                                 }
+                            } else {
+                                HoleMarker(number: hole.number, isNearest: nearestHole?.id == hole.id)
+                                    .onTapGesture {
+                                        selectedHole = hole
+                                        showingHoleActions = true
+                                    }
+                            }
                         }
                     }
                 }
@@ -161,9 +170,10 @@ struct CourseEditorView: View {
     private func isTappingNearExistingHole(coordinate: CLLocationCoordinate2D) -> Bool {
         let tappedLocation = CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude)
 
-        // Check if tap is within 10 meters of any existing hole
+        // Check if tap is within 10 meters of any existing hole with coordinates
         for hole in currentCourse.holes {
-            let holeLocation = CLLocation(latitude: hole.latitude, longitude: hole.longitude)
+            guard let lat = hole.latitude, let lon = hole.longitude else { continue }
+            let holeLocation = CLLocation(latitude: lat, longitude: lon)
             if tappedLocation.distance(from: holeLocation) < 10 {
                 return true
             }
@@ -186,10 +196,11 @@ struct CourseEditorView: View {
 
     private func updateMapPosition() {
         if showingOverviewMap {
-            guard !currentCourse.holes.isEmpty else { return }
+            // Only consider holes with coordinates
+            let coordinates = currentCourse.holes.compactMap { $0.coordinate }
+            guard !coordinates.isEmpty else { return }
 
             // Calculate region that fits all holes
-            let coordinates = currentCourse.holes.map { $0.coordinate }
             let minLat = coordinates.map { $0.latitude }.min() ?? 0
             let maxLat = coordinates.map { $0.latitude }.max() ?? 0
             let minLon = coordinates.map { $0.longitude }.min() ?? 0
@@ -207,10 +218,11 @@ struct CourseEditorView: View {
 
             position = .region(MKCoordinateRegion(center: center, span: span))
         } else {
-            // Return to normal view
-            if let firstHole = currentCourse.holes.first {
+            // Return to normal view - find first hole with coordinates
+            if let firstHole = currentCourse.holes.first(where: { $0.hasLocation }),
+               let coord = firstHole.coordinate {
                 position = .region(MKCoordinateRegion(
-                    center: firstHole.coordinate,
+                    center: coord,
                     span: MKCoordinateSpan(latitudeDelta: 0.001, longitudeDelta: 0.001)
                 ))
             }

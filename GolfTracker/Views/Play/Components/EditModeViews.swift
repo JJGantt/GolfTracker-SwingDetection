@@ -153,8 +153,8 @@ struct ManualPlacementMapView: View {
         MapReader { proxy in
             Map(position: $position) {
                 // Show current hole
-                if let hole = currentHole {
-                    Annotation("", coordinate: hole.coordinate) {
+                if let hole = currentHole, let holeCoord = hole.coordinate {
+                    Annotation("", coordinate: holeCoord) {
                         Image(systemName: "flag.fill")
                             .foregroundColor(.yellow)
                             .font(.title)
@@ -352,8 +352,8 @@ struct StrokeMovementMapView: View {
         MapReader { proxy in
             Map(position: $position) {
                 // Show current hole
-                if let hole = currentHole {
-                    Annotation("", coordinate: hole.coordinate) {
+                if let hole = currentHole, let holeCoord = hole.coordinate {
+                    Annotation("", coordinate: holeCoord) {
                         Image(systemName: "flag.fill")
                             .foregroundColor(.yellow)
                             .font(.title)
@@ -505,8 +505,8 @@ struct PenaltyStrokeMapView: View {
         MapReader { proxy in
             Map(position: $position) {
                 // Show current hole
-                if let hole = currentHole {
-                    Annotation("", coordinate: hole.coordinate) {
+                if let hole = currentHole, let holeCoord = hole.coordinate {
+                    Annotation("", coordinate: holeCoord) {
                         Image(systemName: "flag.fill")
                             .foregroundColor(.yellow)
                             .font(.title)

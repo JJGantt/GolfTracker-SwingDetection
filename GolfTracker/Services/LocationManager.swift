@@ -82,7 +82,10 @@ class LocationManager: NSObject, ObservableObject {
         return location.distance(from: targetLocation)
     }
 
-    func formattedDistance(to coordinate: CLLocationCoordinate2D) -> String {
+    func formattedDistance(to coordinate: CLLocationCoordinate2D?) -> String {
+        guard let coordinate = coordinate else {
+            return "No flag placed"
+        }
         guard let distance = distance(to: coordinate) else {
             return "Searching for GPS..."
         }
