@@ -315,10 +315,9 @@ struct ActiveRoundView: View {
     @ViewBuilder
     private func legacyClubSelector(buttonSize: CGFloat) -> some View {
         let currentIndex = Int(selectedClubIndex.rounded()) % clubs.count
-        let arrowButtonSize: CGFloat = buttonSize * 0.6
-        let arrowSize: CGFloat = arrowButtonSize * 0.45
+        let iconSize: CGFloat = buttonSize * 0.45
 
-        VStack(spacing: 2) {
+        VStack(spacing: 4) {
             // Up arrow button - previous club
             Button(action: {
                 if currentIndex > 0 {
@@ -326,15 +325,17 @@ struct ActiveRoundView: View {
                     WKInterfaceDevice.current().play(.click)
                 }
             }) {
-                Image(systemName: "chevron.up")
-                    .font(.system(size: arrowSize, weight: .bold))
-                    .foregroundColor(currentIndex > 0 ? .white : .white.opacity(0.3))
-                    .frame(width: arrowButtonSize, height: arrowButtonSize)
-                    .background(
-                        Circle()
-                            .fill(.ultraThinMaterial)
-                            .opacity(0.7)
-                    )
+                ZStack {
+                    Circle()
+                        .fill(.ultraThinMaterial)
+                        .opacity(0.9)
+                        .frame(width: buttonSize, height: buttonSize)
+                        .shadow(color: .black.opacity(0.3), radius: 2, x: 0, y: 1)
+
+                    Image(systemName: "chevron.up")
+                        .font(.system(size: iconSize, weight: .bold))
+                        .foregroundColor(currentIndex > 0 ? .white : .white.opacity(0.3))
+                }
             }
             .buttonStyle(PlainButtonStyle())
             .disabled(currentIndex <= 0)
@@ -359,15 +360,17 @@ struct ActiveRoundView: View {
                     WKInterfaceDevice.current().play(.click)
                 }
             }) {
-                Image(systemName: "chevron.down")
-                    .font(.system(size: arrowSize, weight: .bold))
-                    .foregroundColor(currentIndex < clubs.count - 1 ? .white : .white.opacity(0.3))
-                    .frame(width: arrowButtonSize, height: arrowButtonSize)
-                    .background(
-                        Circle()
-                            .fill(.ultraThinMaterial)
-                            .opacity(0.7)
-                    )
+                ZStack {
+                    Circle()
+                        .fill(.ultraThinMaterial)
+                        .opacity(0.9)
+                        .frame(width: buttonSize, height: buttonSize)
+                        .shadow(color: .black.opacity(0.3), radius: 2, x: 0, y: 1)
+
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: iconSize, weight: .bold))
+                        .foregroundColor(currentIndex < clubs.count - 1 ? .white : .white.opacity(0.3))
+                }
             }
             .buttonStyle(PlainButtonStyle())
             .disabled(currentIndex >= clubs.count - 1)
@@ -431,7 +434,26 @@ struct ActiveRoundView: View {
                     }
                 }
 
-                Spacer()
+                // Invisible heading toggle button in center (between left and right stacks)
+                // Positioned slightly higher to avoid pull-up menu at bottom
+                if store.currentHole != nil {
+                    VStack {
+                        Spacer()
+                        Button(action: toggleAimDirection) {
+                            Rectangle()
+                                .fill(Color.white.opacity(0.001)) // Near-invisible but tappable
+                                .frame(maxWidth: .infinity)
+                                .frame(height: buttonSize * 2 + 4) // Height of two buttons + spacing
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(PlainButtonStyle())
+                        .disabled(store.currentHole.map { store.isHoleCompleted($0.number) } ?? false)
+                        Spacer()
+                            .frame(height: buttonSize * 0.5) // Extra padding at bottom
+                    }
+                } else {
+                    Spacer()
+                }
 
                 // Right side column
                 VStack(spacing: 4) {
@@ -442,29 +464,9 @@ struct ActiveRoundView: View {
                         }
                     }
 
-                    // Buttons stack (bottom to top: shot, direction)
+                    // Stroke button
                     VStack(spacing: 4) {
-                        // Blue aim direction button (top) - hide when no hole
-                        if store.currentHole != nil {
-                            Button(action: captureAimDirection) {
-                                ZStack {
-                                    Circle()
-                                        .fill(Color.blue.opacity(0.95))
-                                        .frame(width: buttonSize, height: buttonSize)
-                                        .shadow(color: .black.opacity(0.3), radius: 2, x: 0, y: 1)
-
-                                    Image(systemName: "location.north.fill")
-                                        .font(.system(size: iconSize, weight: .bold))
-                                        .foregroundColor(.white)
-                                        .rotationEffect(.degrees(aimArrowRotation))
-                                }
-                            }
-                            .buttonStyle(PlainButtonStyle())
-                            .disabled(store.currentHole.map { store.isHoleCompleted($0.number) } ?? false)
-                            .opacity(store.currentHole.map { store.isHoleCompleted($0.number) } ?? false ? 0.3 : 0.95)
-                        }
-
-                        // Green stroke button (bottom) - always show
+                        // Green stroke button - always show
                         Button(action: recordStroke) {
                             ZStack {
                                 Circle()
@@ -665,27 +667,6 @@ struct ActiveRoundView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .ignoresSafeArea()
         .opacity(isPlacingTarget || isPlacingPenalty ? 0 : 1)
-    }
-
-    private var aimArrowRotation: Double {
-        guard let capturedHeading = swingDetector.capturedAimDirection,
-              let userLocation = locationManager.location,
-              let hole = store.currentHole,
-              let holeCoord = hole.coordinate else {
-            return 0 // Arrow points up when not set
-        }
-
-        // Calculate bearing to hole
-        let bearingToHole = calculateBearing(from: userLocation.coordinate, to: holeCoord)
-
-        // Calculate offset: how much the aim direction differs from hole bearing
-        // Positive = aiming right of hole, Negative = aiming left of hole
-        let offset = (capturedHeading - bearingToHole + 360).truncatingRemainder(dividingBy: 360)
-
-        // Convert to -180 to 180 range for cleaner display
-        let normalizedOffset = offset > 180 ? offset - 360 : offset
-
-        return normalizedOffset
     }
 
     @ViewBuilder
@@ -1014,22 +995,36 @@ struct ActiveRoundView: View {
                         .foregroundColor(store.isHoleCompleted(hole.number) ? .green : .yellow)
                 }
 
-                // User location (bottom)
+                // User location (bottom) - shows frozen state with white outline
                 if let userLocation = locationManager.location {
                     Annotation("", coordinate: userLocation.coordinate) {
+                        let isFrozen = swingDetector.capturedAimDirection != nil
+                        let bearingToHole = calculateBearing(from: userLocation.coordinate, to: holeCoord)
                         let relativeHeading: Double = {
+                            // If frozen, use captured direction; otherwise use live heading
+                            if let capturedHeading = swingDetector.capturedAimDirection {
+                                return (capturedHeading - bearingToHole + 360).truncatingRemainder(dividingBy: 360)
+                            }
                             guard let heading = locationManager.heading else { return 0 }
                             // Map is rotated by bearing to hole, so arrow needs to compensate
-                            let bearingToHole = calculateBearing(from: userLocation.coordinate, to: holeCoord)
                             return (heading - bearingToHole + 360).truncatingRemainder(dividingBy: 360)
                         }()
 
-                        Image(systemName: "location.north.fill")
-                            .font(.system(size: 20))
-                            .foregroundColor(.blue)
-                            .rotationEffect(.degrees(relativeHeading))
-                            .shadow(color: .white, radius: 2)
-                            .shadow(color: .black.opacity(0.3), radius: 1)
+                        ZStack {
+                            // White outline when frozen
+                            if isFrozen {
+                                Circle()
+                                    .stroke(Color.white, lineWidth: 2)
+                                    .frame(width: 28, height: 28)
+                            }
+
+                            Image(systemName: "location.north.fill")
+                                .font(.system(size: 20))
+                                .foregroundColor(.blue)
+                                .rotationEffect(.degrees(relativeHeading))
+                                .shadow(color: .white, radius: 2)
+                                .shadow(color: .black.opacity(0.3), radius: 1)
+                        }
                     }
                 }
 
@@ -1212,8 +1207,18 @@ struct ActiveRoundView: View {
         }
     }
 
-    private func captureAimDirection() {
-        print("⌚ [AimDirection] Button tapped")
+    private func toggleAimDirection() {
+        print("⌚ [AimDirection] User icon tapped")
+
+        // If already frozen, unfreeze
+        if swingDetector.capturedAimDirection != nil {
+            print("⌚ [AimDirection] Unfreezing heading")
+            swingDetector.capturedAimDirection = nil
+            WKInterfaceDevice.current().play(.click)
+            return
+        }
+
+        // Otherwise, capture current heading
         print("⌚ [AimDirection] Current heading: \(locationManager.heading?.description ?? "nil")")
 
         var heading: Double?

@@ -73,11 +73,12 @@ class DataStore: ObservableObject {
             self?.updateRoundFromWatch(round)
         }
 
-        // Send clubs and club types to Watch on startup
+        // Send active set clubs and their types to Watch on startup
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
             guard let self = self else { return }
-            print("📱 [DataStore] Sending \(self.availableClubs.count) clubs to Watch on startup")
-            WatchConnectivityManager.shared.sendClubs(self.availableClubs)
+            let activeClubs = self.getClubsInActiveSet()
+            print("📱 [DataStore] Sending \(activeClubs.count) active clubs to Watch on startup")
+            WatchConnectivityManager.shared.sendClubs(activeClubs)
             print("📱 [DataStore] Sending \(self.clubTypes.count) club types to Watch on startup")
             WatchConnectivityManager.shared.sendClubTypes(self.clubTypes)
         }
@@ -272,11 +273,19 @@ class DataStore: ObservableObject {
             let data = try JSONEncoder().encode(availableClubs)
             try data.write(to: clubsFileURL)
             errorMessage = nil
-            // Sync clubs to Watch
-            WatchConnectivityManager.shared.sendClubs(availableClubs)
+            // Sync active set clubs to Watch
+            syncActiveClubsToWatch()
         } catch {
             errorMessage = "Failed to save clubs: \(error.localizedDescription)"
         }
+    }
+
+    /// Syncs only the clubs in the active set to the Watch
+    func syncActiveClubsToWatch() {
+        let activeClubs = getClubsInActiveSet()
+        print("📱 [DataStore] Syncing \(activeClubs.count) active clubs to Watch")
+        WatchConnectivityManager.shared.sendClubs(activeClubs)
+        WatchConnectivityManager.shared.sendClubTypes(clubTypes)
     }
 
     func saveClubSets() {
@@ -284,6 +293,8 @@ class DataStore: ObservableObject {
             let data = try JSONEncoder().encode(clubSets)
             try data.write(to: clubSetsFileURL)
             errorMessage = nil
+            // Sync active set clubs to Watch when club sets change
+            syncActiveClubsToWatch()
         } catch {
             errorMessage = "Failed to save club sets: \(error.localizedDescription)"
         }
@@ -434,9 +445,8 @@ class DataStore: ObservableObject {
         SatelliteLogHandler.shared.startNewLog(roundId: round.id, courseName: course.name)
 
         print("📱 [DataStore] About to send round to Watch, holes: \(round.holes.count)")
-        // Send clubs and club types first to ensure Watch has them before the round
-        WatchConnectivityManager.shared.sendClubs(availableClubs)
-        WatchConnectivityManager.shared.sendClubTypes(clubTypes)
+        // Send active set clubs and club types first to ensure Watch has them before the round
+        syncActiveClubsToWatch()
         // Send round to Watch
         WatchConnectivityManager.shared.sendRound(round)
 
@@ -975,5 +985,26 @@ class DataStore: ObservableObject {
         guard let activeSet = activeClubSet,
               let clubId = activeSet.getActiveClubId(for: typeId) else { return nil }
         return availableClubs.first { $0.id == clubId }
+    }
+
+    /// Returns only the clubs that are active in the current club set
+    /// This filters to clubs where the type is in the set AND has an active club selected
+    func getClubsInActiveSet() -> [ClubData] {
+        guard let activeSet = activeClubSet else { return [] }
+        return activeSet.typeSelections.compactMap { selection in
+            guard let clubId = selection.activeClubId else { return nil }
+            return availableClubs.first { $0.id == clubId }
+        }
+    }
+
+    /// Returns the club types that are in the active set AND have an active club selected
+    /// This is used for club selection UI during rounds
+    func getTypesWithActiveClubs() -> [ClubTypeData] {
+        guard let activeSet = activeClubSet else { return [] }
+        return activeSet.typeSelections.compactMap { selection in
+            // Only include types that have an active club selected
+            guard selection.activeClubId != nil else { return nil }
+            return clubTypes.first { $0.id == selection.typeId }
+        }
     }
 }

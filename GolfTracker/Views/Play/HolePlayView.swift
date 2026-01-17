@@ -394,7 +394,7 @@ struct HolePlayView: View {
                 moveCurrentHoleToUserLocation: moveCurrentHoleToUserLocation
             ))
             .confirmationDialog("Select Club", isPresented: $showingClubSelection) {
-                let types = store.getTypesInActiveSet()
+                let types = store.getTypesWithActiveClubs()
                 if types.isEmpty {
                     Button("No clubs available") {}
                         .disabled(true)
@@ -706,7 +706,7 @@ struct HolePlayView: View {
                 return recentClubId
             }
             // Default to putter from active set, or first available type's club
-            let types = store.getTypesInActiveSet()
+            let types = store.getTypesWithActiveClubs()
             // Try to find a putter type
             if let putterType = types.first(where: { $0.name.lowercased().contains("putter") }),
                let putterClub = store.getActiveClubForType(putterType.id) {
