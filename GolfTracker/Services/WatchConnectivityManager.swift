@@ -183,40 +183,35 @@ class WatchConnectivityManager: NSObject, ObservableObject {
 
     // MARK: - Background Context Updates
 
-    private func updateRoundContext(_ data: Data) {
-        do {
-            try WCSession.default.updateApplicationContext(["round": data])
-            print("📱 [iPhone] Successfully queued round in application context")
-        } catch {
-            print("📱 [iPhone] Failed to update round context: \(error)")
+    /// Merges the given key-value pair into the existing application context,
+    /// preserving other keys that were previously set.
+    private func mergeIntoApplicationContext(_ newEntries: [String: Any]) {
+        var context = WCSession.default.applicationContext
+        for (key, value) in newEntries {
+            context[key] = value
         }
+        do {
+            try WCSession.default.updateApplicationContext(context)
+            print("📱 Successfully queued context keys: \(newEntries.keys.joined(separator: ", "))")
+        } catch {
+            print("📱 Failed to update application context: \(error)")
+        }
+    }
+
+    private func updateRoundContext(_ data: Data) {
+        mergeIntoApplicationContext(["round": data])
     }
 
     private func updateStrokesContext(_ data: Data) {
-        do {
-            try WCSession.default.updateApplicationContext(["strokes": data])
-            print("⌚ [Watch] Successfully queued strokes in application context")
-        } catch {
-            print("⌚ [Watch] Failed to update strokes context: \(error)")
-        }
+        mergeIntoApplicationContext(["strokes": data])
     }
 
     private func updateClubsContext(_ data: Data) {
-        do {
-            try WCSession.default.updateApplicationContext(["clubs": data])
-            print("📱 [iPhone] Successfully queued clubs in application context")
-        } catch {
-            print("📱 [iPhone] Failed to update clubs context: \(error)")
-        }
+        mergeIntoApplicationContext(["clubs": data])
     }
 
     private func updateClubTypesContext(_ data: Data) {
-        do {
-            try WCSession.default.updateApplicationContext(["clubTypes": data])
-            print("📱 [iPhone] Successfully queued club types in application context")
-        } catch {
-            print("📱 [iPhone] Failed to update club types context: \(error)")
-        }
+        mergeIntoApplicationContext(["clubTypes": data])
     }
 }
 

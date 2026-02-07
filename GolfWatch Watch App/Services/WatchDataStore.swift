@@ -19,7 +19,7 @@ class WatchDataStore: ObservableObject {
     @Published var pendingStrokes: [Stroke] = []
     @Published var availableClubs: [ClubData] = []
     @Published var clubTypes: [ClubTypeData] = []
-    @Published var satelliteModeEnabled: Bool = true {
+    @Published var satelliteModeEnabled: Bool = false {
         didSet {
             UserDefaults.standard.set(satelliteModeEnabled, forKey: "satelliteModeEnabled")
         }
