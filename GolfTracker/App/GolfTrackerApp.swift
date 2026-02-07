@@ -64,26 +64,27 @@ class MotionDataHandler: ObservableObject {
     }
 
     private func setupWatchConnectivity() {
-        WatchConnectivityManager.shared.onReceiveMotionData = { [weak self] csv, sampleCount, threshold, timeAboveThreshold in
-            print("📱 [MotionDataHandler] Received \(sampleCount) samples")
-            self?.handleMotionData(csv: csv, sampleCount: sampleCount, threshold: threshold, timeAboveThreshold: timeAboveThreshold)
+        WatchConnectivityManager.shared.onReceiveMotionData = { [weak self] csv, sampleCount, threshold, timeAboveThreshold, rawAccelCsv, rawAccelSampleCount in
+            print("📱 [MotionDataHandler] Received DeviceMotion: \(sampleCount) samples, RawAccel: \(rawAccelSampleCount ?? 0) samples")
+            self?.handleMotionData(csv: csv, sampleCount: sampleCount, threshold: threshold, timeAboveThreshold: timeAboveThreshold, rawAccelCsv: rawAccelCsv, rawAccelSampleCount: rawAccelSampleCount)
         }
     }
 
-    private func handleMotionData(csv: String, sampleCount: Int, threshold: Double, timeAboveThreshold: Double) {
-        // Add metadata to CSV
-        var fullCSV = "Golf Swing Motion Data\n"
+    private func handleMotionData(csv: String, sampleCount: Int, threshold: Double, timeAboveThreshold: Double, rawAccelCsv: String?, rawAccelSampleCount: Int?) {
+        let timestamp = Date().timeIntervalSince1970
+
+        // Save device motion CSV (100Hz)
+        var fullCSV = "Golf Swing Motion Data (Device Motion @ 100Hz)\n"
         fullCSV += "Sample Count: \(sampleCount)\n\n"
         fullCSV += csv
 
-        // Save to persistent file
-        let fileName = "motion_test_\(Date().timeIntervalSince1970).csv"
+        let fileName = "motion_test_\(timestamp).csv"
         let fileURL = testFilesDirectory.appendingPathComponent(fileName)
 
         do {
             try fullCSV.write(to: fileURL, atomically: true, encoding: .utf8)
 
-            // Create metadata entry
+            // Create metadata entry for device motion
             let testFile = MotionTestFile(
                 id: UUID(),
                 date: Date(),
@@ -92,12 +93,39 @@ class MotionDataHandler: ObservableObject {
             )
 
             testFiles.append(testFile)
-            saveTestFiles()
-
-            print("📱 [MotionDataHandler] CSV saved to \(fileURL.path)")
+            print("📱 [MotionDataHandler] Device Motion CSV saved to \(fileURL.path)")
         } catch {
-            print("📱 [MotionDataHandler] Error saving CSV: \(error)")
+            print("📱 [MotionDataHandler] Error saving Device Motion CSV: \(error)")
         }
+
+        // Save raw accelerometer CSV (800Hz) if available
+        if let rawCsv = rawAccelCsv, let rawCount = rawAccelSampleCount, rawCount > 0 {
+            var fullRawCSV = "Golf Swing Raw Accelerometer Data (@ 800Hz)\n"
+            fullRawCSV += "Sample Count: \(rawCount)\n\n"
+            fullRawCSV += rawCsv
+
+            let rawFileName = "raw_accel_\(timestamp).csv"
+            let rawFileURL = testFilesDirectory.appendingPathComponent(rawFileName)
+
+            do {
+                try fullRawCSV.write(to: rawFileURL, atomically: true, encoding: .utf8)
+
+                // Create metadata entry for raw accelerometer
+                let rawTestFile = MotionTestFile(
+                    id: UUID(),
+                    date: Date(),
+                    sampleCount: rawCount,
+                    fileName: rawFileName
+                )
+
+                testFiles.append(rawTestFile)
+                print("📱 [MotionDataHandler] Raw Accelerometer CSV saved to \(rawFileURL.path)")
+            } catch {
+                print("📱 [MotionDataHandler] Error saving Raw Accelerometer CSV: \(error)")
+            }
+        }
+
+        saveTestFiles()
     }
 
     func getFileURL(for testFile: MotionTestFile) -> URL {

@@ -340,7 +340,7 @@ struct ActiveRoundView: View {
             .buttonStyle(PlainButtonStyle())
             .disabled(currentIndex <= 0)
 
-            // Current club name
+            // Current club name - tap to re-enable auto-selection
             Text(selectedClub.map { store.getTypeName(for: $0) } ?? "—")
                 .font(.system(size: 11, weight: .semibold))
                 .foregroundColor(.white)
@@ -348,10 +348,16 @@ struct ActiveRoundView: View {
                 .padding(.vertical, 2)
                 .background(
                     RoundedRectangle(cornerRadius: 4)
-                        .fill(.ultraThinMaterial)
+                        .fill(manualClubOverride ? AnyShapeStyle(.ultraThinMaterial) : AnyShapeStyle(Color.blue.opacity(0.7)))
                         .opacity(0.9)
                 )
                 .shadow(color: .black.opacity(0.3), radius: 1, x: 0, y: 1)
+                .onTapGesture {
+                    if manualClubOverride {
+                        manualClubOverride = false
+                        WKInterfaceDevice.current().play(.click)
+                    }
+                }
 
             // Down arrow button - next club
             Button(action: {
@@ -383,9 +389,9 @@ struct ActiveRoundView: View {
             Spacer()
 
             HStack(alignment: .bottom, spacing: 4) {
-                // Left: Stack of buttons (bottom to top: penalty, target)
+                // Left: Target button
                 VStack(spacing: 4) {
-                    // Target button (top) - hide when placing penalty or no hole
+                    // Target button - hide when placing penalty or no hole
                     if !isPlacingPenalty && store.currentHole != nil {
                         Button(action: toggleTargetPlacement) {
                             ZStack {
@@ -406,31 +412,7 @@ struct ActiveRoundView: View {
                             }
                         }
                         .buttonStyle(PlainButtonStyle())
-                    }
-
-                    // Orange penalty button (bottom) - changes to checkmark when placed - hide when no hole
-                    if !isPlacingTarget && store.currentHole != nil {
-                        Button(action: togglePenaltyPlacement) {
-                            ZStack {
-                                Circle()
-                                    .fill(Color.orange.opacity(0.95))
-                                    .frame(width: buttonSize, height: buttonSize)
-                                    .shadow(color: .black.opacity(0.3), radius: 2, x: 0, y: 1)
-
-                                if isPlacingPenalty && temporaryPenaltyPosition != nil {
-                                    Image(systemName: "checkmark")
-                                        .font(.system(size: iconSize, weight: .bold))
-                                        .foregroundColor(.white)
-                                } else {
-                                    Image(systemName: "exclamationmark.triangle.fill")
-                                        .font(.system(size: iconSize, weight: .bold))
-                                        .foregroundColor(.white)
-                                }
-                            }
-                        }
-                        .buttonStyle(PlainButtonStyle())
-                        .disabled(store.currentHole.map { store.isHoleCompleted($0.number) } ?? false && !isPlacingPenalty)
-                        .opacity((store.currentHole.map { store.isHoleCompleted($0.number) } ?? false && !isPlacingPenalty) ? 0.3 : 0.95)
+                        .focusable(false)
                     }
                 }
 
@@ -447,7 +429,8 @@ struct ActiveRoundView: View {
                                 .contentShape(Rectangle())
                         }
                         .buttonStyle(PlainButtonStyle())
-                        .disabled(store.currentHole.map { store.isHoleCompleted($0.number) } ?? false)
+                        .focusable(false)
+                        .disabled(store.currentHole.map { store.isHoleCompleted($0.number) } ?? false || isPlacingTarget || isPlacingPenalty)
                         Spacer()
                             .frame(height: buttonSize * 0.5) // Extra padding at bottom
                     }
@@ -480,6 +463,7 @@ struct ActiveRoundView: View {
                             }
                         }
                         .buttonStyle(PlainButtonStyle())
+                        .focusable(false)
                         .disabled(store.currentHole.map { store.isHoleCompleted($0.number) } ?? false)
                         .opacity(store.currentHole.map { store.isHoleCompleted($0.number) } ?? false ? 0.3 : 0.95)
                     }
@@ -532,6 +516,7 @@ struct ActiveRoundView: View {
                     }
                 }
                 .buttonStyle(PlainButtonStyle())
+                .focusable(false)
                 .onAppear {
                     // This single change starts the forever animation.
                     isPulsing = true
@@ -545,6 +530,7 @@ struct ActiveRoundView: View {
                 Button(action: {
                     swingDetector.clearLastSwing()
                     WKInterfaceDevice.current().play(.click)
+                    isMainViewFocused = true
                 }) {
                     ZStack {
                         Circle()
@@ -557,6 +543,7 @@ struct ActiveRoundView: View {
                     }
                 }
                 .buttonStyle(PlainButtonStyle())
+                .focusable(false)
             }
             .offset(y: -15)
             .transition(.scale.combined(with: .opacity))
@@ -588,19 +575,15 @@ struct ActiveRoundView: View {
     }
 
     @ViewBuilder
-    private func penaltyCancelButton(buttonSize: CGFloat, iconSize: CGFloat) -> some View {
+    private func penaltyPlacementButtons(buttonSize: CGFloat, iconSize: CGFloat) -> some View {
         VStack {
             Spacer()
 
             HStack(alignment: .bottom) {
-                Spacer()
-
+                // Cancel button (left)
                 Button(action: {
                     isPlacingPenalty = false
                     temporaryPenaltyPosition = nil
-                    isMapFocused = false
-                    isMainViewFocused = true
-                    updateMapPosition()
                     WKInterfaceDevice.current().play(.click)
                 }) {
                     ZStack {
@@ -615,6 +598,27 @@ struct ActiveRoundView: View {
                     }
                 }
                 .buttonStyle(PlainButtonStyle())
+                .focusable(false)
+
+                Spacer()
+
+                // Confirm button (right) - only show when position is placed
+                if temporaryPenaltyPosition != nil {
+                    Button(action: confirmPenaltyPlacement) {
+                        ZStack {
+                            Circle()
+                                .fill(Color.orange.opacity(0.95))
+                                .frame(width: buttonSize, height: buttonSize)
+                                .shadow(color: .black.opacity(0.3), radius: 2, x: 0, y: 1)
+
+                            Image(systemName: "checkmark")
+                                .font(.system(size: iconSize, weight: .bold))
+                                .foregroundColor(.white)
+                        }
+                    }
+                    .buttonStyle(PlainButtonStyle())
+                    .focusable(false)
+                }
             }
             .padding(.horizontal, 4)
             .padding(.bottom, 16)
@@ -701,9 +705,9 @@ struct ActiveRoundView: View {
             // Bottom swipe-up indicator
             swipeUpIndicator
 
-            // Cancel button for penalty placement (bottom right)
+            // Buttons for penalty placement (cancel left, confirm right)
             if isPlacingPenalty {
-                penaltyCancelButton(buttonSize: buttonSize, iconSize: iconSize)
+                penaltyPlacementButtons(buttonSize: buttonSize, iconSize: iconSize)
             }
 
             // Invisible button for double-tap gesture (clench fingers twice)
@@ -755,6 +759,7 @@ struct ActiveRoundView: View {
                 isFullViewMode: $isFullViewMode,
                 manualClubOverride: $manualClubOverride,
                 navigateToAccelTest: $navigateToAccelTest,
+                isPlacingPenalty: $isPlacingPenalty,
                 updateMapPosition: updateMapPosition,
                 updateNoHoleMapPosition: updateNoHoleMapPosition,
                 deleteLastStroke: deleteLastStroke,
@@ -785,6 +790,11 @@ struct ActiveRoundView: View {
             isMainViewFocused = true
             // Start swing detection
             swingDetector.startMonitoring()
+
+            // Push selected club type to detector for smart_detect
+            if let club = selectedClub {
+                swingDetector.selectedClubTypeName = store.getTypeName(for: club)
+            }
 
             // Request HealthKit authorization and start workout if there's an active round
             if store.currentRound != nil && !workoutManager.isWorkoutActive {
@@ -828,6 +838,10 @@ struct ActiveRoundView: View {
             ) {
                 isAutoSelectingClub = true
                 selectedClubIndex = Double(predictedIndex)
+                // Push predicted club type to detector for smart_detect
+                if let club = selectedClub {
+                    swingDetector.selectedClubTypeName = store.getTypeName(for: club)
+                }
                 isAutoSelectingClub = false
             }
         }
@@ -844,15 +858,31 @@ struct ActiveRoundView: View {
             updateMapPosition()
         }
         .onChange(of: showingOptions) { _, isShowing in
-            // When actions sheet closes, restore focus to main view
-            if !isShowing {
+            // When actions sheet closes, restore focus to main view (unless entering penalty mode)
+            if !isShowing && !isPlacingPenalty {
                 isMainViewFocused = true
+            }
+        }
+        .onChange(of: isPlacingPenalty) { _, isPlacing in
+            // Handle focus when entering/exiting penalty placement mode
+            if isPlacing {
+                isMapFocused = true
+                isMainViewFocused = false
+            } else {
+                isMapFocused = false
+                isMainViewFocused = true
+                updateMapPosition()
             }
         }
         .onChange(of: selectedClubIndex) { _, _ in
             // Detect manual club change (user scrolling vs auto-prediction)
             if !isAutoSelectingClub && store.clubPredictionMode != .off {
                 manualClubOverride = true
+            }
+
+            // Push selected club type to detector for smart_detect
+            if let club = selectedClub {
+                swingDetector.selectedClubTypeName = store.getTypeName(for: club)
             }
 
             // Crown is being scrolled - show enlarged text
@@ -1215,6 +1245,7 @@ struct ActiveRoundView: View {
             print("⌚ [AimDirection] Unfreezing heading")
             swingDetector.capturedAimDirection = nil
             WKInterfaceDevice.current().play(.click)
+            isMainViewFocused = true
             return
         }
 
@@ -1240,6 +1271,7 @@ struct ActiveRoundView: View {
             // No heading available, vibrate to indicate error
             print("⌚ [AimDirection] ERROR: No heading or location available")
             WKInterfaceDevice.current().play(.failure)
+            isMainViewFocused = true
             return
         }
 
@@ -1249,6 +1281,7 @@ struct ActiveRoundView: View {
 
         // Haptic feedback
         WKInterfaceDevice.current().play(.click)
+        isMainViewFocused = true
     }
 
     private func recordStroke() {
@@ -1278,6 +1311,7 @@ struct ActiveRoundView: View {
 
         // Haptic feedback
         WKInterfaceDevice.current().play(.success)
+        isMainViewFocused = true
 
         // Visual feedback
         withAnimation(.easeInOut(duration: 0.3)) {
@@ -1357,6 +1391,7 @@ struct ActiveRoundView: View {
 
         // Haptic feedback
         WKInterfaceDevice.current().play(.success)
+        isMainViewFocused = true
 
         print("⌚ [AddLastSwing] Added stroke from detected swing at \(swing.location) with \(swing.peakAcceleration)G")
     }
@@ -1368,56 +1403,42 @@ struct ActiveRoundView: View {
         WKInterfaceDevice.current().play(.click)
     }
 
-    private func togglePenaltyPlacement() {
-        if isPlacingPenalty && temporaryPenaltyPosition != nil {
-            // Save the penalty stroke
-            guard let penaltyCoord = temporaryPenaltyPosition,
-                  var round = store.currentRound,
-                  let hole = store.currentHole else { return }
+    private func confirmPenaltyPlacement() {
+        // Save the penalty stroke
+        guard let penaltyCoord = temporaryPenaltyPosition,
+              var round = store.currentRound,
+              let hole = store.currentHole else { return }
 
-            // Add penalty stroke using selected club
-            guard let club = selectedClub else {
-                print("⌚ [TogglePenaltyPlacement] ERROR: No club selected")
-                return
-            }
-
-            let strokesForHole = round.strokes.filter { $0.holeNumber == hole.number }
-            let strokeNumber = strokesForHole.count + 1
-
-            let stroke = Stroke(
-                holeNumber: hole.number,
-                strokeNumber: strokeNumber,
-                coordinate: penaltyCoord,
-                clubId: club.id,
-                isPenalty: true
-            )
-
-            round.strokes.append(stroke)
-            store.currentRound = round
-            store.saveToStorage()
-
-            // Sync to iPhone
-            WatchConnectivityManager.shared.sendRound(round)
-
-            // Haptic and audio feedback - failure for penalty (bad thing)
-            WKInterfaceDevice.current().play(.failure)
-
-            // Exit placement mode
-            isPlacingPenalty = false
-            temporaryPenaltyPosition = nil
-            isMapFocused = false
-            isMainViewFocused = true
-
-            // Update map position to show hole at top, user at bottom
-            updateMapPosition()
-        } else if !isPlacingPenalty {
-            // Enter penalty placement mode - wait for user to tap to place
-            isPlacingPenalty = true
-            temporaryPenaltyPosition = nil
-            isMapFocused = true
-            isMainViewFocused = false
-            WKInterfaceDevice.current().play(.click)
+        // Add penalty stroke using selected club
+        guard let club = selectedClub else {
+            print("⌚ [ConfirmPenalty] ERROR: No club selected")
+            return
         }
+
+        let strokesForHole = round.strokes.filter { $0.holeNumber == hole.number }
+        let strokeNumber = strokesForHole.count + 1
+
+        let stroke = Stroke(
+            holeNumber: hole.number,
+            strokeNumber: strokeNumber,
+            coordinate: penaltyCoord,
+            clubId: club.id,
+            isPenalty: true
+        )
+
+        round.strokes.append(stroke)
+        store.currentRound = round
+        store.saveToStorage()
+
+        // Sync to iPhone
+        WatchConnectivityManager.shared.sendRound(round)
+
+        // Haptic and audio feedback - failure for penalty (bad thing)
+        WKInterfaceDevice.current().play(.failure)
+
+        // Exit placement mode
+        isPlacingPenalty = false
+        temporaryPenaltyPosition = nil
     }
 
     private func finishCurrentHole() {
@@ -1552,7 +1573,7 @@ struct ActiveRoundView: View {
     }
 
     private func calculateCrownOffset(screenHeight: CGFloat) {
-        crownOffset = screenHeight * 0.01
+        crownOffset = screenHeight * 0.1
     }
 }
 

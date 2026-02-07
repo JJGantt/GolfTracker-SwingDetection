@@ -14,6 +14,7 @@ struct OptionsView: View {
     @Binding var isFullViewMode: Bool
     @Binding var manualClubOverride: Bool
     @Binding var navigateToAccelTest: Bool
+    @Binding var isPlacingPenalty: Bool
 
     // Closures for actions
     var updateMapPosition: () -> Void
@@ -130,8 +131,32 @@ struct OptionsView: View {
                 }
                 .padding(.horizontal, 8)
 
-                // Third row: Home button
+                // Third row: Penalty and Home buttons
                 HStack(spacing: 8) {
+                    // Penalty button - enters penalty placement mode
+                    Button(action: {
+                        showingOptions = false
+                        isPlacingPenalty = true
+                        WKInterfaceDevice.current().play(.click)
+                    }) {
+                        HStack(spacing: 6) {
+                            Image(systemName: "exclamationmark.triangle.fill")
+                                .font(.system(size: 14, weight: .bold))
+                            Text("Penalty")
+                                .font(.system(size: 12, weight: .semibold))
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.8)
+                        }
+                        .foregroundColor(.white)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 12)
+                        .background(Color.orange.opacity(0.9))
+                        .cornerRadius(8)
+                    }
+                    .buttonStyle(PlainButtonStyle())
+                    .disabled(store.currentHole.map { store.isHoleCompleted($0.number) } ?? true)
+                    .opacity((store.currentHole.map { store.isHoleCompleted($0.number) } ?? true) ? 0.5 : 1.0)
+
                     Button(action: {
                         showingOptions = false
                         dismissParent()

@@ -565,34 +565,8 @@ class ClubPredictionManager {
 
         guard !clubDistances.isEmpty else { return nil }
 
-        // Sort by average distance (descending - longest clubs first)
-        clubDistances.sort { $0.average > $1.average }
-
-        // Calculate ranges as midpoints between adjacent clubs
-        for i in 0..<clubDistances.count {
-            let current = clubDistances[i]
-
-            let maxYards: Int
-            if i == 0 {
-                maxYards = Int.max
-            } else {
-                let previous = clubDistances[i - 1]
-                maxYards = (current.average + previous.average) / 2
-            }
-
-            let minYards: Int
-            if i == clubDistances.count - 1 {
-                minYards = 0
-            } else {
-                let next = clubDistances[i + 1]
-                minYards = (current.average + next.average) / 2
-            }
-
-            if yards >= minYards && yards < maxYards {
-                return current.index
-            }
-        }
-
-        return clubDistances.last?.index
+        // Find the club with the closest average distance to the target yardage
+        let closest = clubDistances.min { abs($0.average - yards) < abs($1.average - yards) }
+        return closest?.index
     }
 }

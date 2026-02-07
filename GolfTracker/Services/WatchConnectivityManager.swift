@@ -12,7 +12,7 @@ class WatchConnectivityManager: NSObject, ObservableObject {
     var onReceiveStrokes: (([Stroke]) -> Void)?
     var onReceiveClubs: (([ClubData]) -> Void)?
     var onReceiveClubTypes: (([ClubTypeData]) -> Void)?
-    var onReceiveMotionData: ((String, Int, Double, Double) -> Void)? // CSV, sampleCount, threshold, timeAboveThreshold
+    var onReceiveMotionData: ((String, Int, Double, Double, String?, Int?) -> Void)? // CSV, sampleCount, threshold, timeAboveThreshold, rawAccelCsv, rawAccelSampleCount
 
     // Queue for pending sends
     private var pendingRound: Round?
@@ -231,12 +231,14 @@ extension WatchConnectivityManager: WCSessionDelegate {
         if let type = message["type"] as? String, type == "motionData",
            let csv = message["csv"] as? String,
            let sampleCount = message["sampleCount"] as? Int {
-            print("📱 [iPhone] Received motion data: \(sampleCount) samples")
+            let rawAccelCsv = message["rawAccelCsv"] as? String
+            let rawAccelSampleCount = message["rawAccelSampleCount"] as? Int
+            print("📱 [iPhone] Received motion data: \(sampleCount) DeviceMotion samples, \(rawAccelSampleCount ?? 0) RawAccel samples")
             DispatchQueue.main.async {
                 // Use new parameter names with defaults for backwards compatibility
                 let accelThreshold = message["accelThreshold"] as? Double ?? message["threshold"] as? Double ?? 2.0
                 let accelTimeThreshold = message["accelTimeThreshold"] as? Double ?? message["timeAboveThreshold"] as? Double ?? 0.0
-                self.onReceiveMotionData?(csv, sampleCount, accelThreshold, accelTimeThreshold)
+                self.onReceiveMotionData?(csv, sampleCount, accelThreshold, accelTimeThreshold, rawAccelCsv, rawAccelSampleCount)
             }
             return
         }
