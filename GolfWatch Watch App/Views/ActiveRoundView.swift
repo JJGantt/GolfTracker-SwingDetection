@@ -793,7 +793,11 @@ struct ActiveRoundView: View {
 
             // Push selected club type to detector for smart_detect
             if let club = selectedClub {
-                swingDetector.selectedClubTypeName = store.getTypeName(for: club)
+                let newTypeName = store.getTypeName(for: club)
+                let wasPutter = swingDetector.selectedClubTypeName == "Put"
+                let isPutter = newTypeName == "Put"
+                swingDetector.selectedClubTypeName = newTypeName
+                if wasPutter != isPutter { swingDetector.resetToIdle() }
             }
 
             // Request HealthKit authorization and start workout if there's an active round
@@ -840,7 +844,11 @@ struct ActiveRoundView: View {
                 selectedClubIndex = Double(predictedIndex)
                 // Push predicted club type to detector for smart_detect
                 if let club = selectedClub {
-                    swingDetector.selectedClubTypeName = store.getTypeName(for: club)
+                    let newTypeName = store.getTypeName(for: club)
+                let wasPutter = swingDetector.selectedClubTypeName == "Put"
+                let isPutter = newTypeName == "Put"
+                swingDetector.selectedClubTypeName = newTypeName
+                if wasPutter != isPutter { swingDetector.resetToIdle() }
                 }
                 isAutoSelectingClub = false
             }
@@ -882,7 +890,11 @@ struct ActiveRoundView: View {
 
             // Push selected club type to detector for smart_detect
             if let club = selectedClub {
-                swingDetector.selectedClubTypeName = store.getTypeName(for: club)
+                let newTypeName = store.getTypeName(for: club)
+                let wasPutter = swingDetector.selectedClubTypeName == "Put"
+                let isPutter = newTypeName == "Put"
+                swingDetector.selectedClubTypeName = newTypeName
+                if wasPutter != isPutter { swingDetector.resetToIdle() }
             }
 
             // Crown is being scrolled - show enlarged text
