@@ -158,6 +158,7 @@ struct OptionsView: View {
                     .opacity((store.currentHole.map { store.isHoleCompleted($0.number) } ?? true) ? 0.5 : 1.0)
 
                     Button(action: {
+                        SwingDetectionManager.shared.stopMonitoring()
                         showingOptions = false
                         dismissParent()
                     }) {

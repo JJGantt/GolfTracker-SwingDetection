@@ -813,12 +813,12 @@ struct ActiveRoundView: View {
             }
         }
         .onDisappear {
-            // Stop swing detection when leaving the view
-            swingDetector.stopMonitoring()
+            // Don't stop motion monitoring here - onDisappear fires when pushing
+            // to child views (e.g. AccelTestView) on watchOS, which would kill
+            // motion updates. Monitoring continues while the round is active,
+            // same as the workout. It gets stopped via stopMonitoring() when needed.
             // Clean up crown scroll timer
             crownScrollTimer?.invalidate()
-            // Note: We don't stop the workout here - it should continue in background
-            // Only stop when the round is explicitly ended
         }
         .onChange(of: locationManager.location) { _, _ in
             // Trigger view refresh when location updates (for distance display)
