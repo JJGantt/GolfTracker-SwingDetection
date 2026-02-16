@@ -40,6 +40,15 @@ class WatchDataStore: ObservableObject {
         }
     }
 
+    // Club types disabled from predictions (keyed by club type name)
+    @Published var disabledPredictionClubs: Set<String> = [] {
+        didSet {
+            if let data = try? JSONEncoder().encode(Array(disabledPredictionClubs)) {
+                UserDefaults.standard.set(data, forKey: "disabledPredictionClubs")
+            }
+        }
+    }
+
     private let connectivity = WatchConnectivityManager.shared
     private let roundKey = "currentRound"
     private let pendingStrokesKey = "pendingStrokes"
@@ -328,6 +337,12 @@ class WatchDataStore: ObservableObject {
            let averages = try? JSONDecoder().decode([String: Int].self, from: data) {
             customClubAverages = averages
         }
+
+        // Load disabled prediction clubs
+        if let data = UserDefaults.standard.data(forKey: "disabledPredictionClubs"),
+           let names = try? JSONDecoder().decode([String].self, from: data) {
+            disabledPredictionClubs = Set(names)
+        }
     }
 
     // MARK: - Hole Completion
@@ -517,7 +532,7 @@ class ClubPredictionManager {
 
     // Naive mode default distances (in yards) - used when clubType.averageDistance is nil
     private let naiveDistances: [String: Int] = [
-        "Driver": 245,
+        "Drive": 245,
         "3-Wood": 225,
         "5-Wood": 207,
         "4-Hyb": 192,
@@ -532,34 +547,35 @@ class ClubPredictionManager {
         "Gap": 93,
         "Sand": 78,
         "Lob": 45,
-        "Putter": 10
+        "Put": 10
     ]
 
     private init() {}
 
     /// Get the average distance for a club type based on mode and custom settings
-    func getAverage(for clubTypeName: String, mode: ClubPredictionMode, customAverages: [String: Int]) -> Int {
+    func getAverage(for clubType: ClubTypeData, mode: ClubPredictionMode, customAverages: [String: Int]) -> Int {
         switch mode {
         case .naive, .smart:
-            return naiveDistances[clubTypeName] ?? 100
+            return clubType.averageDistance ?? naiveDistances[clubType.name] ?? 100
         case .manual:
-            return customAverages[clubTypeName] ?? naiveDistances[clubTypeName] ?? 100
+            return customAverages[clubType.name] ?? clubType.averageDistance ?? naiveDistances[clubType.name] ?? 100
         case .off:
-            return naiveDistances[clubTypeName] ?? 100
+            return clubType.averageDistance ?? naiveDistances[clubType.name] ?? 100
         }
     }
 
     /// Find the best club index for a given distance
-    func predictClubIndex(forDistance yards: Int, clubs: [ClubData], clubTypes: [ClubTypeData], mode: ClubPredictionMode, customAverages: [String: Int] = [:]) -> Int? {
+    func predictClubIndex(forDistance yards: Int, clubs: [ClubData], clubTypes: [ClubTypeData], mode: ClubPredictionMode, customAverages: [String: Int] = [:], disabledClubs: Set<String> = []) -> Int? {
         guard mode != .off, !clubs.isEmpty else { return nil }
 
-        // Build list of (clubIndex, averageDistance) for all available clubs
+        // Build list of (clubIndex, averageDistance) for all available clubs (excluding disabled)
         var clubDistances: [(index: Int, average: Int, name: String)] = []
 
         for (index, club) in clubs.enumerated() {
             guard let clubType = clubTypes.first(where: { $0.id == club.clubTypeId }) else { continue }
+            guard !disabledClubs.contains(clubType.name) else { continue }
 
-            let average = getAverage(for: clubType.name, mode: mode, customAverages: customAverages)
+            let average = getAverage(for: clubType, mode: mode, customAverages: customAverages)
             clubDistances.append((index, average, clubType.name))
         }
 

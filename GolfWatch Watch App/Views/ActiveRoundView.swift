@@ -418,7 +418,8 @@ struct ActiveRoundView: View {
 
                 // Invisible heading toggle button in center (between left and right stacks)
                 // Positioned slightly higher to avoid pull-up menu at bottom
-                if store.currentHole != nil {
+                // Hidden when swing detected overlay is showing to avoid hit area overlap with dismiss button
+                if store.currentHole != nil && swingDetector.lastDetectedSwing == nil && !isPlacingTarget && !isPlacingPenalty {
                     VStack {
                         Spacer()
                         Button(action: toggleAimDirection) {
@@ -430,7 +431,7 @@ struct ActiveRoundView: View {
                         }
                         .buttonStyle(PlainButtonStyle())
                         .focusable(false)
-                        .disabled(store.currentHole.map { store.isHoleCompleted($0.number) } ?? false || isPlacingTarget || isPlacingPenalty)
+                        .disabled(store.currentHole.map { store.isHoleCompleted($0.number) } ?? false)
                         Spacer()
                             .frame(height: buttonSize * 0.5) // Extra padding at bottom
                     }
@@ -838,7 +839,8 @@ struct ActiveRoundView: View {
                 clubs: clubs,
                 clubTypes: store.clubTypes,
                 mode: store.clubPredictionMode,
-                customAverages: store.customClubAverages
+                customAverages: store.customClubAverages,
+                disabledClubs: store.disabledPredictionClubs
             ) {
                 isAutoSelectingClub = true
                 selectedClubIndex = Double(predictedIndex)
@@ -1617,60 +1619,71 @@ struct ClubDistanceEditorView: View {
         Int(editingDistance.rounded())
     }
 
+    private var isCurrentClubDisabled: Bool {
+        guard selectedIndex < enabledClubs.count else { return false }
+        return store.disabledPredictionClubs.contains(enabledClubs[selectedIndex].typeName)
+    }
+
     var body: some View {
-        VStack(spacing: 8) {
+        VStack(spacing: 6) {
+            Spacer()
+                .frame(height: 10)
+
             Text("Adjust Distances")
                 .font(.system(size: 14, weight: .semibold))
                 .foregroundColor(.secondary)
 
-            // Club name
-            Text(currentClubName)
-                .font(.system(size: 18, weight: .bold))
-                .foregroundColor(.white)
+            // Club navigation with name between arrows
+            HStack(spacing: 16) {
+                Button(action: previousClub) {
+                    Image(systemName: "chevron.left.circle.fill")
+                        .font(.system(size: 28))
+                        .foregroundColor(selectedIndex > 0 ? .white : .gray.opacity(0.4))
+                }
+                .buttonStyle(PlainButtonStyle())
+                .disabled(selectedIndex == 0)
+
+                Text(currentClubName)
+                    .font(.system(size: 18, weight: .bold))
+                    .foregroundColor(.white)
+                    .frame(minWidth: 60)
+
+                Button(action: nextClub) {
+                    Image(systemName: "chevron.right.circle.fill")
+                        .font(.system(size: 28))
+                        .foregroundColor(selectedIndex < enabledClubs.count - 1 ? .white : .gray.opacity(0.4))
+                }
+                .buttonStyle(PlainButtonStyle())
+                .disabled(selectedIndex >= enabledClubs.count - 1)
+            }
 
             // Distance display
             HStack(alignment: .firstTextBaseline, spacing: 2) {
                 Text("\(currentDistance)")
                     .font(.system(size: 44, weight: .bold, design: .rounded))
-                    .foregroundColor(.green)
+                    .foregroundColor(isCurrentClubDisabled ? .gray : .green)
                 Text("yd")
                     .font(.system(size: 16, weight: .semibold))
                     .foregroundColor(.secondary)
             }
 
             // Instructions
-            Text("Crown: adjust distance")
+            Text("Use crown to adjust distance")
                 .font(.system(size: 10))
                 .foregroundColor(.secondary)
 
-            // Navigation buttons
-            HStack(spacing: 20) {
-                Button(action: previousClub) {
-                    Image(systemName: "chevron.left")
-                        .font(.system(size: 18, weight: .bold))
-                        .foregroundColor(selectedIndex > 0 ? .white : .gray)
+            // Disable from predictions toggle
+            Button(action: toggleClubDisabled) {
+                HStack(spacing: 4) {
+                    Image(systemName: isCurrentClubDisabled ? "xmark.circle.fill" : "checkmark.circle.fill")
+                        .font(.system(size: 14))
+                    Text(isCurrentClubDisabled ? "Disabled from predictions" : "Enabled for predictions")
+                        .font(.system(size: 11))
                 }
-                .buttonStyle(PlainButtonStyle())
-                .disabled(selectedIndex == 0)
-
-                Button(action: nextClub) {
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 18, weight: .bold))
-                        .foregroundColor(selectedIndex < enabledClubs.count - 1 ? .white : .gray)
-                }
-                .buttonStyle(PlainButtonStyle())
-                .disabled(selectedIndex >= enabledClubs.count - 1)
+                .foregroundColor(isCurrentClubDisabled ? .red : .green)
             }
+            .buttonStyle(PlainButtonStyle())
             .padding(.top, 4)
-
-            // Done button
-            Button("Done") {
-                saveCurrentDistance()
-                dismiss()
-            }
-            .buttonStyle(.borderedProminent)
-            .tint(.green)
-            .padding(.top, 8)
         }
         .focusable()
         .focused($isCrownFocused)
@@ -1679,13 +1692,17 @@ struct ClubDistanceEditorView: View {
             isCrownFocused = true
             loadCurrentClubDistance()
         }
+        .onDisappear {
+            saveCurrentDistance()
+        }
     }
 
     private func loadCurrentClubDistance() {
         guard selectedIndex < enabledClubs.count else { return }
-        let typeName = enabledClubs[selectedIndex].typeName
+        let club = enabledClubs[selectedIndex].club
+        guard let clubType = store.clubTypes.first(where: { $0.id == club.clubTypeId }) else { return }
         let average = ClubPredictionManager.shared.getAverage(
-            for: typeName,
+            for: clubType,
             mode: .manual,
             customAverages: store.customClubAverages
         )
@@ -1713,6 +1730,17 @@ struct ClubDistanceEditorView: View {
         saveCurrentDistance()
         selectedIndex += 1
         loadCurrentClubDistance()
+        WKInterfaceDevice.current().play(.click)
+    }
+
+    private func toggleClubDisabled() {
+        guard selectedIndex < enabledClubs.count else { return }
+        let typeName = enabledClubs[selectedIndex].typeName
+        if store.disabledPredictionClubs.contains(typeName) {
+            store.disabledPredictionClubs.remove(typeName)
+        } else {
+            store.disabledPredictionClubs.insert(typeName)
+        }
         WKInterfaceDevice.current().play(.click)
     }
 }
