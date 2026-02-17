@@ -321,10 +321,10 @@ struct HoleDetectionFilterSettings: Codable, Hashable {
     var minGreennessScore: Int
 
     static let `default` = HoleDetectionFilterSettings(
-        minArea: 500,
-        minWidth: 20,
-        maxElongation: 3.0,
-        minGreennessScore: 100
+        minArea: 0,
+        minWidth: 0,
+        maxElongation: 100.0,
+        minGreennessScore: 0
     )
 }
 
