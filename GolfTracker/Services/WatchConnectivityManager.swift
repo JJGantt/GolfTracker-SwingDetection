@@ -15,7 +15,7 @@ class WatchConnectivityManager: NSObject, ObservableObject {
     var onReceiveHoleDetectionData: ((CourseHoleDetectionData) -> Void)?
     var onReceiveHoleFilterSettings: ((HoleDetectionFilterSettings) -> Void)?
     var onReceiveMotionData: ((String, Int, Double, Double, String?, Int?) -> Void)? // CSV, sampleCount, threshold, timeAboveThreshold, rawAccelCsv, rawAccelSampleCount
-    var onReceivePuttEventData: ((String, Int, String?, Int?) -> Void)? // csv, sampleCount, rawAccelCsv, rawAccelSampleCount
+    var onReceivePuttEventData: ((String, Int, String?, Int?, String) -> Void)? // csv, sampleCount, rawAccelCsv, rawAccelSampleCount, outcome
     var onReceivePuttDiagnosticLog: ((String, String, String) -> Void)? // log, outcome, finalState
 
     // Queue for pending sends
@@ -348,15 +348,22 @@ extension WatchConnectivityManager: WCSessionDelegate {
             return
         }
 
-        // Handle putt event data (auto-captured around detected putts)
+        // Handle putt event data (auto-captured around putt attempts — both detected and failed)
         if let type = message["type"] as? String, type == "puttEventData",
            let csv = message["csv"] as? String,
            let sampleCount = message["sampleCount"] as? Int {
             let rawAccelCsv = message["rawAccelCsv"] as? String
             let rawAccelSampleCount = message["rawAccelSampleCount"] as? Int
-            print("📱 [iPhone] Received putt event data: \(sampleCount) DeviceMotion, \(rawAccelSampleCount ?? 0) RawAccel samples")
+            let diagnosticLog = message["diagnosticLog"] as? String
+            let outcome = message["outcome"] as? String ?? "detected"
+            let finalState = message["finalState"] as? String ?? ""
+            print("📱 [iPhone] Received putt attempt data (\(outcome)): \(sampleCount) DeviceMotion, \(rawAccelSampleCount ?? 0) RawAccel samples")
             DispatchQueue.main.async {
-                self.onReceivePuttEventData?(csv, sampleCount, rawAccelCsv, rawAccelSampleCount)
+                self.onReceivePuttEventData?(csv, sampleCount, rawAccelCsv, rawAccelSampleCount, outcome)
+                // Also save bundled diagnostic log if present
+                if let log = diagnosticLog, !log.isEmpty {
+                    self.onReceivePuttDiagnosticLog?(log, outcome, finalState)
+                }
             }
             return
         }
