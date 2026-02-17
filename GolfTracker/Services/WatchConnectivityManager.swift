@@ -16,6 +16,7 @@ class WatchConnectivityManager: NSObject, ObservableObject {
     var onReceiveHoleFilterSettings: ((HoleDetectionFilterSettings) -> Void)?
     var onReceiveMotionData: ((String, Int, Double, Double, String?, Int?) -> Void)? // CSV, sampleCount, threshold, timeAboveThreshold, rawAccelCsv, rawAccelSampleCount
     var onReceivePuttEventData: ((String, Int, String?, Int?) -> Void)? // csv, sampleCount, rawAccelCsv, rawAccelSampleCount
+    var onReceivePuttDiagnosticLog: ((String, String, String) -> Void)? // log, outcome, finalState
 
     // Queue for pending sends
     private var pendingRound: Round?
@@ -331,6 +332,18 @@ extension WatchConnectivityManager: WCSessionDelegate {
                 let accelThreshold = message["accelThreshold"] as? Double ?? message["threshold"] as? Double ?? 2.0
                 let accelTimeThreshold = message["accelTimeThreshold"] as? Double ?? message["timeAboveThreshold"] as? Double ?? 0.0
                 self.onReceiveMotionData?(csv, sampleCount, accelThreshold, accelTimeThreshold, rawAccelCsv, rawAccelSampleCount)
+            }
+            return
+        }
+
+        // Handle putt diagnostic log
+        if let type = message["type"] as? String, type == "puttDiagnosticLog",
+           let log = message["log"] as? String,
+           let outcome = message["outcome"] as? String,
+           let finalState = message["finalState"] as? String {
+            print("📱 [iPhone] Received putt diagnostic log: outcome=\(outcome), finalState=\(finalState)")
+            DispatchQueue.main.async {
+                self.onReceivePuttDiagnosticLog?(log, outcome, finalState)
             }
             return
         }

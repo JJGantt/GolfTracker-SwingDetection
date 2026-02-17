@@ -1391,6 +1391,12 @@ private final class HoleDetectionAnalyzer {
         options.mapType = .standard
         options.showsBuildings = false
         options.pointOfInterestFilter = .excludingAll
+        // Force light mode and 1x scale so the green fill color (186,232,153) matches
+        // regardless of the device's appearance setting or display scale.
+        options.traitCollection = UITraitCollection(traitsFrom: [
+            UITraitCollection(userInterfaceStyle: .light),
+            UITraitCollection(displayScale: 1.0)
+        ])
 
         let semaphore = DispatchSemaphore(value: 0)
         var capturedImage: CGImage?

@@ -73,6 +73,11 @@ class MotionDataHandler: ObservableObject {
             print("📱 [MotionDataHandler] Received putt event data: \(sampleCount) DeviceMotion, \(rawAccelSampleCount ?? 0) RawAccel samples")
             self?.handlePuttEventData(csv: csv, sampleCount: sampleCount, rawAccelCsv: rawAccelCsv, rawAccelSampleCount: rawAccelSampleCount)
         }
+
+        WatchConnectivityManager.shared.onReceivePuttDiagnosticLog = { [weak self] log, outcome, finalState in
+            print("📱 [MotionDataHandler] Received putt diagnostic log: outcome=\(outcome)")
+            self?.handlePuttDiagnosticLog(log: log, outcome: outcome, finalState: finalState)
+        }
     }
 
     private func handleMotionData(csv: String, sampleCount: Int, threshold: Double, timeAboveThreshold: Double, rawAccelCsv: String?, rawAccelSampleCount: Int?) {
@@ -173,6 +178,38 @@ class MotionDataHandler: ObservableObject {
         }
 
         saveTestFiles()
+    }
+
+    private func handlePuttDiagnosticLog(log: String, outcome: String, finalState: String) {
+        let timestamp = Date().timeIntervalSince1970
+
+        var content = "Putt Detection Diagnostic Log\n"
+        content += "Outcome: \(outcome)\n"
+        content += "Final State: \(finalState)\n"
+        content += "Time: \(Date())\n"
+        content += "═══════════════════════════════════════\n\n"
+        content += log
+
+        let fileName = "putt_diag_\(outcome)_\(timestamp).txt"
+        let fileURL = testFilesDirectory.appendingPathComponent(fileName)
+
+        do {
+            try content.write(to: fileURL, atomically: true, encoding: .utf8)
+
+            let entryCount = log.components(separatedBy: "\n").count
+            let testFile = MotionTestFile(
+                id: UUID(),
+                date: Date(),
+                sampleCount: entryCount,
+                fileName: fileName
+            )
+
+            testFiles.append(testFile)
+            saveTestFiles()
+            print("📱 [MotionDataHandler] Putt diagnostic log saved: \(fileName)")
+        } catch {
+            print("📱 [MotionDataHandler] Error saving putt diagnostic log: \(error)")
+        }
     }
 
     func getFileURL(for testFile: MotionTestFile) -> URL {
