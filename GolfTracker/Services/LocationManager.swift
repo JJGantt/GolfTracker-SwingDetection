@@ -56,21 +56,31 @@ class LocationManager: NSObject, ObservableObject {
     }
 
     func setTestModeEnabled(_ enabled: Bool) {
-        isTestModeEnabled = enabled
+        // Dispatch to avoid "Publishing changes from within view updates" when
+        // called from SwiftUI .onChange callbacks.
+        let apply = {
+            self.isTestModeEnabled = enabled
 
-        if enabled {
-            locationManager.stopUpdatingLocation()
-            #if os(iOS) || os(watchOS)
-            locationManager.stopUpdatingHeading()
-            #endif
+            if enabled {
+                self.locationManager.stopUpdatingLocation()
+                #if os(iOS) || os(watchOS)
+                self.locationManager.stopUpdatingHeading()
+                #endif
 
-            location = forcedTestLocation
-            heading = 0
-            errorMessage = nil
-            print("[LocationManager] Test mode ON: forcing location to \(forcedTestLocation.coordinate.latitude), \(forcedTestLocation.coordinate.longitude)")
+                self.location = self.forcedTestLocation
+                self.heading = 0
+                self.errorMessage = nil
+                print("[LocationManager] Test mode ON: forcing location to \(self.forcedTestLocation.coordinate.latitude), \(self.forcedTestLocation.coordinate.longitude)")
+            } else {
+                print("[LocationManager] Test mode OFF: resuming live GPS")
+                self.startTracking()
+            }
+        }
+
+        if Thread.isMainThread {
+            DispatchQueue.main.async { apply() }
         } else {
-            print("[LocationManager] Test mode OFF: resuming live GPS")
-            startTracking()
+            apply()
         }
     }
 

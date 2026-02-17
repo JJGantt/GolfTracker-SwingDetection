@@ -1392,18 +1392,23 @@ private final class HoleDetectionAnalyzer {
         options.showsBuildings = false
         options.pointOfInterestFilter = .excludingAll
 
-        let snapshotter = MKMapSnapshotter(options: options)
         let semaphore = DispatchSemaphore(value: 0)
         var capturedImage: CGImage?
         var capturedError: Error?
 
-        snapshotter.start { snapshot, error in
-            if let error = error {
-                capturedError = error
-            } else {
-                capturedImage = snapshot?.image.cgImage
+        // MKMapSnapshotter must be created and started on the main thread.
+        // The completion handler is also delivered on main, which is fine
+        // since we only block the background thread with the semaphore.
+        DispatchQueue.main.async {
+            let snapshotter = MKMapSnapshotter(options: options)
+            snapshotter.start { snapshot, error in
+                if let error = error {
+                    capturedError = error
+                } else {
+                    capturedImage = snapshot?.image.cgImage
+                }
+                semaphore.signal()
             }
-            semaphore.signal()
         }
 
         if semaphore.wait(timeout: .now() + 30) == .timedOut {
