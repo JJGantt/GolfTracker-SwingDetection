@@ -146,12 +146,20 @@ struct ClubSetEditorView: View {
         let trimmedName = setName.trimmingCharacters(in: .whitespaces)
         guard !trimmedName.isEmpty else { return }
 
+        // Preserve the canonical order from store.clubTypes regardless of toggle order
+        let typeOrder = store.clubTypes.map(\.id)
+        let orderedSelections = typeSelections.sorted {
+            let i0 = typeOrder.firstIndex(of: $0.typeId) ?? Int.max
+            let i1 = typeOrder.firstIndex(of: $1.typeId) ?? Int.max
+            return i0 < i1
+        }
+
         if let existingSet = clubSet {
-            store.updateClubSet(existingSet, name: trimmedName, typeSelections: typeSelections)
+            store.updateClubSet(existingSet, name: trimmedName, typeSelections: orderedSelections)
         } else {
             // Creating a new set - create clubs named after the set for each type
             var newTypeSelections: [TypeSelection] = []
-            for selection in typeSelections {
+            for selection in orderedSelections {
                 let newClubId = store.addCustomClubReturningId(name: trimmedName, clubTypeId: selection.typeId)
                 newTypeSelections.append(TypeSelection(typeId: selection.typeId, activeClubId: newClubId))
             }
