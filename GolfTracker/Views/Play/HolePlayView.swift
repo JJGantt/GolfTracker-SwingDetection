@@ -5,6 +5,8 @@ struct HolePlayView: View {
     @ObservedObject var store: DataStore
     let course: Course
     let resumingRound: Round?
+    let runHoleDetectionAtStart: Bool
+    let runHoleDetectionWithTestCoordinates: Bool
 
     // MARK: - Core State
     @StateObject private var locationManager = LocationManager()
@@ -45,10 +47,19 @@ struct HolePlayView: View {
     @State private var isDeleting = false
 
     // MARK: - Initialization
-    init(store: DataStore, course: Course, resumingRound: Round? = nil, startingHoleNumber: Int? = nil) {
+    init(
+        store: DataStore,
+        course: Course,
+        resumingRound: Round? = nil,
+        startingHoleNumber: Int? = nil,
+        runHoleDetectionAtStart: Bool = true,
+        runHoleDetectionWithTestCoordinates: Bool = false
+    ) {
         self.store = store
         self.course = course
         self.resumingRound = resumingRound
+        self.runHoleDetectionAtStart = runHoleDetectionAtStart
+        self.runHoleDetectionWithTestCoordinates = runHoleDetectionWithTestCoordinates
         if let holeNumber = startingHoleNumber {
             _currentHoleIndex = State(initialValue: holeNumber - 1)
         }
@@ -207,7 +218,10 @@ struct HolePlayView: View {
                     hasUserInteracted: $hasUserInteractedWithAddHoleMap,
                     userLocation: locationManager.location,
                     heading: locationManager.heading,
-                    useStandardMap: useStandardMap
+                    useStandardMap: useStandardMap,
+                    greenCandidates: (currentRound?.holeDetectionEnabled == true)
+                        ? store.filteredHoleDetectionBlobs(for: currentCourse.id)
+                        : []
                 )
                 AddHoleOverlay(
                     holeCount: currentCourse.holes.count,
@@ -338,6 +352,28 @@ struct HolePlayView: View {
                         isAddingHole = true
                     }
             }
+
+            if currentRound?.holeDetectionEnabled == true,
+               let detectionState = store.holeDetectionStatus(for: currentCourse.id),
+               detectionState.isRunning {
+                VStack {
+                    HStack(spacing: 10) {
+                        ProgressView(value: detectionState.progress)
+                            .progressViewStyle(.linear)
+                            .frame(width: 60)
+                        Text(detectionState.message)
+                            .font(.caption)
+                            .foregroundColor(.white)
+                            .lineLimit(2)
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .background(Color.black.opacity(0.7))
+                    .clipShape(RoundedRectangle(cornerRadius: 10))
+                    .padding(.top, 90)
+                    Spacer()
+                }
+            }
         }
     }
 
@@ -436,9 +472,15 @@ struct HolePlayView: View {
                 if let resumingRound = resumingRound {
                     activeRound = resumingRound
                 } else {
-                    activeRound = store.startRound(for: currentCourse)
+                    activeRound = store.startRound(
+                        for: currentCourse,
+                        runHoleDetection: runHoleDetectionAtStart,
+                        useHoleDetectionTestCoordinates: runHoleDetectionWithTestCoordinates
+                    )
                 }
             }
+
+            applyLocationModeForRound()
 
             // Sync current hole index to watch on initial load
             if let round = activeRound {
@@ -454,6 +496,9 @@ struct HolePlayView: View {
         }
         .onChange(of: currentHoleIndex) { _, _ in
             updateMapPosition()
+        }
+        .onChange(of: currentRound) { _, _ in
+            applyLocationModeForRound()
         }
         .onChange(of: locationManager.location) { _, newLocation in
             // When adding first hole and location becomes available, center the map
@@ -760,6 +805,12 @@ struct HolePlayView: View {
             center: userLocation.coordinate,
             span: MKCoordinateSpan(latitudeDelta: spanDegrees, longitudeDelta: spanDegrees)
         ))
+    }
+
+    private func applyLocationModeForRound() {
+        let enabled = currentRound?.locationTestModeEnabled == true
+        locationManager.setTestModeEnabled(enabled)
+        LocationManager.shared.setTestModeEnabled(enabled)
     }
 
     private func updateMapPosition() {

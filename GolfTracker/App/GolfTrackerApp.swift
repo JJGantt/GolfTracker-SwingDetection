@@ -68,6 +68,11 @@ class MotionDataHandler: ObservableObject {
             print("📱 [MotionDataHandler] Received DeviceMotion: \(sampleCount) samples, RawAccel: \(rawAccelSampleCount ?? 0) samples")
             self?.handleMotionData(csv: csv, sampleCount: sampleCount, threshold: threshold, timeAboveThreshold: timeAboveThreshold, rawAccelCsv: rawAccelCsv, rawAccelSampleCount: rawAccelSampleCount)
         }
+
+        WatchConnectivityManager.shared.onReceivePuttEventData = { [weak self] csv, sampleCount, rawAccelCsv, rawAccelSampleCount in
+            print("📱 [MotionDataHandler] Received putt event data: \(sampleCount) DeviceMotion, \(rawAccelSampleCount ?? 0) RawAccel samples")
+            self?.handlePuttEventData(csv: csv, sampleCount: sampleCount, rawAccelCsv: rawAccelCsv, rawAccelSampleCount: rawAccelSampleCount)
+        }
     }
 
     private func handleMotionData(csv: String, sampleCount: Int, threshold: Double, timeAboveThreshold: Double, rawAccelCsv: String?, rawAccelSampleCount: Int?) {
@@ -122,6 +127,48 @@ class MotionDataHandler: ObservableObject {
                 print("📱 [MotionDataHandler] Raw Accelerometer CSV saved to \(rawFileURL.path)")
             } catch {
                 print("📱 [MotionDataHandler] Error saving Raw Accelerometer CSV: \(error)")
+            }
+        }
+
+        saveTestFiles()
+    }
+
+    private func handlePuttEventData(csv: String, sampleCount: Int, rawAccelCsv: String?, rawAccelSampleCount: Int?) {
+        let timestamp = Date().timeIntervalSince1970
+
+        // Save device motion CSV
+        var fullCSV = "Putt Event Auto-Capture (Device Motion @ 100Hz)\n"
+        fullCSV += "Sample Count: \(sampleCount)\n\n"
+        fullCSV += csv
+
+        let fileName = "putt_event_\(timestamp).csv"
+        let fileURL = testFilesDirectory.appendingPathComponent(fileName)
+
+        do {
+            try fullCSV.write(to: fileURL, atomically: true, encoding: .utf8)
+            let testFile = MotionTestFile(id: UUID(), date: Date(), sampleCount: sampleCount, fileName: fileName)
+            testFiles.append(testFile)
+            print("📱 [MotionDataHandler] Putt event Device Motion CSV saved to \(fileURL.path)")
+        } catch {
+            print("📱 [MotionDataHandler] Error saving putt event Device Motion CSV: \(error)")
+        }
+
+        // Save raw accelerometer CSV if available
+        if let rawCsv = rawAccelCsv, let rawCount = rawAccelSampleCount, rawCount > 0 {
+            var fullRawCSV = "Putt Event Auto-Capture (Raw Accelerometer @ 800Hz)\n"
+            fullRawCSV += "Sample Count: \(rawCount)\n\n"
+            fullRawCSV += rawCsv
+
+            let rawFileName = "putt_event_raw_\(timestamp).csv"
+            let rawFileURL = testFilesDirectory.appendingPathComponent(rawFileName)
+
+            do {
+                try fullRawCSV.write(to: rawFileURL, atomically: true, encoding: .utf8)
+                let rawTestFile = MotionTestFile(id: UUID(), date: Date(), sampleCount: rawCount, fileName: rawFileName)
+                testFiles.append(rawTestFile)
+                print("📱 [MotionDataHandler] Putt event Raw Accel CSV saved to \(rawFileURL.path)")
+            } catch {
+                print("📱 [MotionDataHandler] Error saving putt event Raw Accel CSV: \(error)")
             }
         }
 

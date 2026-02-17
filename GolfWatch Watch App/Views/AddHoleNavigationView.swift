@@ -8,11 +8,17 @@ struct AddHoleNavigationView: View {
 
     @State private var position: MapCameraPosition = .automatic
     @State private var temporaryHolePosition: CLLocationCoordinate2D?
-    @FocusState private var isMapFocused: Bool
-    @State private var shouldMaintainFocus = true
+    @State private var selectedGreenBlobId: UUID?
+    @State private var isManualPlacement = false
+    private let greenSnapDistanceMeters: CLLocationDistance = 50
 
     private var currentHoleNumber: Int {
         store.currentHole?.number ?? 1
+    }
+
+    private var greenCandidates: [HoleDetectionBlob] {
+        guard store.currentRound?.holeDetectionEnabled == true else { return [] }
+        return store.filteredGreenCandidates(for: store.currentRound?.courseId)
     }
 
     var body: some View {
@@ -32,8 +38,8 @@ struct AddHoleNavigationView: View {
                         }
                     }
 
-                    // Show temporary hole position
-                    if let holePos = temporaryHolePosition {
+                    // Show flag only for manual placement (not blob selection)
+                    if let holePos = temporaryHolePosition, selectedGreenBlobId == nil {
                         Annotation("", coordinate: holePos) {
                             Image(systemName: "flag.fill")
                                 .foregroundColor(.yellow)
@@ -41,31 +47,88 @@ struct AddHoleNavigationView: View {
                                 .shadow(color: .black, radius: 2)
                         }
                     }
+
+                    // Suggested greens from phone-side detection
+                    ForEach(greenCandidates) { blob in
+                        if blob.polygonCoordinates.count >= 3,
+                           let first = blob.polygonCoordinates.first {
+                            let outline = blob.polygonCoordinates + [first]
+                            let isSelected = blob.id == selectedGreenBlobId
+                            MapPolyline(coordinates: outline)
+                                .stroke(
+                                    isSelected ? Color.yellow : Color.white,
+                                    lineWidth: isSelected ? 4 : 1.5
+                                )
+                        }
+                    }
                 }
                 .modifier(HideMapControlsModifier(isInteractive: true))
-                .focusable()
-                .focused($isMapFocused)
                 .onTapGesture { screenCoord in
                     if let coordinate = proxy.convert(screenCoord, from: .local) {
-                        temporaryHolePosition = coordinate
+                        if isManualPlacement || greenCandidates.isEmpty {
+                            temporaryHolePosition = coordinate
+                            selectedGreenBlobId = nil
+                        } else {
+                            let nearestBlob = greenCandidates
+                                .min { $0.centroidDistanceMeters(to: coordinate) < $1.centroidDistanceMeters(to: coordinate) }
+                            if let blob = nearestBlob,
+                               blob.centroidDistanceMeters(to: coordinate) <= greenSnapDistanceMeters {
+                                temporaryHolePosition = blob.centroidCoordinate
+                                selectedGreenBlobId = blob.id
+                            }
+                        }
                         WKInterfaceDevice.current().play(.click)
                     }
                 }
             }
             .ignoresSafeArea()
 
-            // Top hole number overlay
-            VStack {
-                Text("Hole \(currentHoleNumber)")
-                    .font(.system(size: 16, weight: .bold))
-                    .foregroundColor(.white)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 6)
-                    .background(Color.black.opacity(0.5))
-                    .clipShape(RoundedRectangle(cornerRadius: 8))
+            // Top overlay — .padding(.top, 8) controls how far down the row sits
+            VStack(spacing: 2) {
+                ZStack(alignment: .leading) {
+                    // Centered hole label
+                    Text("Hole \(currentHoleNumber)")
+                        .font(.system(size: 16, weight: .bold))
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 4)
+                        .background(Color.gray.opacity(0.6))
+                        .clipShape(Capsule())
+                        .frame(maxWidth: .infinity)
+
+                    // Left-aligned manual toggle
+                    if !greenCandidates.isEmpty {
+                        Button {
+                            isManualPlacement.toggle()
+                            if !isManualPlacement {
+                                temporaryHolePosition = nil
+                                selectedGreenBlobId = nil
+                            }
+                        } label: {
+                            Image(systemName: isManualPlacement ? "mappin.and.ellipse" : "hand.tap")
+                                .font(.system(size: 12))
+                                .foregroundColor(isManualPlacement ? .orange : .white)
+                                .padding(5)
+                                .background(Color.black.opacity(0.5))
+                                .clipShape(Circle())
+                        }
+                        .buttonStyle(PlainButtonStyle())
+                    }
+                }
+                .padding(.top, 8)
+
+                // Distance to placed hole
+                if let holePos = temporaryHolePosition,
+                   let userLoc = locationManager.location {
+                    let yards = Int(userLoc.distance(from: CLLocation(latitude: holePos.latitude, longitude: holePos.longitude)) * 1.09361)
+                    Text("\(yards) yds")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(.white.opacity(0.8))
+                }
 
                 Spacer()
             }
+            .padding(.horizontal, 16)
             .ignoresSafeArea()
 
             // Par buttons overlay - only show when hole position is set
@@ -133,9 +196,6 @@ struct AddHoleNavigationView: View {
             locationManager.requestPermission()
             locationManager.startTracking()
 
-            // Focus the map immediately for crown zoom
-            isMapFocused = true
-
             // Center map on user location
             if let userLocation = locationManager.location {
                 let spanInMeters: CLLocationDistance = 320.0 // ~350 yards
@@ -147,22 +207,11 @@ struct AddHoleNavigationView: View {
                 ))
             }
         }
-        .onChange(of: isMapFocused) { _, newValue in
-            // If focus is lost and we should maintain it, re-focus
-            if !newValue && shouldMaintainFocus {
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-                    isMapFocused = true
-                }
-            }
-        }
     }
 
     private func saveHole(par: Int) {
         guard let coordinate = temporaryHolePosition,
               let currentHole = store.currentHole else { return }
-
-        // Stop maintaining focus
-        shouldMaintainFocus = false
 
         // Update the current hole's coordinates and par
         store.updateHole(holeNumber: currentHole.number, newCoordinate: coordinate, par: par)

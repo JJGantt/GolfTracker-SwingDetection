@@ -11,6 +11,8 @@ struct CourseDetailView: View {
     @State private var showingRoundsHistory = false
     @State private var showingDeleteConfirmation = false
     @State private var showingCannotDeleteAlert = false
+    @AppStorage("runHoleDetectionAtRoundStart") private var runHoleDetectionAtRoundStart = true
+    @AppStorage("runHoleDetectionWithTestCenter") private var runHoleDetectionWithTestCenter = false
     @Environment(\.dismiss) private var dismiss
 
     private var currentCourse: Course {
@@ -105,6 +107,23 @@ struct CourseDetailView: View {
                     .buttonStyle(.borderedProminent)
                     .tint(.green)
 
+                    Toggle(isOn: $runHoleDetectionAtRoundStart) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Run Hole Detection")
+                            .font(.subheadline)
+                            Text("Detect likely greens at round start")
+                                .font(.caption2)
+                                .foregroundColor(.secondary)
+                        }
+                    }
+                    .toggleStyle(.switch)
+                    .padding(.horizontal, 6)
+
+                    Toggle("Test", isOn: $runHoleDetectionWithTestCenter)
+                        .toggleStyle(.switch)
+                        .padding(.horizontal, 6)
+                        .disabled(!runHoleDetectionAtRoundStart)
+
                     Button(action: {
                         showingEditCourseInfo = true
                     }) {
@@ -145,7 +164,12 @@ struct CourseDetailView: View {
         .navigationTitle(currentCourse.name)
         .navigationBarTitleDisplayMode(.inline)
         .navigationDestination(isPresented: $showingPlay) {
-            HolePlayView(store: store, course: currentCourse)
+            HolePlayView(
+                store: store,
+                course: currentCourse,
+                runHoleDetectionAtStart: runHoleDetectionAtRoundStart,
+                runHoleDetectionWithTestCoordinates: runHoleDetectionWithTestCenter
+            )
         }
         .navigationDestination(isPresented: $showingRoundsHistory) {
             RoundsHistoryView(store: store, initialCourseFilter: currentCourse.id)
@@ -270,4 +294,3 @@ struct EditCourseInfoView: View {
         }
     }
 }
-

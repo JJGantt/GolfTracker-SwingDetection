@@ -1,5 +1,6 @@
 import Foundation
 import CoreLocation
+import MapKit
 
 class DataStore: ObservableObject {
     @Published var courses: [Course] = []
@@ -8,12 +9,22 @@ class DataStore: ObservableObject {
     @Published var availableClubs: [ClubData] = []
     @Published var clubSets: [ClubSet] = []
     @Published var errorMessage: String?
+    @Published var holeDetectionDataByCourse: [UUID: CourseHoleDetectionData] = [:]
+    @Published var holeDetectionRunStateByCourse: [UUID: HoleDetectionRunState] = [:]
+    @Published var holeFilterSettings: HoleDetectionFilterSettings = .default
 
     private let coursesFileName = "courses.json"
     private let roundsFileName = "rounds.json"
     private let clubTypesFileName = "clubTypes.json"
     private let clubsFileName = "clubs.json"
     private let clubSetsFileName = "clubSets.json"
+    private let holeDetectionFileName = "holeDetectionData.json"
+    private let holeFilterSettingsKey = "holeFilterSettings"
+    private let holeDetectionAnalyzer = HoleDetectionAnalyzer()
+    private let holeDetectionTestCenter = CLLocationCoordinate2D(
+        latitude: 30.285357365597697,
+        longitude: -81.74623642434663
+    )
 
     init() {
         print("🏌️ DataStore initialized!")
@@ -22,6 +33,8 @@ class DataStore: ObservableObject {
         loadClubTypes()
         loadClubs()
         loadClubSets()
+        loadHoleDetectionData()
+        loadHoleFilterSettings()
         print("🏌️ DataStore loaded \(courses.count) courses, \(rounds.count) rounds, \(clubTypes.count) club types, \(availableClubs.count) clubs, and \(clubSets.count) club sets")
 
         // Initialize with default club types if needed
@@ -71,6 +84,14 @@ class DataStore: ObservableObject {
         WatchConnectivityManager.shared.onReceiveRound = { [weak self] round in
             print("📱 [DataStore] Received round update from Watch: \(round.courseName)")
             self?.updateRoundFromWatch(round)
+        }
+
+        WatchConnectivityManager.shared.onReceiveHoleFilterSettings = { [weak self] settings in
+            print("📱 [DataStore] Received hole filter settings from Watch")
+            DispatchQueue.main.async {
+                self?.holeFilterSettings = settings
+                self?.saveHoleFilterSettings()
+            }
         }
 
         // Send active set clubs and their types to Watch on startup
@@ -130,6 +151,8 @@ class DataStore: ObservableObject {
         rounds[roundIndex].currentHoleIndex = watchRound.currentHoleIndex
         rounds[roundIndex].targets = watchRound.targets
         rounds[roundIndex].strokes = watchRound.strokes
+        rounds[roundIndex].holeDetectionEnabled = watchRound.holeDetectionEnabled
+        rounds[roundIndex].locationTestModeEnabled = watchRound.locationTestModeEnabled
 
         // Also update the course with the new holes
         if let courseIndex = courses.firstIndex(where: { $0.id == watchRound.courseId }) {
@@ -174,6 +197,11 @@ class DataStore: ObservableObject {
     private var clubSetsFileURL: URL {
         FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
             .appendingPathComponent(clubSetsFileName)
+    }
+
+    private var holeDetectionFileURL: URL {
+        FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent(holeDetectionFileName)
     }
     
     func loadCourses() {
@@ -298,6 +326,51 @@ class DataStore: ObservableObject {
         } catch {
             errorMessage = "Failed to save club sets: \(error.localizedDescription)"
         }
+    }
+
+    func loadHoleDetectionData() {
+        guard FileManager.default.fileExists(atPath: holeDetectionFileURL.path) else { return }
+
+        do {
+            let data = try Data(contentsOf: holeDetectionFileURL)
+            let detections = try JSONDecoder().decode([CourseHoleDetectionData].self, from: data)
+            holeDetectionDataByCourse = Dictionary(uniqueKeysWithValues: detections.map { ($0.courseId, $0) })
+        } catch {
+            print("📱 [DataStore] Failed to load hole detection data: \(error.localizedDescription)")
+        }
+    }
+
+    func saveHoleDetectionData() {
+        do {
+            let detections = Array(holeDetectionDataByCourse.values)
+            let data = try JSONEncoder().encode(detections)
+            try data.write(to: holeDetectionFileURL)
+        } catch {
+            print("📱 [DataStore] Failed to save hole detection data: \(error.localizedDescription)")
+        }
+    }
+
+    func loadHoleFilterSettings() {
+        guard let data = UserDefaults.standard.data(forKey: holeFilterSettingsKey),
+              let settings = try? JSONDecoder().decode(HoleDetectionFilterSettings.self, from: data) else {
+            holeFilterSettings = .default
+            return
+        }
+        holeFilterSettings = settings
+    }
+
+    func saveHoleFilterSettings() {
+        guard let data = try? JSONEncoder().encode(holeFilterSettings) else { return }
+        UserDefaults.standard.set(data, forKey: holeFilterSettingsKey)
+    }
+
+    func holeDetectionStatus(for courseId: UUID) -> HoleDetectionRunState? {
+        holeDetectionRunStateByCourse[courseId]
+    }
+
+    func filteredHoleDetectionBlobs(for courseId: UUID) -> [HoleDetectionBlob] {
+        guard let data = holeDetectionDataByCourse[courseId] else { return [] }
+        return data.blobs.filter { $0.passesFilter(holeFilterSettings) }
     }
     
     func addCourse(name: String) {
@@ -435,9 +508,19 @@ class DataStore: ObservableObject {
 
     // MARK: - Round Management
 
-    func startRound(for course: Course) -> Round {
+    func startRound(
+        for course: Course,
+        runHoleDetection: Bool = true,
+        useHoleDetectionTestCoordinates: Bool = false
+    ) -> Round {
         print("📱 [DataStore] startRound called for course: \(course.name)")
-        let round = Round(courseId: course.id, courseName: course.name, holes: course.holes)
+        let round = Round(
+            courseId: course.id,
+            courseName: course.name,
+            holes: course.holes,
+            holeDetectionEnabled: runHoleDetection,
+            locationTestModeEnabled: useHoleDetectionTestCoordinates
+        )
         rounds.append(round)
         saveRounds()
 
@@ -453,7 +536,125 @@ class DataStore: ObservableObject {
         // Handle satellite imagery (async)
         handleSatelliteImagesForRound(course: course)
 
+        if runHoleDetection {
+            startHoleDetection(
+                for: course,
+                overrideCenter: useHoleDetectionTestCoordinates ? holeDetectionTestCenter : nil,
+                allowCache: !useHoleDetectionTestCoordinates,
+                persistResult: !useHoleDetectionTestCoordinates
+            )
+        }
+
         return round
+    }
+
+    private func startHoleDetection(
+        for course: Course,
+        overrideCenter: CLLocationCoordinate2D? = nil,
+        allowCache: Bool = true,
+        persistResult: Bool = true
+    ) {
+        if holeDetectionRunStateByCourse[course.id]?.isRunning == true {
+            return
+        }
+
+        if allowCache, let cached = holeDetectionDataByCourse[course.id] {
+            print("📱 [DataStore] Using cached hole detection data (\(cached.blobs.count) blobs)")
+            holeDetectionRunStateByCourse[course.id] = HoleDetectionRunState(
+                isRunning: false,
+                message: "Hole detection ready",
+                progress: 1.0,
+                error: nil
+            )
+            WatchConnectivityManager.shared.sendHoleDetectionData(cached)
+            return
+        }
+
+        guard let center = overrideCenter
+                ?? calculateCourseCentroid(course: course)
+                ?? LocationManager.shared.getCurrentLocation()?.coordinate
+                ?? course.holes.first?.coordinate else {
+            holeDetectionRunStateByCourse[course.id] = HoleDetectionRunState(
+                isRunning: false,
+                message: "Hole detection unavailable",
+                progress: 0,
+                error: "No location available"
+            )
+            return
+        }
+
+        let coverageRadius = holeDetectionCoverageRadius(for: course, center: center)
+        holeDetectionRunStateByCourse[course.id] = HoleDetectionRunState(
+            isRunning: true,
+            message: "Starting hole detection...",
+            progress: 0,
+            error: nil
+        )
+
+        holeDetectionAnalyzer.detect(
+            courseId: course.id,
+            center: center,
+            coverageRadiusMeters: coverageRadius,
+            progress: { [weak self] message, progress in
+                DispatchQueue.main.async {
+                    self?.holeDetectionRunStateByCourse[course.id] = HoleDetectionRunState(
+                        isRunning: true,
+                        message: message,
+                        progress: progress,
+                        error: nil
+                    )
+                }
+            },
+            completion: { [weak self] result in
+                DispatchQueue.main.async {
+                    guard let self = self else { return }
+                    switch result {
+                    case .success(let output):
+                        let detectionData = output.data
+                        print("📱 [DataStore] Hole detection diagnostics: tiles=\(output.diagnostics.tileCount), greenPx=\(output.diagnostics.totalGreenPixels), greenishPx=\(output.diagnostics.totalGreenishPixels), swappedExactPx=\(output.diagnostics.totalSwappedChannelExactPixels), preMergeBlobs=\(output.diagnostics.preMergeBlobCount), mergedBlobs=\(output.diagnostics.mergedBlobCount)")
+                        if output.diagnostics.topGreenishColors.isEmpty {
+                            print("📱 [DataStore] Hole detection top green-ish RGBs: none above threshold")
+                        } else {
+                            let colors = output.diagnostics.topGreenishColors.map(\.formatted).joined(separator: " | ")
+                            print("📱 [DataStore] Hole detection top green-ish RGBs: \(colors)")
+                        }
+                        // Keep detection results in memory for current-round UI even when test runs are non-persistent.
+                        self.holeDetectionDataByCourse[course.id] = detectionData
+                        if persistResult {
+                            self.saveHoleDetectionData()
+                        }
+                        self.holeDetectionRunStateByCourse[course.id] = HoleDetectionRunState(
+                            isRunning: false,
+                            message: output.diagnostics.summaryMessage,
+                            progress: 1.0,
+                            error: nil
+                        )
+                        WatchConnectivityManager.shared.sendHoleDetectionData(detectionData)
+                    case .failure(let error):
+                        self.holeDetectionRunStateByCourse[course.id] = HoleDetectionRunState(
+                            isRunning: false,
+                            message: "Hole detection failed",
+                            progress: 0,
+                            error: error.localizedDescription
+                        )
+                    }
+                }
+            }
+        )
+    }
+
+    private func holeDetectionCoverageRadius(for course: Course, center: CLLocationCoordinate2D) -> Double {
+        let coords = course.holes.compactMap { $0.coordinate }
+        guard !coords.isEmpty else {
+            return 2800
+        }
+
+        let centerLocation = CLLocation(latitude: center.latitude, longitude: center.longitude)
+        let maxDistance = coords.map {
+            CLLocation(latitude: $0.latitude, longitude: $0.longitude).distance(from: centerLocation)
+        }.max() ?? 0
+
+        return max(1800, maxDistance + 800)
     }
 
     private func handleSatelliteImagesForRound(course: Course) {
@@ -1006,5 +1207,598 @@ class DataStore: ObservableObject {
             guard selection.activeClubId != nil else { return nil }
             return clubTypes.first { $0.id == selection.typeId }
         }
+    }
+}
+
+struct HoleDetectionRunState {
+    var isRunning: Bool
+    var message: String
+    var progress: Double
+    var error: String?
+}
+
+private struct HoleDetectionDiagnostics {
+    var tileCount: Int
+    var totalGreenPixels: Int
+    var totalGreenishPixels: Int
+    var totalSwappedChannelExactPixels: Int
+    var preMergeBlobCount: Int
+    var mergedBlobCount: Int
+    var topGreenishColors: [HoleDetectionColorCount]
+
+    var summaryMessage: String {
+        "Hole detection ready (\(totalGreenPixels) exact px, \(totalGreenishPixels) greenish px, \(mergedBlobCount) blobs)"
+    }
+}
+
+private struct HoleDetectionAnalyzeResult {
+    var data: CourseHoleDetectionData
+    var diagnostics: HoleDetectionDiagnostics
+}
+
+private struct HoleDetectionRGB {
+    var r: Int
+    var g: Int
+    var b: Int
+
+    var formatted: String {
+        "\(r),\(g),\(b)"
+    }
+}
+
+private struct HoleDetectionColorCount {
+    var color: HoleDetectionRGB
+    var count: Int
+
+    var formatted: String {
+        "rgb(\(color.formatted))=\(count)"
+    }
+}
+
+private struct HoleDetectionTileResult {
+    var blobs: [HoleDetectionBlob]
+    var greenPixelCount: Int
+    var greenishPixelCount: Int
+    var swappedChannelExactCount: Int
+    var greenishColorCounts: [UInt32: Int]
+}
+
+private final class HoleDetectionAnalyzer {
+    // Exact standard-map green/tee fill from iPhone snapshots.
+    private let greenColor = (r: 186, g: 232, b: 153)
+    private let sandColor = (r: 245, g: 242, b: 218)
+    private let sandTolerance = 10
+    private let sandScanRadius = 20
+    private let sandWeight = 1.0
+    private let areaWeight = 0.2
+    private let widthWeight = 1.0
+
+    private let tileDiameterMeters: Double = 2000.0
+    private let tileSpacingMeters: Double = 1800.0
+    private let tilePixelSize = 1600
+    private let duplicateDistanceMeters: Double = 18.0
+    private let minimumRawArea = 20
+    private let maxPolygonPoints = 24
+    private let diagnosticsTopColorLimit = 10
+    private let diagnosticsColorCountThreshold = 1000
+
+    func detect(
+        courseId: UUID,
+        center: CLLocationCoordinate2D,
+        coverageRadiusMeters: Double,
+        progress: @escaping (String, Double) -> Void,
+        completion: @escaping (Result<HoleDetectionAnalyzeResult, Error>) -> Void
+    ) {
+        DispatchQueue.global(qos: .userInitiated).async {
+            do {
+                let tileCenters = self.buildTileCenters(center: center, coverageRadiusMeters: coverageRadiusMeters)
+                var blobs: [HoleDetectionBlob] = []
+                let totalTiles = max(tileCenters.count, 1)
+                var totalGreenPixels = 0
+                var totalGreenishPixels = 0
+                var totalSwappedChannelExactPixels = 0
+                var mergedGreenishColorCounts: [UInt32: Int] = [:]
+
+                for (index, tileCenter) in tileCenters.enumerated() {
+                    let progressValue = Double(index) / Double(totalTiles)
+                    progress("Scanning map \(index + 1)/\(totalTiles)...", progressValue)
+
+                    let snapshotImage = try self.snapshotStandardMap(center: tileCenter)
+                    let tileResult = self.detectBlobs(
+                        in: snapshotImage,
+                        tileCenter: tileCenter,
+                        tileDiameterMeters: self.tileDiameterMeters
+                    )
+                    blobs.append(contentsOf: tileResult.blobs)
+                    totalGreenPixels += tileResult.greenPixelCount
+                    totalGreenishPixels += tileResult.greenishPixelCount
+                    totalSwappedChannelExactPixels += tileResult.swappedChannelExactCount
+                    for (color, count) in tileResult.greenishColorCounts {
+                        mergedGreenishColorCounts[color, default: 0] += count
+                    }
+
+                    let tileMessage = "Tile \(index + 1)/\(totalTiles): exact \(tileResult.greenPixelCount) px, greenish \(tileResult.greenishPixelCount) px, swapped \(tileResult.swappedChannelExactCount), blobs \(tileResult.blobs.count)"
+                    progress(tileMessage, min(progressValue + (0.8 / Double(totalTiles)), 0.94))
+                }
+
+                progress("Merging overlaps...", 0.95)
+                let mergedBlobs = self.mergeDuplicateBlobs(blobs)
+
+                let data = CourseHoleDetectionData(
+                    courseId: courseId,
+                    generatedAt: Date(),
+                    blobs: mergedBlobs
+                )
+                let topGreenishColors = mergedGreenishColorCounts
+                    .filter { $0.value >= self.diagnosticsColorCountThreshold }
+                    .sorted {
+                        if $0.value == $1.value { return $0.key < $1.key }
+                        return $0.value > $1.value
+                    }
+                    .prefix(self.diagnosticsTopColorLimit)
+                    .map {
+                        HoleDetectionColorCount(
+                            color: self.unpackRGB($0.key),
+                            count: $0.value
+                        )
+                    }
+
+                let diagnostics = HoleDetectionDiagnostics(
+                    tileCount: tileCenters.count,
+                    totalGreenPixels: totalGreenPixels,
+                    totalGreenishPixels: totalGreenishPixels,
+                    totalSwappedChannelExactPixels: totalSwappedChannelExactPixels,
+                    preMergeBlobCount: blobs.count,
+                    mergedBlobCount: mergedBlobs.count,
+                    topGreenishColors: topGreenishColors
+                )
+
+                progress(diagnostics.summaryMessage, 1.0)
+                completion(.success(HoleDetectionAnalyzeResult(
+                    data: data,
+                    diagnostics: diagnostics
+                )))
+            } catch {
+                completion(.failure(error))
+            }
+        }
+    }
+
+    private func buildTileCenters(center: CLLocationCoordinate2D, coverageRadiusMeters: Double) -> [CLLocationCoordinate2D] {
+        let tileRadius = tileDiameterMeters / 2
+        let neededSteps = Int(ceil(max(0, coverageRadiusMeters - tileRadius) / tileSpacingMeters))
+        let stepCount = max(1, min(2, neededSteps))
+
+        var centers: [CLLocationCoordinate2D] = []
+        for y in (-stepCount)...stepCount {
+            for x in (-stepCount)...stepCount {
+                let northMeters = Double(y) * tileSpacingMeters
+                let eastMeters = Double(x) * tileSpacingMeters
+                centers.append(offsetCoordinate(from: center, northMeters: northMeters, eastMeters: eastMeters))
+            }
+        }
+        return centers
+    }
+
+    private func snapshotStandardMap(center: CLLocationCoordinate2D) throws -> CGImage {
+        let options = MKMapSnapshotter.Options()
+        options.region = MKCoordinateRegion(
+            center: center,
+            latitudinalMeters: tileDiameterMeters,
+            longitudinalMeters: tileDiameterMeters
+        )
+        options.size = CGSize(width: tilePixelSize, height: tilePixelSize)
+        options.mapType = .standard
+        options.showsBuildings = false
+        options.pointOfInterestFilter = .excludingAll
+
+        let snapshotter = MKMapSnapshotter(options: options)
+        let semaphore = DispatchSemaphore(value: 0)
+        var capturedImage: CGImage?
+        var capturedError: Error?
+
+        snapshotter.start { snapshot, error in
+            if let error = error {
+                capturedError = error
+            } else {
+                capturedImage = snapshot?.image.cgImage
+            }
+            semaphore.signal()
+        }
+
+        if semaphore.wait(timeout: .now() + 30) == .timedOut {
+            throw NSError(
+                domain: "HoleDetectionAnalyzer",
+                code: -1,
+                userInfo: [NSLocalizedDescriptionKey: "Map snapshot timed out"]
+            )
+        }
+
+        if let error = capturedError {
+            throw error
+        }
+
+        guard let image = capturedImage else {
+            throw NSError(
+                domain: "HoleDetectionAnalyzer",
+                code: -2,
+                userInfo: [NSLocalizedDescriptionKey: "No map snapshot image returned"]
+            )
+        }
+
+        return image
+    }
+
+    private func detectBlobs(
+        in image: CGImage,
+        tileCenter: CLLocationCoordinate2D,
+        tileDiameterMeters: Double
+    ) -> HoleDetectionTileResult {
+        let width = image.width
+        let height = image.height
+        let pixelCount = width * height
+
+        let colorSpace = CGColorSpaceCreateDeviceRGB()
+        var pixelData = [UInt8](repeating: 0, count: pixelCount * 4)
+        let bitmapInfo = CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue
+        guard let context = CGContext(
+            data: &pixelData,
+            width: width,
+            height: height,
+            bitsPerComponent: 8,
+            bytesPerRow: width * 4,
+            space: colorSpace,
+            bitmapInfo: bitmapInfo
+        ) else {
+            return HoleDetectionTileResult(
+                blobs: [],
+                greenPixelCount: 0,
+                greenishPixelCount: 0,
+                swappedChannelExactCount: 0,
+                greenishColorCounts: [:]
+            )
+        }
+
+        context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+
+        var isGreen = [Bool](repeating: false, count: pixelCount)
+        var greenPixelCount = 0
+        var greenishPixelCount = 0
+        var swappedChannelExactCount = 0
+        var greenishColorCounts: [UInt32: Int] = [:]
+        for idx in 0..<pixelCount {
+            let offset = idx * 4
+            let r = Int(pixelData[offset])
+            let g = Int(pixelData[offset + 1])
+            let b = Int(pixelData[offset + 2])
+            let isGreenPixel = (r == greenColor.r && g == greenColor.g && b == greenColor.b)
+            isGreen[idx] = isGreenPixel
+            if isGreenPixel {
+                greenPixelCount += 1
+            }
+            if b == greenColor.r && g == greenColor.g && r == greenColor.b {
+                swappedChannelExactCount += 1
+            }
+            if g >= 90 && g > r + 8 && g > b + 8 {
+                greenishPixelCount += 1
+                let key = (UInt32(r) << 16) | (UInt32(g) << 8) | UInt32(b)
+                greenishColorCounts[key, default: 0] += 1
+            }
+        }
+
+        var visited = [Bool](repeating: false, count: pixelCount)
+        let metersPerPixel = tileDiameterMeters / Double(width)
+        var detected: [HoleDetectionBlob] = []
+
+        for start in 0..<pixelCount {
+            if !isGreen[start] || visited[start] { continue }
+
+            var queue: [Int] = [start]
+            visited[start] = true
+            var queueIndex = 0
+
+            var area = 0
+            var sumX = 0
+            var sumY = 0
+            var minX = Int.max
+            var maxX = Int.min
+            var minY = Int.max
+            var maxY = Int.min
+            var boundaryPoints: [(x: Int, y: Int)] = []
+
+            while queueIndex < queue.count {
+                let current = queue[queueIndex]
+                queueIndex += 1
+
+                let x = current % width
+                let y = current / width
+
+                area += 1
+                sumX += x
+                sumY += y
+                minX = min(minX, x)
+                maxX = max(maxX, x)
+                minY = min(minY, y)
+                maxY = max(maxY, y)
+
+                var isBoundaryPixel = false
+                let neighbors = [
+                    (x: x + 1, y: y),
+                    (x: x - 1, y: y),
+                    (x: x, y: y + 1),
+                    (x: x, y: y - 1)
+                ]
+
+                for n in neighbors {
+                    guard n.x >= 0, n.x < width, n.y >= 0, n.y < height else {
+                        isBoundaryPixel = true
+                        continue
+                    }
+
+                    let nIdx = n.y * width + n.x
+                    if !isGreen[nIdx] {
+                        isBoundaryPixel = true
+                        continue
+                    }
+
+                    if !visited[nIdx] {
+                        visited[nIdx] = true
+                        queue.append(nIdx)
+                    }
+                }
+
+                if isBoundaryPixel {
+                    boundaryPoints.append((x: x, y: y))
+                }
+            }
+
+            if area < minimumRawArea { continue }
+
+            let blobWidth = max(1, maxX - minX + 1)
+            let blobHeight = max(1, maxY - minY + 1)
+            let minWidth = Double(min(blobWidth, blobHeight))
+            let maxWidth = Double(max(blobWidth, blobHeight))
+            let elongation = maxWidth / max(minWidth, 1.0)
+            let centroidX = Double(sumX) / Double(area)
+            let centroidY = Double(sumY) / Double(area)
+
+            let sandPixels = countSandPixels(
+                aroundMinX: minX,
+                minY: minY,
+                maxX: maxX,
+                maxY: maxY,
+                pixelData: pixelData,
+                width: width,
+                height: height
+            )
+
+            let greenness = calculateGreennessScore(
+                area: area,
+                minWidth: minWidth,
+                elongation: elongation,
+                sandPixels: sandPixels
+            )
+
+            let hull = convexHull(points: boundaryPoints)
+            let reducedHull = reducePoints(hull, maxPoints: maxPolygonPoints)
+            let polygonPoints: [MapPoint]
+            if reducedHull.count >= 3 {
+                polygonPoints = reducedHull.map {
+                    MapPoint(pixelToCoordinate(
+                        x: Double($0.x),
+                        y: Double($0.y),
+                        tileCenter: tileCenter,
+                        imageWidth: Double(width),
+                        imageHeight: Double(height),
+                        metersPerPixel: metersPerPixel
+                    ))
+                }
+            } else {
+                // Fall back to a small box around centroid if hull is too small.
+                let halfSize = 2.0
+                let fallbackPixels = [
+                    (centroidX - halfSize, centroidY - halfSize),
+                    (centroidX + halfSize, centroidY - halfSize),
+                    (centroidX + halfSize, centroidY + halfSize),
+                    (centroidX - halfSize, centroidY + halfSize)
+                ]
+                polygonPoints = fallbackPixels.map {
+                    MapPoint(pixelToCoordinate(
+                        x: $0.0,
+                        y: $0.1,
+                        tileCenter: tileCenter,
+                        imageWidth: Double(width),
+                        imageHeight: Double(height),
+                        metersPerPixel: metersPerPixel
+                    ))
+                }
+            }
+
+            let centroidCoordinate = pixelToCoordinate(
+                x: centroidX,
+                y: centroidY,
+                tileCenter: tileCenter,
+                imageWidth: Double(width),
+                imageHeight: Double(height),
+                metersPerPixel: metersPerPixel
+            )
+
+            detected.append(HoleDetectionBlob(
+                area: area,
+                minWidth: minWidth,
+                elongation: elongation,
+                greennessScore: greenness,
+                centroidLatitude: centroidCoordinate.latitude,
+                centroidLongitude: centroidCoordinate.longitude,
+                polygon: polygonPoints
+            ))
+        }
+
+        return HoleDetectionTileResult(
+            blobs: detected,
+            greenPixelCount: greenPixelCount,
+            greenishPixelCount: greenishPixelCount,
+            swappedChannelExactCount: swappedChannelExactCount,
+            greenishColorCounts: greenishColorCounts
+        )
+    }
+
+    private func unpackRGB(_ key: UInt32) -> HoleDetectionRGB {
+        HoleDetectionRGB(
+            r: Int((key >> 16) & 0xFF),
+            g: Int((key >> 8) & 0xFF),
+            b: Int(key & 0xFF)
+        )
+    }
+
+    private func countSandPixels(
+        aroundMinX minX: Int,
+        minY: Int,
+        maxX: Int,
+        maxY: Int,
+        pixelData: [UInt8],
+        width: Int,
+        height: Int
+    ) -> Int {
+        let startX = max(0, minX - sandScanRadius)
+        let endX = min(width - 1, maxX + sandScanRadius)
+        let startY = max(0, minY - sandScanRadius)
+        let endY = min(height - 1, maxY + sandScanRadius)
+
+        var sandPixels = 0
+        for y in stride(from: startY, through: endY, by: 2) {
+            for x in stride(from: startX, through: endX, by: 2) {
+                let offset = (y * width + x) * 4
+                let r = Int(pixelData[offset])
+                let g = Int(pixelData[offset + 1])
+                let b = Int(pixelData[offset + 2])
+                if abs(r - sandColor.r) <= sandTolerance &&
+                    abs(g - sandColor.g) <= sandTolerance &&
+                    abs(b - sandColor.b) <= sandTolerance {
+                    sandPixels += 1
+                }
+            }
+        }
+
+        // Mirror the stride compensation used in HoleDetect.
+        return sandPixels * 4
+    }
+
+    private func calculateGreennessScore(area: Int, minWidth: Double, elongation: Double, sandPixels: Int) -> Int {
+        let sandContrib = Double(sandPixels) * sandWeight
+        let areaContrib = Double(area) * areaWeight
+        let widthContrib = minWidth * widthWeight
+        let elongationPenalty = max(elongation * elongation, 1.0e-6)
+        let greenness = (sandContrib + areaContrib + widthContrib) / elongationPenalty
+        return Int(round(greenness))
+    }
+
+    private func mergeDuplicateBlobs(_ blobs: [HoleDetectionBlob]) -> [HoleDetectionBlob] {
+        let sorted = blobs.sorted {
+            if $0.greennessScore == $1.greennessScore {
+                return $0.area > $1.area
+            }
+            return $0.greennessScore > $1.greennessScore
+        }
+
+        var merged: [HoleDetectionBlob] = []
+        for blob in sorted {
+            if let matchIndex = merged.firstIndex(where: {
+                distanceMeters(
+                    CLLocationCoordinate2D(latitude: $0.centroidLatitude, longitude: $0.centroidLongitude),
+                    CLLocationCoordinate2D(latitude: blob.centroidLatitude, longitude: blob.centroidLongitude)
+                ) < duplicateDistanceMeters
+            }) {
+                let existing = merged[matchIndex]
+                if blob.greennessScore > existing.greennessScore ||
+                    (blob.greennessScore == existing.greennessScore && blob.area > existing.area) {
+                    merged[matchIndex] = blob
+                }
+            } else {
+                merged.append(blob)
+            }
+        }
+        return merged
+    }
+
+    private func distanceMeters(_ a: CLLocationCoordinate2D, _ b: CLLocationCoordinate2D) -> CLLocationDistance {
+        let aLoc = CLLocation(latitude: a.latitude, longitude: a.longitude)
+        let bLoc = CLLocation(latitude: b.latitude, longitude: b.longitude)
+        return aLoc.distance(from: bLoc)
+    }
+
+    private func pixelToCoordinate(
+        x: Double,
+        y: Double,
+        tileCenter: CLLocationCoordinate2D,
+        imageWidth: Double,
+        imageHeight: Double,
+        metersPerPixel: Double
+    ) -> CLLocationCoordinate2D {
+        let pixelOffsetX = x - (imageWidth / 2.0)
+        let pixelOffsetY = y - (imageHeight / 2.0)
+
+        let metersEast = pixelOffsetX * metersPerPixel
+        let metersNorth = -pixelOffsetY * metersPerPixel
+
+        let metersPerDegreeLat = 111000.0
+        let metersPerDegreeLon = 111000.0 * cos(tileCenter.latitude * .pi / 180.0)
+
+        return CLLocationCoordinate2D(
+            latitude: tileCenter.latitude + (metersNorth / metersPerDegreeLat),
+            longitude: tileCenter.longitude + (metersEast / metersPerDegreeLon)
+        )
+    }
+
+    private func offsetCoordinate(from coordinate: CLLocationCoordinate2D, northMeters: Double, eastMeters: Double) -> CLLocationCoordinate2D {
+        let metersPerDegreeLat = 111000.0
+        let metersPerDegreeLon = 111000.0 * cos(coordinate.latitude * .pi / 180.0)
+        return CLLocationCoordinate2D(
+            latitude: coordinate.latitude + (northMeters / metersPerDegreeLat),
+            longitude: coordinate.longitude + (eastMeters / metersPerDegreeLon)
+        )
+    }
+
+    private func convexHull(points: [(x: Int, y: Int)]) -> [(x: Int, y: Int)] {
+        guard points.count >= 3 else { return points }
+
+        let sorted = points.sorted { lhs, rhs in
+            lhs.x < rhs.x || (lhs.x == rhs.x && lhs.y < rhs.y)
+        }
+
+        func cross(_ a: (x: Int, y: Int), _ b: (x: Int, y: Int), _ c: (x: Int, y: Int)) -> Int {
+            (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x)
+        }
+
+        var lower: [(x: Int, y: Int)] = []
+        for point in sorted {
+            while lower.count >= 2 && cross(lower[lower.count - 2], lower[lower.count - 1], point) <= 0 {
+                _ = lower.popLast()
+            }
+            lower.append(point)
+        }
+
+        var upper: [(x: Int, y: Int)] = []
+        for point in sorted.reversed() {
+            while upper.count >= 2 && cross(upper[upper.count - 2], upper[upper.count - 1], point) <= 0 {
+                _ = upper.popLast()
+            }
+            upper.append(point)
+        }
+
+        _ = lower.popLast()
+        _ = upper.popLast()
+        return lower + upper
+    }
+
+    private func reducePoints(_ points: [(x: Int, y: Int)], maxPoints: Int) -> [(x: Int, y: Int)] {
+        guard points.count > maxPoints, maxPoints > 2 else { return points }
+        var reduced: [(x: Int, y: Int)] = []
+        let step = Double(points.count) / Double(maxPoints)
+        for i in 0..<maxPoints {
+            let index = min(points.count - 1, Int((Double(i) * step).rounded(.down)))
+            reduced.append(points[index])
+        }
+        return reduced
     }
 }

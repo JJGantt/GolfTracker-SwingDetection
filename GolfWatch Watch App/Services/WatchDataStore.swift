@@ -14,14 +14,29 @@ enum ClubPredictionMode: String, Codable, CaseIterable {
 class WatchDataStore: ObservableObject {
     static let shared = WatchDataStore()
 
-    @Published var currentRound: Round?
+    @Published var currentRound: Round? {
+        didSet {
+            let enabled = currentRound?.locationTestModeEnabled == true
+            LocationManager.shared.setTestModeEnabled(enabled)
+        }
+    }
     @Published var currentHoleIndex: Int = 0
     @Published var pendingStrokes: [Stroke] = []
     @Published var availableClubs: [ClubData] = []
     @Published var clubTypes: [ClubTypeData] = []
+    @Published var holeDetectionDataByCourse: [UUID: CourseHoleDetectionData] = [:]
     @Published var satelliteModeEnabled: Bool = false {
         didSet {
             UserDefaults.standard.set(satelliteModeEnabled, forKey: "satelliteModeEnabled")
+        }
+    }
+
+    @Published var holeFilterSettings: HoleDetectionFilterSettings = .default {
+        didSet {
+            if let data = try? JSONEncoder().encode(holeFilterSettings) {
+                UserDefaults.standard.set(data, forKey: holeFilterSettingsKey)
+            }
+            connectivity.sendHoleFilterSettings(holeFilterSettings)
         }
     }
 
@@ -54,6 +69,8 @@ class WatchDataStore: ObservableObject {
     private let pendingStrokesKey = "pendingStrokes"
     private let clubsKey = "availableClubs"
     private let clubTypesKey = "clubTypes"
+    private let holeDetectionDataKey = "holeDetectionDataByCourse"
+    private let holeFilterSettingsKey = "holeFilterSettings"
 
     private init() {
         loadFromStorage()
@@ -267,6 +284,17 @@ class WatchDataStore: ObservableObject {
                 print("⌚ [WatchDataStore] Club types synced successfully")
             }
         }
+
+        connectivity.onReceiveHoleDetectionData = { [weak self] detectionData in
+            print("⌚ [WatchDataStore] Received hole detection data for course \(detectionData.courseId), blobs: \(detectionData.blobs.count)")
+            DispatchQueue.main.async {
+                self?.holeDetectionDataByCourse[detectionData.courseId] = detectionData
+                self?.saveToStorage()
+            }
+        }
+
+        // Watch is the authority for filter settings, so push current value to iPhone.
+        connectivity.sendHoleFilterSettings(holeFilterSettings)
     }
 
     // MARK: - Persistence
@@ -287,6 +315,15 @@ class WatchDataStore: ObservableObject {
 
         if let data = try? JSONEncoder().encode(clubTypes) {
             UserDefaults.standard.set(data, forKey: clubTypesKey)
+        }
+
+        let detectionDataArray = Array(holeDetectionDataByCourse.values)
+        if let data = try? JSONEncoder().encode(detectionDataArray) {
+            UserDefaults.standard.set(data, forKey: holeDetectionDataKey)
+        }
+
+        if let data = try? JSONEncoder().encode(holeFilterSettings) {
+            UserDefaults.standard.set(data, forKey: holeFilterSettingsKey)
         }
 
         UserDefaults.standard.set(currentHoleIndex, forKey: "currentHoleIndex")
@@ -317,6 +354,17 @@ class WatchDataStore: ObservableObject {
             print("⌚ [WatchDataStore] Loaded \(types.count) club types from storage")
         } else {
             print("⌚ [WatchDataStore] No club types in storage, waiting for sync from iPhone")
+        }
+
+        if let data = UserDefaults.standard.data(forKey: holeDetectionDataKey),
+           let detectionDataArray = try? JSONDecoder().decode([CourseHoleDetectionData].self, from: data) {
+            holeDetectionDataByCourse = Dictionary(uniqueKeysWithValues: detectionDataArray.map { ($0.courseId, $0) })
+            print("⌚ [WatchDataStore] Loaded hole detection data for \(holeDetectionDataByCourse.count) course(s)")
+        }
+
+        if let data = UserDefaults.standard.data(forKey: holeFilterSettingsKey),
+           let settings = try? JSONDecoder().decode(HoleDetectionFilterSettings.self, from: data) {
+            holeFilterSettings = settings
         }
 
         currentHoleIndex = UserDefaults.standard.integer(forKey: "currentHoleIndex")
@@ -507,6 +555,13 @@ class WatchDataStore: ObservableObject {
     }
 
     // MARK: - Helpers
+
+    func filteredGreenCandidates(for courseId: UUID?) -> [HoleDetectionBlob] {
+        guard let courseId,
+              let detectionData = holeDetectionDataByCourse[courseId] else { return [] }
+
+        return detectionData.blobs.filter { $0.passesFilter(holeFilterSettings) }
+    }
 
     func strokeCount(for hole: Hole) -> Int {
         currentRound?.strokes.filter { $0.holeNumber == hole.number }.count ?? 0

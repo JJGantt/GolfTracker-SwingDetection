@@ -10,6 +10,9 @@ struct AddHoleMapView: View {
     let userLocation: CLLocation?
     let heading: CLLocationDirection?
     let useStandardMap: Bool
+    let greenCandidates: [HoleDetectionBlob]
+    private let maxSnapDistanceMeters: CLLocationDistance = 120
+    @State private var selectedGreenBlobId: UUID?
 
     var body: some View {
         MapReader { proxy in
@@ -29,6 +32,19 @@ struct AddHoleMapView: View {
                             .font(.title)
                     }
                 }
+
+                // Suggested greens from phone-side detection
+                ForEach(greenCandidates) { blob in
+                    if blob.polygonCoordinates.count >= 3,
+                       let first = blob.polygonCoordinates.first {
+                        let outline = blob.polygonCoordinates + [first]
+                        MapPolyline(coordinates: outline)
+                            .stroke(
+                                blob.id == selectedGreenBlobId ? Color.yellow : Color.white,
+                                lineWidth: 2
+                            )
+                    }
+                }
             }
             .mapStyle(useStandardMap ? .standard : .hybrid)
             .onMapCameraChange { context in
@@ -38,7 +54,17 @@ struct AddHoleMapView: View {
             .onTapGesture { screenCoord in
                 hasUserInteracted = true
                 if let coordinate = proxy.convert(screenCoord, from: .local) {
-                    temporaryHolePosition = coordinate
+                    let matchingBlob = greenCandidates
+                        .filter { $0.contains(coordinate) }
+                        .min { $0.centroidDistanceMeters(to: coordinate) < $1.centroidDistanceMeters(to: coordinate) }
+                    if let blob = matchingBlob,
+                       blob.centroidDistanceMeters(to: coordinate) <= maxSnapDistanceMeters {
+                        temporaryHolePosition = blob.centroidCoordinate
+                        selectedGreenBlobId = blob.id
+                    } else {
+                        temporaryHolePosition = coordinate
+                        selectedGreenBlobId = nil
+                    }
                 }
             }
         }
@@ -59,7 +85,7 @@ struct AddHoleOverlay: View {
                     .font(.title2)
                     .fontWeight(.semibold)
 
-                Text("Tap the map to place the flag")
+                Text("Tap map or green highlight to place flag")
                     .font(.subheadline)
                     .foregroundColor(.secondary)
             }

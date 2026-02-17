@@ -12,12 +12,17 @@ class WatchConnectivityManager: NSObject, ObservableObject {
     var onReceiveStrokes: (([Stroke]) -> Void)?
     var onReceiveClubs: (([ClubData]) -> Void)?
     var onReceiveClubTypes: (([ClubTypeData]) -> Void)?
+    var onReceiveHoleDetectionData: ((CourseHoleDetectionData) -> Void)?
+    var onReceiveHoleFilterSettings: ((HoleDetectionFilterSettings) -> Void)?
     var onReceiveMotionData: ((String, Int, Double, Double, String?, Int?) -> Void)? // CSV, sampleCount, threshold, timeAboveThreshold, rawAccelCsv, rawAccelSampleCount
+    var onReceivePuttEventData: ((String, Int, String?, Int?) -> Void)? // csv, sampleCount, rawAccelCsv, rawAccelSampleCount
 
     // Queue for pending sends
     private var pendingRound: Round?
     private var pendingClubs: [ClubData]?
     private var pendingClubTypes: [ClubTypeData]?
+    private var pendingHoleDetectionData: CourseHoleDetectionData?
+    private var pendingHoleFilterSettings: HoleDetectionFilterSettings?
 
     private override init() {
         super.init()
@@ -181,6 +186,90 @@ class WatchConnectivityManager: NSObject, ObservableObject {
         }
     }
 
+    /// Send raw hole-detection blobs for a course (iPhone → Watch)
+    func sendHoleDetectionData(_ data: CourseHoleDetectionData) {
+        print("📱 [iPhone] sendHoleDetectionData called for course \(data.courseId), blobs: \(data.blobs.count)")
+
+        guard WCSession.default.activationState == .activated else {
+            print("📱 [iPhone] Session not activated yet, queuing hole detection data for later...")
+            pendingHoleDetectionData = data
+            return
+        }
+
+        actuallySendHoleDetectionData(data)
+    }
+
+    private func actuallySendHoleDetectionData(_ detectionData: CourseHoleDetectionData) {
+        do {
+            let encoded = try JSONEncoder().encode(detectionData)
+            print("📱 [iPhone] Encoded hole detection data: \(encoded.count) bytes")
+
+            let shouldUseFileTransfer: Bool = {
+#if targetEnvironment(simulator)
+                return false
+#else
+                return encoded.count > 50_000
+#endif
+            }()
+
+            // Large payloads are more reliable via file transfer.
+            if shouldUseFileTransfer {
+                let tempURL = FileManager.default.temporaryDirectory
+                    .appendingPathComponent("hole_detection_\(detectionData.courseId.uuidString).json")
+                try encoded.write(to: tempURL)
+                WCSession.default.transferFile(tempURL, metadata: ["type": "holeDetectionData"])
+                print("📱 [iPhone] Queued hole detection file transfer")
+                return
+            }
+
+            if WCSession.default.isReachable {
+                print("📱 [iPhone] Watch is reachable, sending hole detection data immediately...")
+                let message: [String: Any] = ["type": "holeDetectionData", "data": encoded]
+                WCSession.default.sendMessage(message, replyHandler: nil) { error in
+                    print("📱 [iPhone] Failed to send hole detection data: \(error.localizedDescription)")
+                    self.updateHoleDetectionContext(encoded)
+                }
+            } else {
+                print("📱 [iPhone] Watch not reachable, using background context for hole detection data")
+                updateHoleDetectionContext(encoded)
+            }
+        } catch {
+            print("📱 [iPhone] Failed to encode hole detection data: \(error)")
+        }
+    }
+
+    /// Send hole filter settings (Watch → iPhone authority remains Watch)
+    func sendHoleFilterSettings(_ settings: HoleDetectionFilterSettings) {
+        print("⌚ [Watch] sendHoleFilterSettings called")
+
+        guard WCSession.default.activationState == .activated else {
+            print("⌚ [Watch] Session not activated yet, queuing hole filter settings for later...")
+            pendingHoleFilterSettings = settings
+            return
+        }
+
+        actuallySendHoleFilterSettings(settings)
+    }
+
+    private func actuallySendHoleFilterSettings(_ settings: HoleDetectionFilterSettings) {
+        do {
+            let encoded = try JSONEncoder().encode(settings)
+            print("⌚ [Watch] Encoded hole filter settings: \(encoded.count) bytes")
+
+            if WCSession.default.isReachable {
+                let message: [String: Any] = ["type": "holeFilterSettings", "data": encoded]
+                WCSession.default.sendMessage(message, replyHandler: nil) { error in
+                    print("⌚ [Watch] Failed to send hole filter settings: \(error.localizedDescription)")
+                    self.updateHoleFilterSettingsContext(encoded)
+                }
+            } else {
+                updateHoleFilterSettingsContext(encoded)
+            }
+        } catch {
+            print("⌚ [Watch] Failed to encode hole filter settings: \(error)")
+        }
+    }
+
     // MARK: - Background Context Updates
 
     /// Merges the given key-value pair into the existing application context,
@@ -213,6 +302,14 @@ class WatchConnectivityManager: NSObject, ObservableObject {
     private func updateClubTypesContext(_ data: Data) {
         mergeIntoApplicationContext(["clubTypes": data])
     }
+
+    private func updateHoleDetectionContext(_ data: Data) {
+        mergeIntoApplicationContext(["holeDetectionData": data])
+    }
+
+    private func updateHoleFilterSettingsContext(_ data: Data) {
+        mergeIntoApplicationContext(["holeFilterSettings": data])
+    }
 }
 
 // MARK: - WCSessionDelegate
@@ -234,6 +331,41 @@ extension WatchConnectivityManager: WCSessionDelegate {
                 let accelThreshold = message["accelThreshold"] as? Double ?? message["threshold"] as? Double ?? 2.0
                 let accelTimeThreshold = message["accelTimeThreshold"] as? Double ?? message["timeAboveThreshold"] as? Double ?? 0.0
                 self.onReceiveMotionData?(csv, sampleCount, accelThreshold, accelTimeThreshold, rawAccelCsv, rawAccelSampleCount)
+            }
+            return
+        }
+
+        // Handle putt event data (auto-captured around detected putts)
+        if let type = message["type"] as? String, type == "puttEventData",
+           let csv = message["csv"] as? String,
+           let sampleCount = message["sampleCount"] as? Int {
+            let rawAccelCsv = message["rawAccelCsv"] as? String
+            let rawAccelSampleCount = message["rawAccelSampleCount"] as? Int
+            print("📱 [iPhone] Received putt event data: \(sampleCount) DeviceMotion, \(rawAccelSampleCount ?? 0) RawAccel samples")
+            DispatchQueue.main.async {
+                self.onReceivePuttEventData?(csv, sampleCount, rawAccelCsv, rawAccelSampleCount)
+            }
+            return
+        }
+
+        // Handle hole detection data (iPhone → Watch)
+        if let type = message["type"] as? String, type == "holeDetectionData",
+           let data = message["data"] as? Data,
+           let detectionData = try? JSONDecoder().decode(CourseHoleDetectionData.self, from: data) {
+            print("⌚ [Watch] Received hole detection data for course \(detectionData.courseId), blobs: \(detectionData.blobs.count)")
+            DispatchQueue.main.async {
+                self.onReceiveHoleDetectionData?(detectionData)
+            }
+            return
+        }
+
+        // Handle hole filter settings (Watch → iPhone)
+        if let type = message["type"] as? String, type == "holeFilterSettings",
+           let data = message["data"] as? Data,
+           let settings = try? JSONDecoder().decode(HoleDetectionFilterSettings.self, from: data) {
+            print("📱 [iPhone] Received hole filter settings from Watch")
+            DispatchQueue.main.async {
+                self.onReceiveHoleFilterSettings?(settings)
             }
             return
         }
@@ -319,6 +451,24 @@ extension WatchConnectivityManager: WCSessionDelegate {
                 self.onReceiveClubTypes?(clubTypes)
             }
         }
+
+        // Hole detection data received
+        if let data = applicationContext["holeDetectionData"] as? Data,
+           let detectionData = try? JSONDecoder().decode(CourseHoleDetectionData.self, from: data) {
+            print("⌚ [Watch] Decoded hole detection data from context, blobs: \(detectionData.blobs.count)")
+            DispatchQueue.main.async {
+                self.onReceiveHoleDetectionData?(detectionData)
+            }
+        }
+
+        // Hole filter settings received
+        if let data = applicationContext["holeFilterSettings"] as? Data,
+           let settings = try? JSONDecoder().decode(HoleDetectionFilterSettings.self, from: data) {
+            print("📱 [iPhone] Decoded hole filter settings from context")
+            DispatchQueue.main.async {
+                self.onReceiveHoleFilterSettings?(settings)
+            }
+        }
     }
 
     // MARK: - Receiving File Transfers
@@ -327,6 +477,19 @@ extension WatchConnectivityManager: WCSessionDelegate {
         #if os(watchOS)
         print("⌚ [Watch] 📥 Received file: \(file.fileURL.lastPathComponent)")
         print("⌚ [Watch] File metadata: \(file.metadata ?? [:])")
+
+        if let type = file.metadata?["type"] as? String, type == "holeDetectionData" {
+            guard let fileData = try? Data(contentsOf: file.fileURL),
+                  let detectionData = try? JSONDecoder().decode(CourseHoleDetectionData.self, from: fileData) else {
+                print("⌚ [Watch] ❌ ERROR: Failed to decode hole detection file")
+                return
+            }
+            print("⌚ [Watch] ✅ Received hole detection file for course \(detectionData.courseId), blobs: \(detectionData.blobs.count)")
+            DispatchQueue.main.async {
+                self.onReceiveHoleDetectionData?(detectionData)
+            }
+            return
+        }
 
         // Decode metadata
         guard let metadataJSON = file.metadata?["metadata"] as? Data,
@@ -383,6 +546,16 @@ extension WatchConnectivityManager: WCSessionDelegate {
                 print("📱 [iPhone] Session now activated, sending pending club types...")
                 self.actuallySendClubTypes(clubTypes)
                 self.pendingClubTypes = nil
+            }
+            if let holeDetectionData = self.pendingHoleDetectionData {
+                print("📱 [iPhone] Session now activated, sending pending hole detection data...")
+                self.actuallySendHoleDetectionData(holeDetectionData)
+                self.pendingHoleDetectionData = nil
+            }
+            if let holeFilterSettings = self.pendingHoleFilterSettings {
+                print("⌚ [Watch] Session now activated, sending pending hole filter settings...")
+                self.actuallySendHoleFilterSettings(holeFilterSettings)
+                self.pendingHoleFilterSettings = nil
             }
         }
     }

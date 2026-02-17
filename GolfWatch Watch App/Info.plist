@@ -43,5 +43,7 @@
 	<string>com.Jared.GolfTracker</string>
 	<key>WKRunsIndependentlyOfCompanionApp</key>
 	<false/>
+	<key>WKSupportsAlwaysOnDisplay</key>
+	<false/>
 </dict>
 </plist>

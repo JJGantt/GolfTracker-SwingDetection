@@ -65,11 +65,9 @@ class WorkoutManager: NSObject, ObservableObject {
             session?.delegate = self
             builder?.delegate = self
 
-            // Set data source
-            builder?.dataSource = HKLiveWorkoutDataSource(
-                healthStore: healthStore,
-                workoutConfiguration: configuration
-            )
+            // Skip setting data source — we don't need heart rate, calories, or distance
+            // from HealthKit. The workout session alone keeps the app alive in the foreground.
+            // Not setting a data source avoids activating the optical heart rate sensor.
 
             // Start the session
             let startDate = Date()

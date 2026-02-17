@@ -4,6 +4,10 @@ import Combine
 
 class LocationManager: NSObject, ObservableObject {
     static let shared = LocationManager()
+    static let testCoordinate = CLLocationCoordinate2D(
+        latitude: 30.285357365597697,
+        longitude: -81.74623642434663
+    )
 
     private let locationManager = CLLocationManager()
 
@@ -11,6 +15,11 @@ class LocationManager: NSObject, ObservableObject {
     @Published var heading: CLLocationDirection?
     @Published var authorizationStatus: CLAuthorizationStatus = .notDetermined
     @Published var errorMessage: String?
+    @Published var isTestModeEnabled: Bool = false
+
+    private var forcedTestLocation: CLLocation {
+        CLLocation(latitude: Self.testCoordinate.latitude, longitude: Self.testCoordinate.longitude)
+    }
 
     override init() {
         super.init()
@@ -36,6 +45,9 @@ class LocationManager: NSObject, ObservableObject {
     }
 
     func requestPermission() {
+        if isTestModeEnabled {
+            return
+        }
         #if os(iOS) || os(watchOS)
         locationManager.requestWhenInUseAuthorization()
         #elseif os(macOS)
@@ -43,7 +55,33 @@ class LocationManager: NSObject, ObservableObject {
         #endif
     }
 
+    func setTestModeEnabled(_ enabled: Bool) {
+        isTestModeEnabled = enabled
+
+        if enabled {
+            locationManager.stopUpdatingLocation()
+            #if os(iOS) || os(watchOS)
+            locationManager.stopUpdatingHeading()
+            #endif
+
+            location = forcedTestLocation
+            heading = 0
+            errorMessage = nil
+            print("[LocationManager] Test mode ON: forcing location to \(forcedTestLocation.coordinate.latitude), \(forcedTestLocation.coordinate.longitude)")
+        } else {
+            print("[LocationManager] Test mode OFF: resuming live GPS")
+            startTracking()
+        }
+    }
+
     func startTracking() {
+        if isTestModeEnabled {
+            location = forcedTestLocation
+            heading = 0
+            errorMessage = nil
+            return
+        }
+
         #if os(iOS) || os(watchOS)
         let isAuthorized = authorizationStatus == .authorizedWhenInUse || authorizationStatus == .authorizedAlways
         #elseif os(macOS)
@@ -103,6 +141,10 @@ class LocationManager: NSObject, ObservableObject {
 
     /// Get current location synchronously (uses last known location if available)
     func getCurrentLocation() -> CLLocation? {
+        if isTestModeEnabled {
+            return forcedTestLocation
+        }
+
         // First try the published location (most recent)
         if let loc = location {
             return loc
@@ -133,6 +175,12 @@ extension LocationManager: CLLocationManagerDelegate {
     }
 
     func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
+        if isTestModeEnabled {
+            location = forcedTestLocation
+            errorMessage = nil
+            return
+        }
+
         guard let newLocation = locations.last else { return }
         print("[LocationManager] Got location update: \(newLocation.coordinate.latitude), \(newLocation.coordinate.longitude)")
         location = newLocation
@@ -140,6 +188,11 @@ extension LocationManager: CLLocationManagerDelegate {
     }
 
     func locationManager(_ manager: CLLocationManager, didUpdateHeading newHeading: CLHeading) {
+        if isTestModeEnabled {
+            heading = 0
+            return
+        }
+
         // Use true heading if available, otherwise use magnetic heading
         if newHeading.trueHeading >= 0 {
             heading = newHeading.trueHeading
@@ -149,6 +202,9 @@ extension LocationManager: CLLocationManagerDelegate {
     }
 
     func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
+        if isTestModeEnabled {
+            return
+        }
         errorMessage = "Failed to get location: \(error.localizedDescription)"
     }
 }

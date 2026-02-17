@@ -284,6 +284,55 @@ struct OptionsView: View {
                         }
                     }
                     .padding(.horizontal, 8)
+
+                    // Hole detection filtering (watch-owned settings)
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Hole Filter")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundColor(.white)
+                            .padding(.bottom, 2)
+
+                        Stepper(value: Binding(
+                            get: { store.holeFilterSettings.minArea },
+                            set: { newValue in
+                                store.holeFilterSettings.minArea = newValue
+                            }
+                        ), in: 0...5000, step: 50) {
+                            Text("Min Area: \(store.holeFilterSettings.minArea)")
+                                .font(.system(size: 12))
+                        }
+
+                        Stepper(value: Binding(
+                            get: { store.holeFilterSettings.minWidth },
+                            set: { newValue in
+                                store.holeFilterSettings.minWidth = newValue
+                            }
+                        ), in: 0...80, step: 1) {
+                            Text("Min Width: \(Int(store.holeFilterSettings.minWidth.rounded()))")
+                                .font(.system(size: 12))
+                        }
+
+                        Stepper(value: Binding(
+                            get: { store.holeFilterSettings.maxElongation },
+                            set: { newValue in
+                                store.holeFilterSettings.maxElongation = newValue
+                            }
+                        ), in: 1.0...6.0, step: 0.1) {
+                            Text(String(format: "Max Elong: %.1f", store.holeFilterSettings.maxElongation))
+                                .font(.system(size: 12))
+                        }
+
+                        Stepper(value: Binding(
+                            get: { store.holeFilterSettings.minGreennessScore },
+                            set: { newValue in
+                                store.holeFilterSettings.minGreennessScore = newValue
+                            }
+                        ), in: 0...1200, step: 25) {
+                            Text("Min Score: \(store.holeFilterSettings.minGreennessScore)")
+                                .font(.system(size: 12))
+                        }
+                    }
+                    .padding(.horizontal, 8)
                 }
             }
             .padding()

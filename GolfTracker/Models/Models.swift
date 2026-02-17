@@ -204,8 +204,16 @@ struct Round: Identifiable, Codable, Hashable {
     var completedHoles: Set<Int> // Hole numbers that have been finished
     var currentHoleIndex: Int // Current hole being played (synced between devices)
     var targets: [Target] // Target markers placed on the map (synced between devices)
+    var holeDetectionEnabled: Bool? // Whether green suggestions are enabled for this round
+    var locationTestModeEnabled: Bool? // Whether GPS should be forced to fixed test coordinates
 
-    init(courseId: UUID, courseName: String, holes: [Hole] = []) {
+    init(
+        courseId: UUID,
+        courseName: String,
+        holes: [Hole] = [],
+        holeDetectionEnabled: Bool = false,
+        locationTestModeEnabled: Bool = false
+    ) {
         self.courseId = courseId
         self.courseName = courseName
         self.date = Date()
@@ -214,11 +222,110 @@ struct Round: Identifiable, Codable, Hashable {
         self.completedHoles = []
         self.currentHoleIndex = 0
         self.targets = []
+        self.holeDetectionEnabled = holeDetectionEnabled
+        self.locationTestModeEnabled = locationTestModeEnabled
     }
 
     func isHoleCompleted(_ holeNumber: Int) -> Bool {
         return completedHoles.contains(holeNumber)
     }
+}
+
+// MARK: - Hole Detection Models
+
+struct MapPoint: Codable, Hashable {
+    var latitude: Double
+    var longitude: Double
+
+    var coordinate: CLLocationCoordinate2D {
+        CLLocationCoordinate2D(latitude: latitude, longitude: longitude)
+    }
+
+    init(latitude: Double, longitude: Double) {
+        self.latitude = latitude
+        self.longitude = longitude
+    }
+
+    init(_ coordinate: CLLocationCoordinate2D) {
+        self.latitude = coordinate.latitude
+        self.longitude = coordinate.longitude
+    }
+}
+
+struct HoleDetectionBlob: Identifiable, Codable, Hashable {
+    var id = UUID()
+    var area: Int
+    var minWidth: Double
+    var elongation: Double
+    var greennessScore: Int
+    var centroidLatitude: Double
+    var centroidLongitude: Double
+    var polygon: [MapPoint]
+
+    var centroidCoordinate: CLLocationCoordinate2D {
+        CLLocationCoordinate2D(latitude: centroidLatitude, longitude: centroidLongitude)
+    }
+
+    var polygonCoordinates: [CLLocationCoordinate2D] {
+        polygon.map { $0.coordinate }
+    }
+
+    func centroidDistanceMeters(to coordinate: CLLocationCoordinate2D) -> CLLocationDistance {
+        CLLocation(latitude: centroidLatitude, longitude: centroidLongitude)
+            .distance(from: CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude))
+    }
+
+    func passesFilter(_ settings: HoleDetectionFilterSettings) -> Bool {
+        area >= settings.minArea &&
+        minWidth >= settings.minWidth &&
+        elongation <= settings.maxElongation &&
+        greennessScore >= settings.minGreennessScore
+    }
+
+    func contains(_ coordinate: CLLocationCoordinate2D) -> Bool {
+        guard polygon.count >= 3 else { return false }
+
+        let x = coordinate.longitude
+        let y = coordinate.latitude
+        var isInside = false
+        var j = polygon.count - 1
+
+        for i in 0..<polygon.count {
+            let xi = polygon[i].longitude
+            let yi = polygon[i].latitude
+            let xj = polygon[j].longitude
+            let yj = polygon[j].latitude
+
+            let intersects = ((yi > y) != (yj > y)) &&
+                (x < ((xj - xi) * (y - yi) / max((yj - yi), 1.0e-12)) + xi)
+            if intersects {
+                isInside.toggle()
+            }
+            j = i
+        }
+
+        return isInside
+    }
+}
+
+struct CourseHoleDetectionData: Codable, Hashable {
+    var courseId: UUID
+    var generatedAt: Date
+    var blobs: [HoleDetectionBlob]
+}
+
+struct HoleDetectionFilterSettings: Codable, Hashable {
+    var minArea: Int
+    var minWidth: Double
+    var maxElongation: Double
+    var minGreennessScore: Int
+
+    static let `default` = HoleDetectionFilterSettings(
+        minArea: 500,
+        minWidth: 20,
+        maxElongation: 3.0,
+        minGreennessScore: 100
+    )
 }
 
 // MARK: - Satellite Imagery Models
