@@ -17,6 +17,7 @@ class WatchConnectivityManager: NSObject, ObservableObject {
     var onReceiveMotionData: ((String, Int, Double, Double, String?, Int?) -> Void)? // CSV, sampleCount, threshold, timeAboveThreshold, rawAccelCsv, rawAccelSampleCount
     var onReceivePuttEventData: ((String, Int, String?, Int?, String) -> Void)? // csv, sampleCount, rawAccelCsv, rawAccelSampleCount, outcome
     var onReceivePuttDiagnosticLog: ((String, String, String) -> Void)? // log, outcome, finalState
+    var onReceiveMotionFile: ((URL, [String: Any]) -> Void)? // tempCopyURL, metadata
 
     // Queue for pending sends
     private var pendingRound: Round?
@@ -534,7 +535,28 @@ extension WatchConnectivityManager: WCSessionDelegate {
         WatchSatelliteCacheManager.shared.saveImage(metadata: metadata, imageData: imageData)
         print("⌚ [Watch] ✅✅ COMPLETED satellite image save for hole \(metadata.holeNumber)")
         #else
-        print("📱 [iPhone] Received file (unexpected on iPhone): \(file.fileURL.lastPathComponent)")
+        let fileName = file.fileURL.lastPathComponent
+        let metadata = file.metadata ?? [:]
+        let fileType = metadata["type"] as? String ?? ""
+
+        guard fileType == "motionData" || fileType == "puttEventData" else {
+            print("📱 [iPhone] Received unexpected file: \(fileName)")
+            return
+        }
+
+        // The temp file URL is only valid during this delegate call — copy it immediately.
+        let tempCopy = FileManager.default.temporaryDirectory
+            .appendingPathComponent("received_\(fileName)")
+        do {
+            try? FileManager.default.removeItem(at: tempCopy)
+            try FileManager.default.copyItem(at: file.fileURL, to: tempCopy)
+            print("📱 [iPhone] Received motion file: \(fileName) (\(fileType))")
+            DispatchQueue.main.async {
+                self.onReceiveMotionFile?(tempCopy, metadata)
+            }
+        } catch {
+            print("📱 [iPhone] Failed to copy received motion file \(fileName): \(error)")
+        }
         #endif
     }
 

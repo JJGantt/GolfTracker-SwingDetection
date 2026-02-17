@@ -78,6 +78,11 @@ class MotionDataHandler: ObservableObject {
             print("📱 [MotionDataHandler] Received putt diagnostic log: outcome=\(outcome)")
             self?.handlePuttDiagnosticLog(log: log, outcome: outcome, finalState: finalState)
         }
+
+        WatchConnectivityManager.shared.onReceiveMotionFile = { [weak self] url, metadata in
+            print("📱 [MotionDataHandler] Received motion file transfer: \(url.lastPathComponent)")
+            self?.handleMotionFile(url: url, metadata: metadata)
+        }
     }
 
     private func handleMotionData(csv: String, sampleCount: Int, threshold: Double, timeAboveThreshold: Double, rawAccelCsv: String?, rawAccelSampleCount: Int?) {
@@ -213,6 +218,59 @@ class MotionDataHandler: ObservableObject {
         } catch {
             print("📱 [MotionDataHandler] Error saving putt diagnostic log: \(error)")
         }
+    }
+
+    private func handleMotionFile(url: URL, metadata: [String: Any]) {
+        let fileType = metadata["type"] as? String ?? ""
+        let dataType = metadata["dataType"] as? String ?? "deviceMotion"
+        let sampleCount = metadata["sampleCount"] as? Int ?? 0
+        let outcome = metadata["outcome"] as? String
+        let finalState = metadata["finalState"] as? String ?? ""
+        let timestamp = Date().timeIntervalSince1970
+
+        // Determine file prefix and header based on type/dataType
+        let (prefix, header): (String, String)
+        switch (fileType, dataType) {
+        case ("motionData", "deviceMotion"):
+            prefix = "motion_test"
+            header = "Golf Swing Motion Data (Device Motion @ 100Hz)\nSample Count: \(sampleCount)\n\n"
+        case ("motionData", "rawAccel"):
+            prefix = "raw_accel"
+            header = "Golf Swing Raw Accelerometer Data (@ 800Hz)\nSample Count: \(sampleCount)\n\n"
+        case ("puttEventData", "deviceMotion"):
+            let tag = outcome == "detected" ? "Detected" : "Failed"
+            prefix = outcome == "detected" ? "putt_event" : "putt_fail"
+            header = "Putt \(tag) (Device Motion @ 100Hz)\nOutcome: \(outcome ?? "unknown")\nSample Count: \(sampleCount)\n\n"
+        case ("puttEventData", "rawAccel"):
+            prefix = (outcome == "detected" ? "putt_event" : "putt_fail") + "_raw"
+            header = "Putt \(outcome == "detected" ? "Detected" : "Failed") (Raw Accelerometer @ 800Hz)\nOutcome: \(outcome ?? "unknown")\nSample Count: \(sampleCount)\n\n"
+        default:
+            print("📱 [MotionDataHandler] Unknown file type '\(fileType)/\(dataType)', skipping")
+            return
+        }
+
+        let fileName = "\(prefix)_\(Int(timestamp)).csv"
+        let destURL = testFilesDirectory.appendingPathComponent(fileName)
+
+        do {
+            let csvContent = try String(contentsOf: url, encoding: .utf8)
+            try (header + csvContent).write(to: destURL, atomically: true, encoding: .utf8)
+            let testFile = MotionTestFile(id: UUID(), date: Date(), sampleCount: sampleCount, fileName: fileName)
+            testFiles.append(testFile)
+            saveTestFiles()
+            print("📱 [MotionDataHandler] Saved \(fileName) (\(sampleCount) samples)")
+        } catch {
+            print("📱 [MotionDataHandler] Error saving motion file \(fileName): \(error)")
+        }
+
+        // If a diagnostic log was bundled in the metadata, save it as a separate file
+        if fileType == "puttEventData", dataType == "deviceMotion",
+           let diagLog = metadata["diagnosticLog"] as? String, !diagLog.isEmpty {
+            handlePuttDiagnosticLog(log: diagLog, outcome: outcome ?? "unknown", finalState: finalState)
+        }
+
+        // Clean up the temp copy
+        try? FileManager.default.removeItem(at: url)
     }
 
     func getFileURL(for testFile: MotionTestFile) -> URL {
