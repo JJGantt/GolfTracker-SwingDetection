@@ -20,23 +20,16 @@ class WatchDataStore: ObservableObject {
             LocationManager.shared.setTestModeEnabled(enabled)
         }
     }
-    @Published var currentHoleIndex: Int = 0
     @Published var pendingStrokes: [Stroke] = []
     @Published var availableClubs: [ClubData] = []
     @Published var clubTypes: [ClubTypeData] = []
     @Published var holeDetectionDataByCourse: [UUID: CourseHoleDetectionData] = [:]
-    @Published var satelliteModeEnabled: Bool = false {
-        didSet {
-            UserDefaults.standard.set(satelliteModeEnabled, forKey: "satelliteModeEnabled")
-        }
-    }
-
     @Published var holeFilterSettings: HoleDetectionFilterSettings = .default {
         didSet {
             if let data = try? JSONEncoder().encode(holeFilterSettings) {
                 UserDefaults.standard.set(data, forKey: holeFilterSettingsKey)
             }
-            connectivity.sendHoleFilterSettings(holeFilterSettings)
+            // WC sync deferred to launch via setupConnectivity(); not sent on every stepper tap.
         }
     }
 
@@ -79,39 +72,27 @@ class WatchDataStore: ObservableObject {
 
     // MARK: - Current Hole
 
-    var currentHole: Hole? {
-        guard let round = currentRound,
-              let course = getCourse(for: round) else { return nil }
-        guard currentHoleIndex < course.holes.count else { return nil }
-        return course.holes[currentHoleIndex]
-    }
+    /// Single source of truth — derived from the round to avoid dual-state drift.
+    var currentHoleIndex: Int { currentRound?.currentHoleIndex ?? 0 }
 
-    func getCourse(for round: Round) -> Course? {
-        // Use holes from the synced round data
-        return Course(
-            id: round.courseId,
-            name: round.courseName,
-            holes: round.holes,
-            rating: nil,
-            slope: nil,
-            city: nil
-        )
+    var currentHole: Hole? {
+        guard let round = currentRound else { return nil }
+        guard currentHoleIndex < round.holes.count else { return nil }
+        return round.holes[currentHoleIndex]
     }
 
     // MARK: - Stroke Management
 
-    func addStroke(clubId: UUID, trajectoryHeading: Double? = nil) {
-        guard var round = currentRound,
-              let location = LocationManager.shared.location else { return }
+    func addStroke(clubId: UUID, trajectoryHeading: Double? = nil, coordinate: CLLocationCoordinate2D? = nil, acceleration: Double? = nil, isPenalty: Bool = false) {
+        guard var round = currentRound else { return }
+        guard let strokeCoordinate = coordinate ?? LocationManager.shared.location?.coordinate else { return }
 
         // Determine hole number - use current hole if it exists, otherwise use next hole number
         let holeNumber: Int
         if let hole = currentHole {
             holeNumber = hole.number
         } else {
-            // No hole defined yet - use the next hole number
-            let course = getCourse(for: round)
-            holeNumber = (course?.holes.count ?? 0) + 1
+            holeNumber = round.holes.count + 1
         }
 
         let strokesForHole = round.strokes.filter { $0.holeNumber == holeNumber }
@@ -120,22 +101,20 @@ class WatchDataStore: ObservableObject {
         let stroke = Stroke(
             holeNumber: holeNumber,
             strokeNumber: strokeNumber,
-            coordinate: location.coordinate,
+            coordinate: strokeCoordinate,
             clubId: clubId,
-            trajectoryHeading: trajectoryHeading
+            isPenalty: isPenalty,
+            trajectoryHeading: trajectoryHeading,
+            acceleration: acceleration
         )
 
-        // Add to current round
         round.strokes.append(stroke)
         currentRound = round
 
-        // Add to pending sync queue
         pendingStrokes.append(stroke)
 
-        // Save locally
-        saveToStorage()
-
-        // Try to sync immediately
+        saveRound()
+        savePendingStrokes()
         syncStrokes()
     }
 
@@ -144,12 +123,10 @@ class WatchDataStore: ObservableObject {
     func updateCurrentHoleIndex(newIndex: Int) {
         guard var round = currentRound else { return }
 
-        currentHoleIndex = newIndex
         round.currentHoleIndex = newIndex
         currentRound = round
-        saveToStorage()
+        saveRound()
 
-        // Sync to iPhone
         WatchConnectivityManager.shared.sendRound(round)
     }
 
@@ -158,9 +135,8 @@ class WatchDataStore: ObservableObject {
 
         round.completedHoles.insert(holeNumber)
         currentRound = round
-        saveToStorage()
+        saveRound()
 
-        // Sync to iPhone
         WatchConnectivityManager.shared.sendRound(round)
     }
 
@@ -169,30 +145,14 @@ class WatchDataStore: ObservableObject {
 
         round.completedHoles.remove(holeNumber)
         currentRound = round
-        saveToStorage()
+        saveRound()
 
-        // Sync to iPhone
         WatchConnectivityManager.shared.sendRound(round)
-    }
-
-    func moveToNextHole() {
-        guard let course = getCourse(for: currentRound ?? Round(courseId: UUID(), courseName: "", holes: [])) else { return }
-
-        if currentHoleIndex < course.holes.count - 1 {
-            updateCurrentHoleIndex(newIndex: currentHoleIndex + 1)
-        }
-    }
-
-    func moveToPreviousHole() {
-        if currentHoleIndex > 0 {
-            updateCurrentHoleIndex(newIndex: currentHoleIndex - 1)
-        }
     }
 
     func deleteLastStroke() {
         guard var round = currentRound else { return }
 
-        // Get strokes for current hole
         let hole = currentHole
         let strokesForHole = hole.map { h in round.strokes.filter { $0.holeNumber == h.number } } ?? []
 
@@ -209,24 +169,21 @@ class WatchDataStore: ObservableObject {
             round.strokes.remove(at: index)
             currentRound = round
 
-            // Also remove from pending if it's there
             if let pendingIndex = pendingStrokes.firstIndex(where: { $0.id == lastStroke.id }) {
                 pendingStrokes.remove(at: pendingIndex)
             }
 
-            saveToStorage()
+            saveRound()
+            savePendingStrokes()
             print("⌚ [WatchDataStore] Deleted last stroke")
 
-            // Send update to iPhone
             WatchConnectivityManager.shared.sendRound(round)
-        } else if currentHoleIndex > 0,
-                  let course = getCourse(for: round) {
+        } else if currentHoleIndex > 0 {
             // No strokes on current hole - check if we just finished the previous hole
             let previousHoleIdx = currentHoleIndex - 1
-            let previousHoleNumber = course.holes[previousHoleIdx].number
+            let previousHoleNumber = round.holes[previousHoleIdx].number
 
             if round.isHoleCompleted(previousHoleNumber) {
-                // Undo the hole completion and go back to previous hole
                 reopenHole(holeNumber: previousHoleNumber)
                 updateCurrentHoleIndex(newIndex: previousHoleIdx)
                 print("⌚ [WatchDataStore] Undid hole completion, moved back to hole \(previousHoleNumber)")
@@ -245,7 +202,7 @@ class WatchDataStore: ObservableObject {
                 print("⌚ [WatchDataStore] Successfully synced strokes, clearing pending queue")
                 DispatchQueue.main.async {
                     self?.pendingStrokes.removeAll()
-                    self?.saveToStorage()
+                    self?.savePendingStrokes()
                 }
             } else {
                 print("⌚ [WatchDataStore] Failed to sync strokes, will retry later")
@@ -261,7 +218,6 @@ class WatchDataStore: ObservableObject {
             print("⌚ [WatchDataStore] Round has \(round.holes.count) holes, current hole index: \(round.currentHoleIndex)")
             DispatchQueue.main.async {
                 self?.currentRound = round
-                self?.currentHoleIndex = round.currentHoleIndex
                 self?.saveToStorage()
                 print("⌚ [WatchDataStore] Current round set successfully, synced to hole \(round.currentHoleIndex)")
             }
@@ -293,21 +249,28 @@ class WatchDataStore: ObservableObject {
             }
         }
 
-        // Watch is the authority for filter settings, so push current value to iPhone.
+        // Watch is the authority for filter settings — push current value to iPhone on launch.
         connectivity.sendHoleFilterSettings(holeFilterSettings)
     }
 
     // MARK: - Persistence
 
-    func saveToStorage() {
+    private func saveRound() {
         if let round = currentRound,
            let data = try? JSONEncoder().encode(round) {
             UserDefaults.standard.set(data, forKey: roundKey)
         }
+    }
 
+    private func savePendingStrokes() {
         if let data = try? JSONEncoder().encode(pendingStrokes) {
             UserDefaults.standard.set(data, forKey: pendingStrokesKey)
         }
+    }
+
+    func saveToStorage() {
+        saveRound()
+        savePendingStrokes()
 
         if let data = try? JSONEncoder().encode(availableClubs) {
             UserDefaults.standard.set(data, forKey: clubsKey)
@@ -325,8 +288,6 @@ class WatchDataStore: ObservableObject {
         if let data = try? JSONEncoder().encode(holeFilterSettings) {
             UserDefaults.standard.set(data, forKey: holeFilterSettingsKey)
         }
-
-        UserDefaults.standard.set(currentHoleIndex, forKey: "currentHoleIndex")
     }
 
     private func loadFromStorage() {
@@ -367,26 +328,16 @@ class WatchDataStore: ObservableObject {
             holeFilterSettings = settings
         }
 
-        currentHoleIndex = UserDefaults.standard.integer(forKey: "currentHoleIndex")
-
-        // Load satellite mode setting (defaults to true if not set)
-        if UserDefaults.standard.object(forKey: "satelliteModeEnabled") != nil {
-            satelliteModeEnabled = UserDefaults.standard.bool(forKey: "satelliteModeEnabled")
-        }
-
-        // Load club prediction mode setting (defaults to .off)
         if let modeString = UserDefaults.standard.string(forKey: "clubPredictionMode"),
            let mode = ClubPredictionMode(rawValue: modeString) {
             clubPredictionMode = mode
         }
 
-        // Load custom club averages for Manual mode
         if let data = UserDefaults.standard.data(forKey: "customClubAverages"),
            let averages = try? JSONDecoder().decode([String: Int].self, from: data) {
             customClubAverages = averages
         }
 
-        // Load disabled prediction clubs
         if let data = UserDefaults.standard.data(forKey: "disabledPredictionClubs"),
            let names = try? JSONDecoder().decode([String].self, from: data) {
             disabledPredictionClubs = Set(names)
@@ -397,13 +348,11 @@ class WatchDataStore: ObservableObject {
 
     func finishCurrentHole() {
         guard let hole = currentHole,
-              let course = getCourse(for: currentRound ?? Round(courseId: UUID(), courseName: "", holes: [])) else { return }
+              let round = currentRound else { return }
 
-        // Mark hole as completed
         completeHole(holeNumber: hole.number)
 
-        // Auto-advance to next hole if available
-        if currentHoleIndex < course.holes.count - 1 {
+        if currentHoleIndex < round.holes.count - 1 {
             updateCurrentHoleIndex(newIndex: currentHoleIndex + 1)
         }
     }
@@ -418,24 +367,14 @@ class WatchDataStore: ObservableObject {
     func addNextHole() {
         guard var round = currentRound else { return }
 
-        // Determine next hole number
         let nextHoleNumber = round.holes.count + 1
-
-        // Create new hole without coordinates
         let newHole = Hole(number: nextHoleNumber)
 
-        // Add hole to round's holes array
         round.holes.append(newHole)
-
-        // Update hole index to the new hole
         round.currentHoleIndex = nextHoleNumber - 1
-
-        // Update local state
         currentRound = round
-        currentHoleIndex = nextHoleNumber - 1
 
-        // Save and sync
-        saveToStorage()
+        saveRound()
         WatchConnectivityManager.shared.sendRound(round)
 
         print("⌚ [WatchDataStore] Added hole \(nextHoleNumber) (awaiting flag placement)")
@@ -444,29 +383,18 @@ class WatchDataStore: ObservableObject {
     func addHole(coordinate: CLLocationCoordinate2D, par: Int? = nil) {
         guard var round = currentRound else { return }
 
-        // Get current course to determine next hole number
-        let course = getCourse(for: round)
-        let nextHoleNumber = (course?.holes.count ?? 0) + 1
-
-        // Create new hole
+        let nextHoleNumber = round.holes.count + 1
         let newHole = Hole(
             number: nextHoleNumber,
             coordinate: coordinate,
             par: par
         )
 
-        // Add hole to round's holes array
         round.holes.append(newHole)
-
-        // Update hole index in the round
         round.currentHoleIndex = nextHoleNumber - 1
-
-        // Update local state
         currentRound = round
-        currentHoleIndex = nextHoleNumber - 1
 
-        // Save and sync - send everything together in ONE update
-        saveToStorage()
+        saveRound()
         WatchConnectivityManager.shared.sendRound(round)
 
         print("⌚ [WatchDataStore] Added hole \(nextHoleNumber)\(par.map { " with par \($0)" } ?? "") and navigated to it")
@@ -475,22 +403,18 @@ class WatchDataStore: ObservableObject {
     func updateHole(holeNumber: Int, newCoordinate: CLLocationCoordinate2D, par: Int? = nil) {
         guard var round = currentRound else { return }
 
-        // Find and update the hole in the round's holes array
         guard let holeIndex = round.holes.firstIndex(where: { $0.number == holeNumber }) else { return }
 
         round.holes[holeIndex].latitude = newCoordinate.latitude
         round.holes[holeIndex].longitude = newCoordinate.longitude
 
-        // Update par if provided
         if let par = par {
             round.holes[holeIndex].par = par
         }
 
-        // Update local state
         currentRound = round
 
-        // Save and sync
-        saveToStorage()
+        saveRound()
         WatchConnectivityManager.shared.sendRound(round)
 
         print("⌚ [WatchDataStore] Updated hole \(holeNumber) location\(par.map { " and par to \($0)" } ?? "")")
@@ -498,16 +422,14 @@ class WatchDataStore: ObservableObject {
 
     func navigateToNextHole() {
         guard var round = currentRound else { return }
-        guard let course = getCourse(for: round) else { return }
 
         let nextIndex = currentHoleIndex + 1
-        guard nextIndex < course.holes.count else { return }
+        guard nextIndex < round.holes.count else { return }
 
-        currentHoleIndex = nextIndex
         round.currentHoleIndex = nextIndex
         currentRound = round
 
-        saveToStorage()
+        saveRound()
         WatchConnectivityManager.shared.sendRound(round)
 
         print("⌚ [WatchDataStore] Navigated to hole \(nextIndex + 1)")
@@ -519,11 +441,10 @@ class WatchDataStore: ObservableObject {
         let prevIndex = currentHoleIndex - 1
         guard prevIndex >= 0 else { return }
 
-        currentHoleIndex = prevIndex
         round.currentHoleIndex = prevIndex
         currentRound = round
 
-        saveToStorage()
+        saveRound()
         WatchConnectivityManager.shared.sendRound(round)
 
         print("⌚ [WatchDataStore] Navigated to hole \(prevIndex + 1)")
@@ -532,23 +453,17 @@ class WatchDataStore: ObservableObject {
     // MARK: - Quick Start Round
 
     func startQuickRound() {
-        // Create a new round with "Quick Start" course and hole 1 (no location yet)
         let quickStartCourseId = UUID()
-        let firstHole = Hole(number: 1)  // No coordinates - user will place flag
+        let firstHole = Hole(number: 1)
         let newRound = Round(
             courseId: quickStartCourseId,
             courseName: "Quick Start",
             holes: [firstHole]
         )
 
-        // Set as current round
         currentRound = newRound
-        currentHoleIndex = 0
 
-        // Save locally
-        saveToStorage()
-
-        // Sync to iPhone
+        saveRound()
         WatchConnectivityManager.shared.sendRound(newRound)
 
         print("⌚ [WatchDataStore] Started Quick Start round with hole 1 (awaiting flag placement)")
@@ -623,7 +538,6 @@ class ClubPredictionManager {
     func predictClubIndex(forDistance yards: Int, clubs: [ClubData], clubTypes: [ClubTypeData], mode: ClubPredictionMode, customAverages: [String: Int] = [:], disabledClubs: Set<String> = []) -> Int? {
         guard mode != .off, !clubs.isEmpty else { return nil }
 
-        // Build list of (clubIndex, averageDistance) for all available clubs (excluding disabled)
         var clubDistances: [(index: Int, average: Int, name: String)] = []
 
         for (index, club) in clubs.enumerated() {
@@ -636,7 +550,6 @@ class ClubPredictionManager {
 
         guard !clubDistances.isEmpty else { return nil }
 
-        // Find the club with the closest average distance to the target yardage
         let closest = clubDistances.min { abs($0.average - yards) < abs($1.average - yards) }
         return closest?.index
     }

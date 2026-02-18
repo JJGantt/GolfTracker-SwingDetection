@@ -1,10 +1,8 @@
 import SwiftUI
-import MapKit
 import WatchKit
 
 struct OptionsView: View {
     @ObservedObject var store: WatchDataStore
-    @ObservedObject var satelliteCache: WatchSatelliteCacheManager
     @Environment(\.dismiss) private var dismissSheet
 
     // Bindings for state that needs to be modified
@@ -29,7 +27,7 @@ struct OptionsView: View {
         ScrollView {
             VStack(spacing: 12) {
                 // Top row: Hole navigation
-                if let hole = store.currentHole, let round = store.currentRound, let course = store.getCourse(for: round) {
+                if let hole = store.currentHole, let round = store.currentRound {
                     HStack(spacing: 12) {
                         // Left arrow - previous hole
                         Button(action: {
@@ -53,7 +51,7 @@ struct OptionsView: View {
                             .frame(maxWidth: .infinity)
 
                         // Right arrow or plus - next hole or add hole
-                        if store.currentHoleIndex < course.holes.count - 1 {
+                        if store.currentHoleIndex < round.holes.count - 1 {
                             // Next hole exists - show right arrow
                             Button(action: {
                                 store.navigateToNextHole()
@@ -198,23 +196,6 @@ struct OptionsView: View {
                             .font(.system(size: 13))
                     }
                     .toggleStyle(RadioToggleStyle())
-                    .padding(.horizontal, 8)
-
-                    // Satellite Mode Toggle
-                    let hasSatelliteImages = satelliteCache.hasCachedImages(for: store.currentRound?.courseId ?? UUID())
-                    Toggle(isOn: Binding(
-                        get: { store.satelliteModeEnabled },
-                        set: { newValue in
-                            store.satelliteModeEnabled = newValue
-                            WKInterfaceDevice.current().play(.click)
-                        }
-                    )) {
-                        Text("Satellite")
-                            .font(.system(size: 13))
-                    }
-                    .toggleStyle(RadioToggleStyle())
-                    .disabled(!hasSatelliteImages)
-                    .opacity(hasSatelliteImages ? 1.0 : 0.5)
                     .padding(.horizontal, 8)
 
                     // Motion Config button

@@ -10,9 +10,6 @@ class WorkoutManager: NSObject, ObservableObject {
     var builder: HKLiveWorkoutBuilder?
 
     @Published var isWorkoutActive = false
-    @Published var activeEnergy: Double = 0
-    @Published var heartRate: Double = 0
-    @Published var distance: Double = 0
 
     private override init() {
         super.init()
@@ -118,14 +115,6 @@ class WorkoutManager: NSObject, ObservableObject {
             }
         }
     }
-
-    func pauseWorkout() {
-        session?.pause()
-    }
-
-    func resumeWorkout() {
-        session?.resume()
-    }
 }
 
 // MARK: - HKWorkoutSessionDelegate
@@ -173,31 +162,7 @@ extension WorkoutManager: HKWorkoutSessionDelegate {
 extension WorkoutManager: HKLiveWorkoutBuilderDelegate {
     func workoutBuilder(_ workoutBuilder: HKLiveWorkoutBuilder,
                        didCollectDataOf collectedTypes: Set<HKSampleType>) {
-        // Update published values when new data is collected
-        for type in collectedTypes {
-            guard let quantityType = type as? HKQuantityType else { continue }
-
-            let statistics = workoutBuilder.statistics(for: quantityType)
-
-            DispatchQueue.main.async {
-                switch quantityType {
-                case HKQuantityType.quantityType(forIdentifier: .heartRate):
-                    let heartRateUnit = HKUnit.count().unitDivided(by: HKUnit.minute())
-                    self.heartRate = statistics?.mostRecentQuantity()?.doubleValue(for: heartRateUnit) ?? 0
-
-                case HKQuantityType.quantityType(forIdentifier: .activeEnergyBurned):
-                    let energyUnit = HKUnit.kilocalorie()
-                    self.activeEnergy = statistics?.sumQuantity()?.doubleValue(for: energyUnit) ?? 0
-
-                case HKQuantityType.quantityType(forIdentifier: .distanceWalkingRunning):
-                    let meterUnit = HKUnit.meter()
-                    self.distance = statistics?.sumQuantity()?.doubleValue(for: meterUnit) ?? 0
-
-                default:
-                    break
-                }
-            }
-        }
+        // No data source set — this will never be called.
     }
 
     func workoutBuilderDidCollectEvent(_ workoutBuilder: HKLiveWorkoutBuilder) {

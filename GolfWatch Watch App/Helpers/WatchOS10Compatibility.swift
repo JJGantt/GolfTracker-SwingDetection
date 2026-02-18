@@ -82,34 +82,6 @@ struct DistanceCrownRotationModifier: ViewModifier {
     }
 }
 
-/// Digital crown rotation for zoom control with sensitivity on watchOS 11+
-struct ZoomCrownRotationModifier: ViewModifier {
-    @Binding var scale: CGFloat
-
-    func body(content: Content) -> some View {
-        if #available(watchOS 11.0, *) {
-            content.digitalCrownRotation(
-                $scale,
-                from: 0.5,
-                through: 3.0,
-                by: 0.05,
-                sensitivity: .medium,
-                isContinuous: true,
-                isHapticFeedbackEnabled: true
-            )
-        } else {
-            content.digitalCrownRotation(
-                $scale,
-                from: 0.5,
-                through: 3.0,
-                by: 0.05,
-                isContinuous: true,
-                isHapticFeedbackEnabled: true
-            )
-        }
-    }
-}
-
 /// Applies hand gesture shortcut on watchOS 11+, no-op on watchOS 10
 struct HandGestureShortcutModifier: ViewModifier {
     func body(content: Content) -> some View {

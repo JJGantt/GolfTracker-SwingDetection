@@ -7,7 +7,6 @@ struct ActiveRoundView: View {
     @StateObject private var locationManager = LocationManager.shared
     @StateObject private var swingDetector = SwingDetectionManager.shared
     @StateObject private var workoutManager = WorkoutManager.shared
-    @StateObject private var satelliteCache = WatchSatelliteCacheManager.shared
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.dismiss) private var dismiss
     @State private var selectedClubIndex: Double = 0
@@ -59,9 +58,8 @@ struct ActiveRoundView: View {
 
         // Can undo if we just finished the previous hole (no strokes on current, previous is completed)
         if store.currentHoleIndex > 0,
-           let round = store.currentRound,
-           let course = store.getCourse(for: round) {
-            let previousHoleNumber = course.holes[store.currentHoleIndex - 1].number
+           let round = store.currentRound {
+            let previousHoleNumber = round.holes[store.currentHoleIndex - 1].number
             return round.isHoleCompleted(previousHoleNumber)
         }
 
@@ -69,25 +67,13 @@ struct ActiveRoundView: View {
     }
 
     private var distanceToHole: Int? {
-        print("⌚ [Distance] locationManager.location: \(locationManager.location?.description ?? "nil")")
-        print("⌚ [Distance] currentHole: \(store.currentHole?.number.description ?? "nil")")
-
         guard let userLocation = locationManager.location,
               let hole = store.currentHole,
-              let holeCoord = hole.coordinate else {
-            print("⌚ [Distance] Returning nil - missing location or hole")
-            return nil
-        }
+              let holeCoord = hole.coordinate else { return nil }
 
-        let holeLocation = CLLocation(
-            latitude: holeCoord.latitude,
-            longitude: holeCoord.longitude
-        )
-
+        let holeLocation = CLLocation(latitude: holeCoord.latitude, longitude: holeCoord.longitude)
         let distanceInMeters = userLocation.distance(from: holeLocation)
-        let yards = Int(distanceInMeters * 1.09361)
-        print("⌚ [Distance] Calculated distance: \(yards) yards")
-        return yards
+        return Int(distanceInMeters * 1.09361)
     }
 
     private var lastRealStroke: Stroke? {
@@ -109,8 +95,7 @@ struct ActiveRoundView: View {
         if let hole = store.currentHole {
             holeNumber = hole.number
         } else {
-            let course = store.getCourse(for: round)
-            holeNumber = (course?.holes.count ?? 0) + 1
+            holeNumber = round.holes.count + 1
         }
 
         let strokesForHole = round.strokes
@@ -663,7 +648,7 @@ struct ActiveRoundView: View {
                         .clipShape(RoundedRectangle(cornerRadius: 8))
                         .fixedSize()
                 }
-                // No else case - when no hole exists, onAppear navigates to AddHoleNavigationView
+                // No else case - when no hole exists, onAppear navigates to HolePlacementView
             }
             .padding(.leading, 6)
 
@@ -734,9 +719,9 @@ struct ActiveRoundView: View {
 
     var body: some View {
         Group {
-            if needsFlagPlacement {
+            if needsFlagPlacement, let hole = store.currentHole {
                 // Current hole exists but has no flag location - show placement view
-                AddHoleNavigationView(store: store, locationManager: locationManager)
+                HolePlacementView(store: store, locationManager: locationManager, hole: hole, isEditing: false)
             } else {
                 // Normal active round view
                 GeometryReader { geometry in
@@ -753,7 +738,6 @@ struct ActiveRoundView: View {
         .sheet(isPresented: $showingOptions) {
             OptionsView(
                 store: store,
-                satelliteCache: satelliteCache,
                 showingOptions: $showingOptions,
                 showingEditHole: $showingEditHole,
                 showingDistanceEditor: $showingDistanceEditor,
@@ -770,7 +754,7 @@ struct ActiveRoundView: View {
         }
         .sheet(isPresented: $showingEditHole) {
             if let hole = store.currentHole {
-                EditHoleView(store: store, locationManager: locationManager, hole: hole, isPresented: $showingEditHole)
+                HolePlacementView(store: store, locationManager: locationManager, hole: hole, isEditing: true)
             }
         }
         .sheet(isPresented: $showingDistanceEditor) {
@@ -793,13 +777,7 @@ struct ActiveRoundView: View {
             swingDetector.startMonitoring()
 
             // Push selected club type to detector for smart_detect
-            if let club = selectedClub {
-                let newTypeName = store.getTypeName(for: club)
-                let wasPutter = swingDetector.selectedClubTypeName == "Putt"
-                let isPutter = newTypeName == "Putt"
-                swingDetector.selectedClubTypeName = newTypeName
-                if wasPutter != isPutter { swingDetector.resetToIdle() }
-            }
+            updateSwingDetectorClub()
 
             // Request HealthKit authorization and start workout if there's an active round
             if store.currentRound != nil && !workoutManager.isWorkoutActive {
@@ -844,19 +822,9 @@ struct ActiveRoundView: View {
             ) {
                 isAutoSelectingClub = true
                 selectedClubIndex = Double(predictedIndex)
-                // Push predicted club type to detector for smart_detect
-                if let club = selectedClub {
-                    let newTypeName = store.getTypeName(for: club)
-                    let wasPutter = swingDetector.selectedClubTypeName == "Putt"
-                    let isPutter = newTypeName == "Putt"
-                    swingDetector.selectedClubTypeName = newTypeName
-                    if wasPutter != isPutter { swingDetector.resetToIdle() }
-                }
+                updateSwingDetectorClub()
                 isAutoSelectingClub = false
             }
-        }
-        .onChange(of: locationManager.heading) { _, _ in
-            // Trigger view refresh when heading updates (to rotate user arrow)
         }
         .onChange(of: store.currentHoleIndex) { _, _ in
             // Watch syncs hole index from phone - update map when it changes
@@ -891,13 +859,7 @@ struct ActiveRoundView: View {
             }
 
             // Push selected club type to detector for smart_detect
-            if let club = selectedClub {
-                let newTypeName = store.getTypeName(for: club)
-                let wasPutter = swingDetector.selectedClubTypeName == "Putt"
-                let isPutter = newTypeName == "Putt"
-                swingDetector.selectedClubTypeName = newTypeName
-                if wasPutter != isPutter { swingDetector.resetToIdle() }
-            }
+            updateSwingDetectorClub()
 
             // Crown is being scrolled - show enlarged text
             withAnimation(.easeInOut(duration: 0.15)) {
@@ -920,63 +882,7 @@ struct ActiveRoundView: View {
 
     @ViewBuilder
     private func mapView(for hole: Hole) -> some View {
-        if store.satelliteModeEnabled,
-           let round = store.currentRound,
-           satelliteCache.hasCachedImages(for: round.courseId) {
-            satelliteImageView(for: hole)
-        } else {
-            standardMapView(for: hole)
-        }
-    }
-
-    @ViewBuilder
-    private func satelliteImageView(for hole: Hole) -> some View {
-        if let round = store.currentRound,
-           let userLocation = locationManager.location,
-           let holeCoord = hole.coordinate {
-
-            let strokesForHole = round.strokes.filter { $0.holeNumber == hole.number }
-            let targetsForHole = round.targets.filter { $0.holeNumber == hole.number }
-
-            // Calculate camera info for satellite view - MUST match updateMapPosition behavior
-            // Determine start coordinate based on view mode (ternary to avoid if-else in @ViewBuilder)
-            let startCoord = (isFullViewMode && firstStroke != nil) ? firstStroke!.coordinate : userLocation.coordinate
-
-            let bearing = calculateBearing(from: startCoord, to: holeCoord)
-            let holeLocation = CLLocation(latitude: holeCoord.latitude, longitude: holeCoord.longitude)
-            let startLocation = CLLocation(latitude: startCoord.latitude, longitude: startCoord.longitude)
-            let distance = startLocation.distance(from: holeLocation)
-
-            // Calculate center point - 45%/50% between start and hole (SAME as regular map)
-            let centerLat = startCoord.latitude + (holeCoord.latitude - startCoord.latitude) * 0.45
-            let centerLon = startCoord.longitude + (holeCoord.longitude - startCoord.longitude) * 0.5
-
-            let cameraInfo = MapCameraInfo(
-                centerCoordinate: CLLocationCoordinate2D(latitude: centerLat, longitude: centerLon),
-                bearing: bearing,
-                distance: max(distance * 2.5, 100)
-            )
-
-            SatelliteImageView(
-                courseId: round.courseId,
-                holeNumber: hole.number,
-                userLocation: userLocation,
-                hole: hole,
-                strokes: strokesForHole,
-                targets: targetsForHole,
-                lastRealStroke: lastRealStroke,
-                temporaryPenaltyPosition: temporaryPenaltyPosition,
-                heading: locationManager.heading,
-                mapCamera: cameraInfo,
-                isPlacingTarget: isPlacingTarget,
-                isPlacingPenalty: isPlacingPenalty,
-                onTap: { coordinate in
-                    handleSatelliteViewTap(coordinate: coordinate)
-                }
-            )
-        } else {
-            Color.clear
-        }
+        standardMapView(for: hole)
     }
 
     @ViewBuilder
@@ -998,8 +904,8 @@ struct ActiveRoundView: View {
                 }
 
                 // Stroke markers - show all strokes for current hole even if no hole is defined
-                if let round = store.currentRound, let course = store.getCourse(for: round) {
-                    let nextHoleNumber = course.holes.count + 1
+                if let round = store.currentRound {
+                    let nextHoleNumber = round.holes.count + 1
                     let strokesForHole = round.strokes.filter { $0.holeNumber == nextHoleNumber }
                     ForEach(Array(strokesForHole.enumerated()), id: \.element.id) { index, stroke in
                         Annotation("", coordinate: stroke.coordinate) {
@@ -1178,8 +1084,8 @@ struct ActiveRoundView: View {
                     var coords = targetCoordinatesBinding.wrappedValue
                     let tappedLocation = CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude)
 
-                    // Check if tap is within 20 yards (~18 meters) of any existing target
-                    let deletionRadius: Double = 18.0 // meters (approximately 20 yards)
+                    // Check if tap is within ~6 meters of any existing target
+                    let deletionRadius: Double = 6.0 // meters
                     var deletedIndex: Int?
 
                     for (index, targetCoord) in coords.enumerated() {
@@ -1214,41 +1120,13 @@ struct ActiveRoundView: View {
 
     // MARK: - Actions
 
-    private func handleSatelliteViewTap(coordinate: CLLocationCoordinate2D) {
-        if isPlacingTarget {
-            var coords = targetCoordinatesBinding.wrappedValue
-            let tappedLocation = CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude)
-
-            // Check if tap is within 20 yards (~18 meters) of any existing target
-            let deletionRadius: Double = 18.0 // meters (approximately 20 yards)
-            var deletedIndex: Int?
-
-            for (index, targetCoord) in coords.enumerated() {
-                let targetLocation = CLLocation(latitude: targetCoord.latitude, longitude: targetCoord.longitude)
-                let distance = tappedLocation.distance(from: targetLocation)
-
-                if distance <= deletionRadius {
-                    deletedIndex = index
-                    break
-                }
-            }
-
-            if let indexToDelete = deletedIndex {
-                // Delete the nearby target
-                coords.remove(at: indexToDelete)
-                targetCoordinatesBinding.wrappedValue = coords
-                WKInterfaceDevice.current().play(.click)
-            } else {
-                // Add new target
-                coords.append(coordinate)
-                targetCoordinatesBinding.wrappedValue = coords
-                WKInterfaceDevice.current().play(.success)
-            }
-        } else if isPlacingPenalty {
-            // Update penalty position
-            temporaryPenaltyPosition = coordinate
-            WKInterfaceDevice.current().play(.click)
-        }
+    private func updateSwingDetectorClub() {
+        guard let club = selectedClub else { return }
+        let newTypeName = store.getTypeName(for: club)
+        let wasPutter = swingDetector.selectedClubTypeName == "Putt"
+        let isPutter = newTypeName == "Putt"
+        swingDetector.selectedClubTypeName = newTypeName
+        if wasPutter != isPutter { swingDetector.resetToIdle() }
     }
 
     private func toggleAimDirection() {
@@ -1354,19 +1232,14 @@ struct ActiveRoundView: View {
             return
         }
 
-        guard var round = store.currentRound,
-              let hole = store.currentHole else {
+        guard store.currentRound != nil, let hole = store.currentHole else {
             print("⌚ [AddLastSwing] No active round or hole")
             return
         }
 
-        let strokesForHole = round.strokes.filter { $0.holeNumber == hole.number }
-        let strokeNumber = strokesForHole.count + 1
-
         // Use aim direction captured at swing detection time, fall back to bearing towards flag
         var trajectoryHeading = swing.trajectoryHeading
         if trajectoryHeading == nil, let holeCoord = hole.coordinate {
-            // Default to bearing towards the flag
             trajectoryHeading = calculateBearing(from: swing.location, to: holeCoord)
         }
 
@@ -1375,35 +1248,17 @@ struct ActiveRoundView: View {
             return
         }
 
-        let stroke = Stroke(
-            holeNumber: hole.number,
-            strokeNumber: strokeNumber,
-            coordinate: swing.location,
+        store.addStroke(
             clubId: club.id,
             trajectoryHeading: trajectoryHeading,
+            coordinate: swing.location,
             acceleration: swing.peakAcceleration
         )
 
-        // Add to current round
-        round.strokes.append(stroke)
-        store.currentRound = round
-
-        // Save locally
-        store.saveToStorage()
-
-        // Sync to iPhone
-        WatchConnectivityManager.shared.sendRound(round)
-
-        // Reset manual club override so auto-prediction resumes
         manualClubOverride = false
-
-        // Reset aim direction after stroke is recorded
         swingDetector.capturedAimDirection = nil
-
-        // Clear the last swing
         swingDetector.clearLastSwing()
 
-        // Haptic feedback
         WKInterfaceDevice.current().play(.success)
         isMainViewFocused = true
 
@@ -1418,39 +1273,19 @@ struct ActiveRoundView: View {
     }
 
     private func confirmPenaltyPlacement() {
-        // Save the penalty stroke
         guard let penaltyCoord = temporaryPenaltyPosition,
-              var round = store.currentRound,
-              let hole = store.currentHole else { return }
+              store.currentRound != nil,
+              store.currentHole != nil else { return }
 
-        // Add penalty stroke using selected club
         guard let club = selectedClub else {
             print("⌚ [ConfirmPenalty] ERROR: No club selected")
             return
         }
 
-        let strokesForHole = round.strokes.filter { $0.holeNumber == hole.number }
-        let strokeNumber = strokesForHole.count + 1
+        store.addStroke(clubId: club.id, coordinate: penaltyCoord, isPenalty: true)
 
-        let stroke = Stroke(
-            holeNumber: hole.number,
-            strokeNumber: strokeNumber,
-            coordinate: penaltyCoord,
-            clubId: club.id,
-            isPenalty: true
-        )
-
-        round.strokes.append(stroke)
-        store.currentRound = round
-        store.saveToStorage()
-
-        // Sync to iPhone
-        WatchConnectivityManager.shared.sendRound(round)
-
-        // Haptic and audio feedback - failure for penalty (bad thing)
         WKInterfaceDevice.current().play(.failure)
 
-        // Exit placement mode
         isPlacingPenalty = false
         temporaryPenaltyPosition = nil
     }
@@ -1458,9 +1293,8 @@ struct ActiveRoundView: View {
     private func finishCurrentHole() {
         // Check if this is the last hole before finishing
         let isLastHole: Bool = {
-            guard let round = store.currentRound,
-                  let course = store.getCourse(for: round) else { return false }
-            return store.currentHoleIndex >= course.holes.count - 1
+            guard let round = store.currentRound else { return false }
+            return store.currentHoleIndex >= round.holes.count - 1
         }()
 
         store.finishCurrentHole()
@@ -1566,24 +1400,6 @@ struct ActiveRoundView: View {
 
         let bearingDegrees = bearing * 180.0 / .pi
         return (bearingDegrees + 360.0).truncatingRemainder(dividingBy: 360.0)
-    }
-
-    private func calculateCoordinate(from: CLLocationCoordinate2D, bearing: Double, distanceMeters: Double) -> CLLocationCoordinate2D {
-        let earthRadius = 6371000.0 // meters
-        let bearingRadians = bearing * .pi / 180.0
-        let lat1 = from.latitude * .pi / 180.0
-        let lon1 = from.longitude * .pi / 180.0
-
-        let lat2 = asin(sin(lat1) * cos(distanceMeters / earthRadius) +
-                       cos(lat1) * sin(distanceMeters / earthRadius) * cos(bearingRadians))
-
-        let lon2 = lon1 + atan2(sin(bearingRadians) * sin(distanceMeters / earthRadius) * cos(lat1),
-                               cos(distanceMeters / earthRadius) - sin(lat1) * sin(lat2))
-
-        return CLLocationCoordinate2D(
-            latitude: lat2 * 180.0 / .pi,
-            longitude: lon2 * 180.0 / .pi
-        )
     }
 
     private func calculateCrownOffset(screenHeight: CGFloat) {

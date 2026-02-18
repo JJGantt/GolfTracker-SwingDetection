@@ -1,9 +1,17 @@
 import SwiftUI
 import MapKit
 
-struct AddHoleNavigationView: View {
+/// Unified hole placement view for adding a new hole and editing an existing one.
+///
+/// - `isEditing: false` — add mode: flag appears only after tap; par buttons appear after first tap;
+///   saving does NOT dismiss (parent transitions automatically when hole gains a location).
+/// - `isEditing: true`  — edit mode: existing flag shown immediately; current par gets a white ring
+///   indicator; saving calls `dismiss()`.
+struct HolePlacementView: View {
     @ObservedObject var store: WatchDataStore
     @ObservedObject var locationManager: LocationManager
+    let hole: Hole
+    let isEditing: Bool
     @Environment(\.dismiss) private var dismiss
 
     @State private var position: MapCameraPosition = .automatic
@@ -11,10 +19,6 @@ struct AddHoleNavigationView: View {
     @State private var selectedGreenBlobId: UUID?
     @State private var isManualPlacement = false
     private let greenSnapDistanceMeters: CLLocationDistance = 50
-
-    private var currentHoleNumber: Int {
-        store.currentHole?.number ?? 1
-    }
 
     private var greenCandidates: [HoleDetectionBlob] {
         guard store.currentRound?.holeDetectionEnabled == true else { return [] }
@@ -26,11 +30,11 @@ struct AddHoleNavigationView: View {
             // Map layer
             MapReader { proxy in
                 Map(position: $position) {
-                    // Show user location
+                    // User location arrow
                     if let userLocation = locationManager.location {
                         Annotation("", coordinate: userLocation.coordinate) {
                             Image(systemName: "location.north.fill")
-                                .font(.system(size: 30))
+                                .font(.system(size: isEditing ? 20 : 30))
                                 .foregroundColor(.blue)
                                 .rotationEffect(.degrees(locationManager.heading ?? 0))
                                 .shadow(color: .white, radius: 2)
@@ -38,17 +42,32 @@ struct AddHoleNavigationView: View {
                         }
                     }
 
-                    // Show flag only for manual placement (not blob selection)
-                    if let holePos = temporaryHolePosition, selectedGreenBlobId == nil {
-                        Annotation("", coordinate: holePos) {
-                            Image(systemName: "flag.fill")
-                                .foregroundColor(.yellow)
-                                .font(.system(size: 24))
-                                .shadow(color: .black, radius: 2)
+                    // Flag marker — behaviour differs by mode
+                    if selectedGreenBlobId == nil {
+                        if isEditing {
+                            // Edit mode: show existing hole coordinate until user moves it
+                            if let holePosition = temporaryHolePosition ?? hole.coordinate {
+                                Annotation("", coordinate: holePosition) {
+                                    Image(systemName: "flag.fill")
+                                        .foregroundColor(.yellow)
+                                        .font(.system(size: 24))
+                                        .shadow(color: .black, radius: 2)
+                                }
+                            }
+                        } else {
+                            // Add mode: only show after user taps
+                            if let holePos = temporaryHolePosition {
+                                Annotation("", coordinate: holePos) {
+                                    Image(systemName: "flag.fill")
+                                        .foregroundColor(.yellow)
+                                        .font(.system(size: 24))
+                                        .shadow(color: .black, radius: 2)
+                                }
+                            }
                         }
                     }
 
-                    // Suggested greens from phone-side detection
+                    // Suggested greens from phone-side blob detection
                     ForEach(greenCandidates) { blob in
                         if blob.polygonCoordinates.count >= 3,
                            let first = blob.polygonCoordinates.first {
@@ -83,11 +102,10 @@ struct AddHoleNavigationView: View {
             }
             .ignoresSafeArea()
 
-            // Top overlay — .padding(.top, 8) controls how far down the row sits
+            // Top overlay: title + optional manual-placement toggle + distance label
             VStack(spacing: 2) {
                 ZStack(alignment: .leading) {
-                    // Centered hole label
-                    Text("Hole \(currentHoleNumber)")
+                    Text(isEditing ? "Edit Hole \(hole.number)" : "Hole \(hole.number)")
                         .font(.system(size: 16, weight: .bold))
                         .foregroundColor(.white)
                         .padding(.horizontal, 10)
@@ -96,7 +114,6 @@ struct AddHoleNavigationView: View {
                         .clipShape(Capsule())
                         .frame(maxWidth: .infinity)
 
-                    // Left-aligned manual toggle
                     if !greenCandidates.isEmpty {
                         Button {
                             isManualPlacement.toggle()
@@ -117,10 +134,11 @@ struct AddHoleNavigationView: View {
                 }
                 .padding(.top, 8)
 
-                // Distance to placed hole
                 if let holePos = temporaryHolePosition,
                    let userLoc = locationManager.location {
-                    let yards = Int(userLoc.distance(from: CLLocation(latitude: holePos.latitude, longitude: holePos.longitude)) * 1.09361)
+                    let yards = Int(userLoc.distance(
+                        from: CLLocation(latitude: holePos.latitude, longitude: holePos.longitude)
+                    ) * 1.09361)
                     Text("\(yards) yds")
                         .font(.system(size: 12, weight: .medium))
                         .foregroundColor(.white.opacity(0.8))
@@ -131,56 +149,34 @@ struct AddHoleNavigationView: View {
             .padding(.horizontal, 16)
             .ignoresSafeArea()
 
-            // Par buttons overlay - only show when hole position is set
+            // Par buttons — appear once a position has been tapped
             if temporaryHolePosition != nil {
                 VStack {
                     Spacer()
 
                     HStack(spacing: 8) {
-                        // Par 3 button
-                        Button(action: { saveHole(par: 3) }) {
-                            ZStack {
-                                Circle()
-                                    .fill(Color.green.opacity(0.95))
-                                    .frame(width: 50, height: 50)
-                                    .shadow(color: .black.opacity(0.3), radius: 4, x: 0, y: 2)
+                        ForEach([3, 4, 5], id: \.self) { par in
+                            Button(action: { save(par: par) }) {
+                                ZStack {
+                                    Circle()
+                                        .fill(Color.green.opacity(0.95))
+                                        .frame(width: 50, height: 50)
+                                        .shadow(color: .black.opacity(0.3), radius: 4, x: 0, y: 2)
 
-                                Text("3")
-                                    .font(.system(size: 24, weight: .bold))
-                                    .foregroundColor(.white)
+                                    // Edit mode: ring highlights the existing par
+                                    if isEditing && hole.par == par {
+                                        Circle()
+                                            .stroke(Color.white, lineWidth: 3)
+                                            .frame(width: 50, height: 50)
+                                    }
+
+                                    Text("\(par)")
+                                        .font(.system(size: 24, weight: .bold))
+                                        .foregroundColor(.white)
+                                }
                             }
+                            .buttonStyle(PlainButtonStyle())
                         }
-                        .buttonStyle(PlainButtonStyle())
-
-                        // Par 4 button
-                        Button(action: { saveHole(par: 4) }) {
-                            ZStack {
-                                Circle()
-                                    .fill(Color.green.opacity(0.95))
-                                    .frame(width: 50, height: 50)
-                                    .shadow(color: .black.opacity(0.3), radius: 4, x: 0, y: 2)
-
-                                Text("4")
-                                    .font(.system(size: 24, weight: .bold))
-                                    .foregroundColor(.white)
-                            }
-                        }
-                        .buttonStyle(PlainButtonStyle())
-
-                        // Par 5 button
-                        Button(action: { saveHole(par: 5) }) {
-                            ZStack {
-                                Circle()
-                                    .fill(Color.green.opacity(0.95))
-                                    .frame(width: 50, height: 50)
-                                    .shadow(color: .black.opacity(0.3), radius: 4, x: 0, y: 2)
-
-                                Text("5")
-                                    .font(.system(size: 24, weight: .bold))
-                                    .foregroundColor(.white)
-                            }
-                        }
-                        .buttonStyle(PlainButtonStyle())
                     }
                     .padding(.horizontal, 6)
                     .padding(.bottom, 16)
@@ -192,34 +188,40 @@ struct AddHoleNavigationView: View {
         .toolbar(.hidden, for: .navigationBar)
         .navigationBarBackButtonHidden(true)
         .onAppear {
-            // Start location tracking
             locationManager.requestPermission()
             locationManager.startTracking()
 
-            // Center map on user location
-            if let userLocation = locationManager.location {
-                let spanInMeters: CLLocationDistance = 320.0 // ~350 yards
-                let spanDegrees = spanInMeters / 111000.0
+            let spanInMeters: CLLocationDistance = 320.0 // ~350 yards
+            let spanDegrees = spanInMeters / 111000.0
 
-                position = .region(MKCoordinateRegion(
-                    center: userLocation.coordinate,
-                    span: MKCoordinateSpan(latitudeDelta: spanDegrees, longitudeDelta: spanDegrees)
-                ))
+            if isEditing {
+                // Center on existing hole coordinate, fall back to user location
+                if let center = hole.coordinate ?? locationManager.location?.coordinate {
+                    position = .region(MKCoordinateRegion(
+                        center: center,
+                        span: MKCoordinateSpan(latitudeDelta: spanDegrees, longitudeDelta: spanDegrees)
+                    ))
+                }
+            } else {
+                // Center on user location
+                if let userLocation = locationManager.location {
+                    position = .region(MKCoordinateRegion(
+                        center: userLocation.coordinate,
+                        span: MKCoordinateSpan(latitudeDelta: spanDegrees, longitudeDelta: spanDegrees)
+                    ))
+                }
             }
         }
     }
 
-    private func saveHole(par: Int) {
-        guard let coordinate = temporaryHolePosition,
-              let currentHole = store.currentHole else { return }
-
-        // Update the current hole's coordinates and par
-        store.updateHole(holeNumber: currentHole.number, newCoordinate: coordinate, par: par)
-
-        // Haptic feedback
+    private func save(par: Int) {
+        guard let coordinate = temporaryHolePosition else { return }
+        store.updateHole(holeNumber: hole.number, newCoordinate: coordinate, par: par)
         WKInterfaceDevice.current().play(.success)
-
-        // No need to dismiss - parent view will automatically switch
-        // when it detects the hole now has a location
+        if isEditing {
+            // Edit mode: dismiss the sheet. Add mode: parent transitions automatically
+            // when hole.hasLocation becomes true via the needsFlagPlacement computed property.
+            dismiss()
+        }
     }
 }

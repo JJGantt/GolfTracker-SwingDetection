@@ -512,28 +512,7 @@ extension WatchConnectivityManager: WCSessionDelegate {
             return
         }
 
-        // Decode metadata
-        guard let metadataJSON = file.metadata?["metadata"] as? Data,
-              let metadata = try? JSONDecoder().decode(SatelliteImageMetadata.self, from: metadataJSON) else {
-            print("⌚ [Watch] ❌ ERROR: Failed to decode satellite metadata")
-            print("⌚ [Watch] Raw metadata: \(file.metadata ?? [:])")
-            return
-        }
-
-        print("⌚ [Watch] 📋 Decoded metadata for hole \(metadata.holeNumber), courseId: \(metadata.courseId)")
-
-        // Read image data from transferred file
-        guard let imageData = try? Data(contentsOf: file.fileURL) else {
-            print("⌚ [Watch] ❌ ERROR: Failed to read image data from \(file.fileURL.lastPathComponent)")
-            return
-        }
-
-        print("⌚ [Watch] ✅ Successfully read \(imageData.count / 1024)KB for hole \(metadata.holeNumber)")
-
-        // Save to Watch cache
-        print("⌚ [Watch] 💾 Calling saveImage...")
-        WatchSatelliteCacheManager.shared.saveImage(metadata: metadata, imageData: imageData)
-        print("⌚ [Watch] ✅✅ COMPLETED satellite image save for hole \(metadata.holeNumber)")
+        print("⌚ [Watch] Ignoring unrecognized file: \(file.fileURL.lastPathComponent)")
         #else
         let fileName = file.fileURL.lastPathComponent
         let metadata = file.metadata ?? [:]
