@@ -24,6 +24,8 @@ struct HolePlayView: View {
     @State private var isMovingStroke = false
     @State private var isAddingPenaltyStroke = false
     @State private var hasUserInteractedWithAddHoleMap = false
+    @State private var isAddHoleManualMode = false
+    @State private var addHoleSelectedBlobId: UUID?
 
     // MARK: - Temporary Positions
     @State private var temporaryHolePosition: CLLocationCoordinate2D?
@@ -212,20 +214,26 @@ struct HolePlayView: View {
     private var mainContent: some View {
         ZStack {
             if isAddingHole {
+                let candidates = (currentRound?.holeDetectionEnabled == true)
+                    ? store.filteredHoleDetectionBlobs(for: currentCourse.id)
+                    : [HoleDetectionBlob]()
                 AddHoleMapView(
                     position: $position,
                     temporaryHolePosition: $temporaryHolePosition,
                     hasUserInteracted: $hasUserInteractedWithAddHoleMap,
+                    isManualPlacement: $isAddHoleManualMode,
+                    selectedGreenBlobId: $addHoleSelectedBlobId,
                     userLocation: locationManager.location,
                     heading: locationManager.heading,
                     useStandardMap: useStandardMap,
-                    greenCandidates: (currentRound?.holeDetectionEnabled == true)
-                        ? store.filteredHoleDetectionBlobs(for: currentCourse.id)
-                        : []
+                    greenCandidates: candidates
                 )
                 AddHoleOverlay(
                     holeCount: currentCourse.holes.count,
+                    hasGreenCandidates: !candidates.isEmpty,
                     temporaryHolePosition: $temporaryHolePosition,
+                    selectedGreenBlobId: $addHoleSelectedBlobId,
+                    isManualPlacement: $isAddHoleManualMode,
                     isAddingHole: $isAddingHole,
                     saveTemporaryHole: saveTemporaryHole
                 )
@@ -510,8 +518,12 @@ struct HolePlayView: View {
         .onChange(of: isAddingHole) { _, newValue in
             if newValue {
                 hasUserInteractedWithAddHoleMap = false
+                isAddHoleManualMode = false
+                addHoleSelectedBlobId = nil
                 updateAddHoleMapPosition()
             } else {
+                isAddHoleManualMode = false
+                addHoleSelectedBlobId = nil
                 updateMapPosition()
             }
         }

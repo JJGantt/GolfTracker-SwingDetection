@@ -7,12 +7,13 @@ struct AddHoleMapView: View {
     @Binding var position: MapCameraPosition
     @Binding var temporaryHolePosition: CLLocationCoordinate2D?
     @Binding var hasUserInteracted: Bool
+    @Binding var isManualPlacement: Bool
+    @Binding var selectedGreenBlobId: UUID?
     let userLocation: CLLocation?
     let heading: CLLocationDirection?
     let useStandardMap: Bool
     let greenCandidates: [HoleDetectionBlob]
     private let maxSnapDistanceMeters: CLLocationDistance = 120
-    @State private var selectedGreenBlobId: UUID?
 
     var body: some View {
         MapReader { proxy in
@@ -24,8 +25,8 @@ struct AddHoleMapView: View {
                     }
                 }
 
-                // Show temporary hole position
-                if let holePos = temporaryHolePosition {
+                // Show flag only in manual placement mode (blob selection shows outline, no flag)
+                if let holePos = temporaryHolePosition, selectedGreenBlobId == nil {
                     Annotation("", coordinate: holePos) {
                         Image(systemName: "flag.fill")
                             .foregroundColor(.yellow)
@@ -41,29 +42,29 @@ struct AddHoleMapView: View {
                         MapPolyline(coordinates: outline)
                             .stroke(
                                 blob.id == selectedGreenBlobId ? Color.yellow : Color.white,
-                                lineWidth: 2
+                                lineWidth: blob.id == selectedGreenBlobId ? 3 : 1.5
                             )
                     }
                 }
             }
             .mapStyle(useStandardMap ? .standard : .hybrid)
             .onMapCameraChange { context in
-                // Mark as interacted when user pans the map
                 hasUserInteracted = true
             }
             .onTapGesture { screenCoord in
                 hasUserInteracted = true
                 if let coordinate = proxy.convert(screenCoord, from: .local) {
-                    let matchingBlob = greenCandidates
-                        .filter { $0.contains(coordinate) }
-                        .min { $0.centroidDistanceMeters(to: coordinate) < $1.centroidDistanceMeters(to: coordinate) }
-                    if let blob = matchingBlob,
-                       blob.centroidDistanceMeters(to: coordinate) <= maxSnapDistanceMeters {
-                        temporaryHolePosition = blob.centroidCoordinate
-                        selectedGreenBlobId = blob.id
-                    } else {
+                    if isManualPlacement || greenCandidates.isEmpty {
                         temporaryHolePosition = coordinate
                         selectedGreenBlobId = nil
+                    } else {
+                        let nearestBlob = greenCandidates
+                            .min { $0.centroidDistanceMeters(to: coordinate) < $1.centroidDistanceMeters(to: coordinate) }
+                        if let blob = nearestBlob,
+                           blob.centroidDistanceMeters(to: coordinate) <= maxSnapDistanceMeters {
+                            temporaryHolePosition = blob.centroidCoordinate
+                            selectedGreenBlobId = blob.id
+                        }
                     }
                 }
             }
@@ -73,21 +74,46 @@ struct AddHoleMapView: View {
 
 struct AddHoleOverlay: View {
     let holeCount: Int
+    let hasGreenCandidates: Bool
     @Binding var temporaryHolePosition: CLLocationCoordinate2D?
+    @Binding var selectedGreenBlobId: UUID?
+    @Binding var isManualPlacement: Bool
     @Binding var isAddingHole: Bool
     let saveTemporaryHole: (Int) -> Void
 
     var body: some View {
         VStack(spacing: 0) {
             // Instructions at top
-            VStack(spacing: 8) {
-                Text("Add Hole \(holeCount + 1)")
-                    .font(.title2)
-                    .fontWeight(.semibold)
+            ZStack(alignment: .trailing) {
+                VStack(spacing: 8) {
+                    Text("Add Hole \(holeCount + 1)")
+                        .font(.title2)
+                        .fontWeight(.semibold)
 
-                Text("Tap map or green highlight to place flag")
-                    .font(.subheadline)
-                    .foregroundColor(.secondary)
+                    Text(isManualPlacement || !hasGreenCandidates
+                         ? "Tap map to place flag"
+                         : "Tap a suggested green")
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+                }
+                .frame(maxWidth: .infinity)
+
+                // Manual/blob mode toggle — only shown when there are green candidates
+                if hasGreenCandidates {
+                    Button {
+                        isManualPlacement.toggle()
+                        if !isManualPlacement {
+                            temporaryHolePosition = nil
+                            selectedGreenBlobId = nil
+                        }
+                    } label: {
+                        Image(systemName: isManualPlacement ? "mappin.and.ellipse" : "hand.tap")
+                            .font(.title3)
+                            .foregroundColor(isManualPlacement ? .orange : .secondary)
+                            .padding(8)
+                    }
+                    .padding(.trailing, 8)
+                }
             }
             .padding()
             .padding(.top, 50)
