@@ -11,7 +11,6 @@ struct AddHoleMapView: View {
     @Binding var selectedGreenBlobId: UUID?
     let userLocation: CLLocation?
     let heading: CLLocationDirection?
-    let useStandardMap: Bool
     let greenCandidates: [HoleDetectionBlob]
     private let maxSnapDistanceMeters: CLLocationDistance = 120
 
@@ -47,7 +46,7 @@ struct AddHoleMapView: View {
                     }
                 }
             }
-            .mapStyle(useStandardMap ? .standard : .hybrid)
+            .mapStyle(.hybrid)
             .onMapCameraChange { context in
                 hasUserInteracted = true
             }
@@ -75,6 +74,7 @@ struct AddHoleMapView: View {
 struct AddHoleOverlay: View {
     let holeCount: Int
     let hasGreenCandidates: Bool
+    let userLocation: CLLocation?
     @Binding var temporaryHolePosition: CLLocationCoordinate2D?
     @Binding var selectedGreenBlobId: UUID?
     @Binding var isManualPlacement: Bool
@@ -83,36 +83,62 @@ struct AddHoleOverlay: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            // Instructions at top
-            ZStack(alignment: .trailing) {
-                VStack(spacing: 8) {
+            // Header
+            ZStack {
+                // Back arrow (leading)
+                HStack {
+                    Button {
+                        isAddingHole = false
+                        temporaryHolePosition = nil
+                        selectedGreenBlobId = nil
+                    } label: {
+                        Image(systemName: "chevron.left")
+                            .font(.title3.weight(.semibold))
+                            .foregroundColor(.primary)
+                            .padding(8)
+                    }
+                    .padding(.leading, 4)
+                    Spacer()
+                }
+
+                // Centered title + yardage/instruction
+                VStack(spacing: 4) {
                     Text("Add Hole \(holeCount + 1)")
                         .font(.title2)
                         .fontWeight(.semibold)
 
-                    Text(isManualPlacement || !hasGreenCandidates
-                         ? "Tap map to place flag"
-                         : "Tap a suggested green")
-                        .font(.subheadline)
-                        .foregroundColor(.secondary)
-                }
-                .frame(maxWidth: .infinity)
-
-                // Manual/blob mode toggle — only shown when there are green candidates
-                if hasGreenCandidates {
-                    Button {
-                        isManualPlacement.toggle()
-                        if !isManualPlacement {
-                            temporaryHolePosition = nil
-                            selectedGreenBlobId = nil
-                        }
-                    } label: {
-                        Image(systemName: isManualPlacement ? "mappin.and.ellipse" : "hand.tap")
-                            .font(.title3)
-                            .foregroundColor(isManualPlacement ? .orange : .secondary)
-                            .padding(8)
+                    if let holePos = temporaryHolePosition, let userLoc = userLocation {
+                        let yards = Int(userLoc.distance(from: CLLocation(latitude: holePos.latitude, longitude: holePos.longitude)) * 1.09361)
+                        Text("\(yards) yds")
+                            .font(.subheadline)
+                            .foregroundColor(.secondary)
+                    } else {
+                        Text(isManualPlacement || !hasGreenCandidates
+                             ? "Tap map to place flag"
+                             : "Tap a suggested green")
+                            .font(.subheadline)
+                            .foregroundColor(.secondary)
                     }
-                    .padding(.trailing, 8)
+                }
+
+                // Toggle button (trailing) — only when there are green candidates
+                if hasGreenCandidates {
+                    HStack {
+                        Spacer()
+                        Button {
+                            isManualPlacement.toggle()
+                            if !isManualPlacement {
+                                temporaryHolePosition = nil
+                                selectedGreenBlobId = nil
+                            }
+                        } label: {
+                            Image(systemName: isManualPlacement ? "mappin.and.ellipse" : "hand.tap")
+                                .font(.title3)
+                                .foregroundColor(isManualPlacement ? .orange : .secondary)
+                                .padding(8)
+                        }
+                        .padding(.trailing, 4)
+                    }
                 }
             }
             .padding()

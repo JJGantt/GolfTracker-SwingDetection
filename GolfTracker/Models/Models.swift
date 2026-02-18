@@ -9,6 +9,9 @@ struct ClubTypeData: Identifiable, Codable, Hashable {
     var isDefault: Bool           // Default types can't be deleted
     var averageDistance: Int?     // Average distance in yards (for club prediction)
 
+    static let legacyPutterName = "Put"
+    static let putterDisplayName = "Putt"
+
     static func defaultClubTypes() -> [ClubTypeData] {
         return [
             ClubTypeData(name: "Drive", isDefault: true, averageDistance: 245),
@@ -26,8 +29,26 @@ struct ClubTypeData: Identifiable, Codable, Hashable {
             ClubTypeData(name: "Gap", isDefault: true, averageDistance: 93),
             ClubTypeData(name: "Sand", isDefault: true, averageDistance: 78),
             ClubTypeData(name: "Lob", isDefault: true, averageDistance: 45),
-            ClubTypeData(name: "Put", isDefault: true, averageDistance: 10)
+            ClubTypeData(name: putterDisplayName, isDefault: true, averageDistance: 10)
         ]
+    }
+
+    static func normalizedPutterName(_ name: String) -> String {
+        return isLegacyPutterName(name) ? putterDisplayName : name
+    }
+
+    static func isLegacyPutterName(_ name: String) -> Bool {
+        return name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == legacyPutterName.lowercased()
+    }
+
+    static func isPutterTypeName(_ name: String?) -> Bool {
+        guard let normalized = name?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() else {
+            return false
+        }
+
+        return normalized == legacyPutterName.lowercased()
+            || normalized == putterDisplayName.lowercased()
+            || normalized == "putter"
     }
 }
 

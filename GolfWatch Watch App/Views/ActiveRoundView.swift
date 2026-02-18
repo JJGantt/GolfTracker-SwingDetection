@@ -795,8 +795,8 @@ struct ActiveRoundView: View {
             // Push selected club type to detector for smart_detect
             if let club = selectedClub {
                 let newTypeName = store.getTypeName(for: club)
-                let wasPutter = swingDetector.selectedClubTypeName == "Put"
-                let isPutter = newTypeName == "Put"
+                let wasPutter = ClubTypeData.isPutterTypeName(swingDetector.selectedClubTypeName)
+                let isPutter = ClubTypeData.isPutterTypeName(newTypeName)
                 swingDetector.selectedClubTypeName = newTypeName
                 if wasPutter != isPutter { swingDetector.resetToIdle() }
             }
@@ -847,10 +847,10 @@ struct ActiveRoundView: View {
                 // Push predicted club type to detector for smart_detect
                 if let club = selectedClub {
                     let newTypeName = store.getTypeName(for: club)
-                let wasPutter = swingDetector.selectedClubTypeName == "Put"
-                let isPutter = newTypeName == "Put"
-                swingDetector.selectedClubTypeName = newTypeName
-                if wasPutter != isPutter { swingDetector.resetToIdle() }
+                    let wasPutter = ClubTypeData.isPutterTypeName(swingDetector.selectedClubTypeName)
+                    let isPutter = ClubTypeData.isPutterTypeName(newTypeName)
+                    swingDetector.selectedClubTypeName = newTypeName
+                    if wasPutter != isPutter { swingDetector.resetToIdle() }
                 }
                 isAutoSelectingClub = false
             }
@@ -893,8 +893,8 @@ struct ActiveRoundView: View {
             // Push selected club type to detector for smart_detect
             if let club = selectedClub {
                 let newTypeName = store.getTypeName(for: club)
-                let wasPutter = swingDetector.selectedClubTypeName == "Put"
-                let isPutter = newTypeName == "Put"
+                let wasPutter = ClubTypeData.isPutterTypeName(swingDetector.selectedClubTypeName)
+                let isPutter = ClubTypeData.isPutterTypeName(newTypeName)
                 swingDetector.selectedClubTypeName = newTypeName
                 if wasPutter != isPutter { swingDetector.resetToIdle() }
             }
@@ -1744,5 +1744,4 @@ struct ClubDistanceEditorView: View {
         WKInterfaceDevice.current().play(.click)
     }
 }
-
 

@@ -225,12 +225,12 @@ struct HolePlayView: View {
                     selectedGreenBlobId: $addHoleSelectedBlobId,
                     userLocation: locationManager.location,
                     heading: locationManager.heading,
-                    useStandardMap: useStandardMap,
                     greenCandidates: candidates
                 )
                 AddHoleOverlay(
                     holeCount: currentCourse.holes.count,
                     hasGreenCandidates: !candidates.isEmpty,
+                    userLocation: locationManager.location,
                     temporaryHolePosition: $temporaryHolePosition,
                     selectedGreenBlobId: $addHoleSelectedBlobId,
                     isManualPlacement: $isAddHoleManualMode,
@@ -414,11 +414,12 @@ struct HolePlayView: View {
     private var contentWithModifiers: some View {
         mainContent
             .ignoresSafeArea(edges: .all)
-            .navigationTitle(currentCourse.name)
+            .navigationTitle(isAddingHole ? "" : currentCourse.name)
             #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
             #endif
             .toolbar(.hidden, for: .tabBar)
+            .toolbar(isAddingHole ? .hidden : .automatic, for: .navigationBar)
             .toolbar {
                 ToolbarItemGroup(placement: .navigationBarTrailing) {
                     viewToggleButton
@@ -765,7 +766,7 @@ struct HolePlayView: View {
             // Default to putter from active set, or first available type's club
             let types = store.getTypesWithActiveClubs()
             // Try to find a putter type
-            if let putterType = types.first(where: { $0.name.lowercased().contains("putter") }),
+            if let putterType = types.first(where: { ClubTypeData.isPutterTypeName($0.name) }),
                let putterClub = store.getActiveClubForType(putterType.id) {
                 return putterClub.id
             }
