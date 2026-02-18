@@ -279,8 +279,7 @@ class WatchDataStore: ObservableObject {
         connectivity.onReceiveClubTypes = { [weak self] types in
             print("⌚ [WatchDataStore] Received \(types.count) club types from iPhone")
             DispatchQueue.main.async {
-                self?.clubTypes = self?.normalizedClubTypes(types) ?? types
-                self?.normalizeLegacyPutterPredictionKeys()
+                self?.clubTypes = types
                 self?.saveToStorage()
                 print("⌚ [WatchDataStore] Club types synced successfully")
             }
@@ -331,8 +330,6 @@ class WatchDataStore: ObservableObject {
     }
 
     private func loadFromStorage() {
-        var normalizedClubTypesDuringLoad = false
-
         if let data = UserDefaults.standard.data(forKey: roundKey),
            let round = try? JSONDecoder().decode(Round.self, from: data) {
             currentRound = round
@@ -353,9 +350,7 @@ class WatchDataStore: ObservableObject {
 
         if let data = UserDefaults.standard.data(forKey: clubTypesKey),
            let types = try? JSONDecoder().decode([ClubTypeData].self, from: data) {
-            let normalizedTypes = normalizedClubTypes(types)
-            normalizedClubTypesDuringLoad = normalizedTypes != types
-            clubTypes = normalizedTypes
+            clubTypes = types
             print("⌚ [WatchDataStore] Loaded \(types.count) club types from storage")
         } else {
             print("⌚ [WatchDataStore] No club types in storage, waiting for sync from iPhone")
@@ -395,13 +390,6 @@ class WatchDataStore: ObservableObject {
         if let data = UserDefaults.standard.data(forKey: "disabledPredictionClubs"),
            let names = try? JSONDecoder().decode([String].self, from: data) {
             disabledPredictionClubs = Set(names)
-        }
-
-        normalizeLegacyPutterPredictionKeys()
-
-        if normalizedClubTypesDuringLoad {
-            saveToStorage()
-            print("⌚ [WatchDataStore] Migrated legacy club type name from Put to Putt")
         }
     }
 
@@ -588,31 +576,7 @@ class WatchDataStore: ObservableObject {
     }
 
     func getTypeName(for club: ClubData) -> String {
-        guard let rawTypeName = clubTypes.first(where: { $0.id == club.clubTypeId })?.name else {
-            return club.name
-        }
-        return ClubTypeData.normalizedPutterName(rawTypeName)
-    }
-
-    private func normalizedClubTypes(_ types: [ClubTypeData]) -> [ClubTypeData] {
-        return types.map { type in
-            var normalizedType = type
-            normalizedType.name = ClubTypeData.normalizedPutterName(type.name)
-            return normalizedType
-        }
-    }
-
-    private func normalizeLegacyPutterPredictionKeys() {
-        if let legacyAverage = customClubAverages[ClubTypeData.legacyPutterName],
-           customClubAverages[ClubTypeData.putterDisplayName] == nil {
-            customClubAverages[ClubTypeData.putterDisplayName] = legacyAverage
-        }
-        customClubAverages.removeValue(forKey: ClubTypeData.legacyPutterName)
-
-        if disabledPredictionClubs.contains(ClubTypeData.legacyPutterName) {
-            disabledPredictionClubs.remove(ClubTypeData.legacyPutterName)
-            disabledPredictionClubs.insert(ClubTypeData.putterDisplayName)
-        }
+        return clubTypes.first { $0.id == club.clubTypeId }?.name ?? club.name
     }
 }
 
@@ -638,48 +602,20 @@ class ClubPredictionManager {
         "Gap": 93,
         "Sand": 78,
         "Lob": 45,
-        "Putt": 10,
-        "Put": 10
+        "Putt": 10
     ]
 
     private init() {}
 
-    private func equivalentTypeNames(for name: String) -> [String] {
-        if ClubTypeData.isPutterTypeName(name) {
-            return [name, ClubTypeData.putterDisplayName, ClubTypeData.legacyPutterName]
-        }
-        return [name]
-    }
-
-    private func value(for name: String, in map: [String: Int]) -> Int? {
-        for key in equivalentTypeNames(for: name) {
-            if let value = map[key] {
-                return value
-            }
-        }
-        return nil
-    }
-
-    private func isDisabled(_ name: String, in disabledClubs: Set<String>) -> Bool {
-        for key in equivalentTypeNames(for: name) {
-            if disabledClubs.contains(key) {
-                return true
-            }
-        }
-        return false
-    }
-
     /// Get the average distance for a club type based on mode and custom settings
     func getAverage(for clubType: ClubTypeData, mode: ClubPredictionMode, customAverages: [String: Int]) -> Int {
-        let fallbackAverage = value(for: clubType.name, in: naiveDistances)
-
         switch mode {
         case .naive, .smart:
-            return clubType.averageDistance ?? fallbackAverage ?? 100
+            return clubType.averageDistance ?? naiveDistances[clubType.name] ?? 100
         case .manual:
-            return value(for: clubType.name, in: customAverages) ?? clubType.averageDistance ?? fallbackAverage ?? 100
+            return customAverages[clubType.name] ?? clubType.averageDistance ?? naiveDistances[clubType.name] ?? 100
         case .off:
-            return clubType.averageDistance ?? fallbackAverage ?? 100
+            return clubType.averageDistance ?? naiveDistances[clubType.name] ?? 100
         }
     }
 
@@ -692,7 +628,7 @@ class ClubPredictionManager {
 
         for (index, club) in clubs.enumerated() {
             guard let clubType = clubTypes.first(where: { $0.id == club.clubTypeId }) else { continue }
-            guard !isDisabled(clubType.name, in: disabledClubs) else { continue }
+            guard !disabledClubs.contains(clubType.name) else { continue }
 
             let average = getAverage(for: clubType, mode: mode, customAverages: customAverages)
             clubDistances.append((index, average, clubType.name))

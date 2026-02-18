@@ -766,7 +766,7 @@ struct HolePlayView: View {
             // Default to putter from active set, or first available type's club
             let types = store.getTypesWithActiveClubs()
             // Try to find a putter type
-            if let putterType = types.first(where: { ClubTypeData.isPutterTypeName($0.name) }),
+            if let putterType = types.first(where: { $0.name == "Putt" }),
                let putterClub = store.getActiveClubForType(putterType.id) {
                 return putterClub.id
             }

@@ -31,10 +31,6 @@ class DataStore: ObservableObject {
         loadCourses()
         loadRounds()
         loadClubTypes()
-        if migrateLegacyPutterTypeName() {
-            saveClubTypes()
-            print("🏌️ Migrated legacy club type name from Put to Putt")
-        }
         loadClubs()
         loadClubSets()
         loadHoleDetectionData()
@@ -262,21 +258,6 @@ class DataStore: ObservableObject {
         } catch {
             errorMessage = "Failed to load club types: \(error.localizedDescription)"
         }
-    }
-
-    @discardableResult
-    private func migrateLegacyPutterTypeName() -> Bool {
-        var didMigrate = false
-
-        for index in clubTypes.indices {
-            let normalizedName = ClubTypeData.normalizedPutterName(clubTypes[index].name)
-            if normalizedName != clubTypes[index].name {
-                clubTypes[index].name = normalizedName
-                didMigrate = true
-            }
-        }
-
-        return didMigrate
     }
 
     func saveClubTypes() {
