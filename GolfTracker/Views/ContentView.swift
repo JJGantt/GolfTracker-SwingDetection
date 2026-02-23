@@ -13,9 +13,9 @@ struct ContentView: View {
 
     var body: some View {
         TabView {
-            HomeView()
+            StatsView()
                 .tabItem {
-                    Label("Home", systemImage: "house")
+                    Label("Stats", systemImage: "chart.bar.fill")
                 }
 
             CourseListView(store: store)

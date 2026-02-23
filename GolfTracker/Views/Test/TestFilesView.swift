@@ -75,7 +75,7 @@ struct TestFilesView: View {
             )
         } else {
             testFilesList(
-                files: motionDataHandler.testFiles.map { TestFileItem(id: $0.id, displayName: $0.displayName) },
+                files: motionDataHandler.testFiles.map { TestFileItem(id: $0.id, displayName: $0.displayName, fileURL: motionDataHandler.getFileURL(for: $0)) },
                 emptyMessage: "No Motion Tests"
             )
         }
@@ -91,7 +91,7 @@ struct TestFilesView: View {
             )
         } else {
             testFilesList(
-                files: satelliteLogHandler.logFiles.map { TestFileItem(id: $0.id, displayName: $0.displayName) },
+                files: satelliteLogHandler.logFiles.map { TestFileItem(id: $0.id, displayName: $0.displayName, fileURL: satelliteLogHandler.getFileURL(for: $0)) },
                 emptyMessage: "No Satellite Logs"
             )
         }
@@ -105,22 +105,24 @@ struct TestFilesView: View {
                     // Sort by display name descending (newest first)
                     file1.displayName > file2.displayName
                 })) { testFile in
-                    HStack {
-                        Button(action: {
-                            if selectedFiles.contains(testFile.id) {
-                                selectedFiles.remove(testFile.id)
-                            } else {
-                                selectedFiles.insert(testFile.id)
+                    NavigationLink(destination: LogFileDetailView(fileURL: testFile.fileURL, fileName: testFile.displayName)) {
+                        HStack {
+                            Button(action: {
+                                if selectedFiles.contains(testFile.id) {
+                                    selectedFiles.remove(testFile.id)
+                                } else {
+                                    selectedFiles.insert(testFile.id)
+                                }
+                            }) {
+                                Image(systemName: selectedFiles.contains(testFile.id) ? "checkmark.circle.fill" : "circle")
+                                    .foregroundColor(selectedFiles.contains(testFile.id) ? .blue : .gray)
                             }
-                        }) {
-                            Image(systemName: selectedFiles.contains(testFile.id) ? "checkmark.circle.fill" : "circle")
-                                .foregroundColor(selectedFiles.contains(testFile.id) ? .blue : .gray)
-                        }
-                        .buttonStyle(PlainButtonStyle())
+                            .buttonStyle(PlainButtonStyle())
 
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(testFile.displayName)
-                                .font(.headline)
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(testFile.displayName)
+                                    .font(.headline)
+                            }
                         }
                     }
                 }
@@ -195,4 +197,30 @@ struct TestFilesView: View {
 struct TestFileItem: Identifiable {
     let id: UUID
     let displayName: String
+    let fileURL: URL
+}
+
+struct LogFileDetailView: View {
+    let fileURL: URL
+    let fileName: String
+    @State private var content: String = ""
+
+    var body: some View {
+        ScrollView {
+            Text(content)
+                .font(.system(size: 11, design: .monospaced))
+                .textSelection(.enabled)
+                .padding()
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .navigationTitle(fileName)
+        .navigationBarTitleDisplayMode(.inline)
+        .onAppear {
+            do {
+                content = try String(contentsOf: fileURL, encoding: .utf8)
+            } catch {
+                content = "Error reading file: \(error.localizedDescription)"
+            }
+        }
+    }
 }

@@ -36,7 +36,16 @@ struct MotionTestFile: Identifiable, Codable {
     var displayName: String {
         let formatter = DateFormatter()
         formatter.dateFormat = "MMM d, h:mm a"
-        return "\(formatter.string(from: date)) - \(sampleCount) samples"
+        let dateStr = formatter.string(from: date)
+        // Strip timestamp suffix and extension to get a readable label
+        let base = fileName
+            .replacingOccurrences(of: #"_\d{10,}(\.\w+)?$"#, with: "", options: .regularExpression)
+            .replacingOccurrences(of: "_", with: " ")
+        if sampleCount > 0 {
+            return "\(dateStr) — \(base) (\(sampleCount))"
+        } else {
+            return "\(dateStr) — \(base)"
+        }
     }
 }
 
@@ -244,12 +253,16 @@ class MotionDataHandler: ObservableObject {
         case ("puttEventData", "rawAccel"):
             prefix = (outcome == "detected" ? "putt_event" : "putt_fail") + "_raw"
             header = "Putt \(outcome == "detected" ? "Detected" : "Failed") (Raw Accelerometer @ 800Hz)\nOutcome: \(outcome ?? "unknown")\nSample Count: \(sampleCount)\n\n"
+        case ("continuousLog", _):
+            prefix = "continuous_log"
+            header = ""
         default:
             print("📱 [MotionDataHandler] Unknown file type '\(fileType)/\(dataType)', skipping")
             return
         }
 
-        let fileName = "\(prefix)_\(Int(timestamp)).csv"
+        let ext = fileType == "continuousLog" ? "txt" : "csv"
+        let fileName = "\(prefix)_\(Int(timestamp)).\(ext)"
         let destURL = testFilesDirectory.appendingPathComponent(fileName)
 
         do {

@@ -380,6 +380,13 @@ extension WatchConnectivityManager: WCSessionDelegate {
             return
         }
 
+        // Handle watch-side diagnostic logs forwarded to phone console
+        if let type = message["type"] as? String, type == "watchLog",
+           let msg = message["msg"] as? String {
+            print("⌚→📱 \(msg)")
+            return
+        }
+
         // Handle hole filter settings (Watch → iPhone)
         if let type = message["type"] as? String, type == "holeFilterSettings",
            let data = message["data"] as? Data,
@@ -518,7 +525,7 @@ extension WatchConnectivityManager: WCSessionDelegate {
         let metadata = file.metadata ?? [:]
         let fileType = metadata["type"] as? String ?? ""
 
-        guard fileType == "motionData" || fileType == "puttEventData" else {
+        guard fileType == "motionData" || fileType == "puttEventData" || fileType == "continuousLog" else {
             print("📱 [iPhone] Received unexpected file: \(fileName)")
             return
         }

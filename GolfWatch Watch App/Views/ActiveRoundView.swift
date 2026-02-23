@@ -27,8 +27,10 @@ struct ActiveRoundView: View {
     @State private var isPulsing = false
     @State private var showingDistanceEditor = false
     @State private var manualClubOverride = false       // True when user manually changed club
+    @State private var onGreenOverride = false          // True when auto-switched to putter for current green
     @State private var navigateToAccelTest = false
     @State private var isAutoSelectingClub = false      // True when we're programmatically updating club
+    @State private var autoAddedStrokeId: UUID?          // Tracks the auto-added stroke for undo/club update
     @FocusState private var isMapFocused: Bool
     @FocusState private var isMainViewFocused: Bool
 
@@ -64,6 +66,26 @@ struct ActiveRoundView: View {
         }
 
         return false
+    }
+
+    private var currentHoleGreenBlob: HoleDetectionBlob? {
+        guard let courseId = store.currentRound?.courseId,
+              let holeCoord = store.currentHole?.coordinate else { return nil }
+        return store.filteredGreenCandidates(for: courseId)
+            .first { $0.contains(holeCoord) }
+    }
+
+    private var isOnCurrentGreen: Bool {
+        guard let userCoord = locationManager.location?.coordinate,
+              let blob = currentHoleGreenBlob else { return false }
+        return blob.contains(userCoord)
+    }
+
+    private func putterClubIndex() -> Int? {
+        clubs.indices.first { index in
+            guard let clubType = store.clubTypes.first(where: { $0.id == clubs[index].clubTypeId }) else { return false }
+            return clubType.name == "Putt"
+        }
     }
 
     private var distanceToHole: Int? {
@@ -462,16 +484,35 @@ struct ActiveRoundView: View {
         .ignoresSafeArea()
     }
 
+    private func swingTypeColor(_ swing: SwingDetectionManager.DetectedSwing?) -> Color {
+        guard let swing = swing else { return .cyan }
+        switch swing.swingType {
+        case .putt: return .cyan
+        case .partial: return .green
+        case .fullSwing: return .orange
+        }
+    }
+
+    private func swingTypeLabel(_ swing: SwingDetectionManager.DetectedSwing?) -> String {
+        guard let swing = swing else { return "" }
+        switch swing.swingType {
+        case .putt: return "PUTT"
+        case .partial: return "PARTIAL"
+        case .fullSwing: return "FULL"
+        }
+    }
+
     @ViewBuilder
     private func swingDetectedOverlay(buttonSize: CGFloat, iconSize: CGFloat) -> some View {
-        if swingDetector.lastDetectedSwing != nil && store.currentHole != nil && !isPlacingTarget && !isPlacingPenalty {
+        if let swing = swingDetector.lastDetectedSwing, store.currentHole != nil && !isPlacingTarget && !isPlacingPenalty {
+            let typeColor = swingTypeColor(swing)
             VStack(spacing: 4) {
-                // Main swing button - tap to add stroke
-                Button(action: addStrokeFromLastSwing) {
+                // Main swing button - add stroke (manual) or undo (auto_add)
+                Button(action: { swingDetector.autoAdd ? undoAutoAddedStroke() : addStrokeFromLastSwing() }) {
                     ZStack {
                         // Outer pulse ring for motion effect
                         Circle()
-                            .stroke(Color.cyan.opacity(0.3), lineWidth: 2)
+                            .stroke(typeColor.opacity(0.3), lineWidth: 2)
                             .frame(width: buttonSize * 1.7, height: buttonSize * 1.7)
                             .scaleEffect(isPulsing ? 1.18 : 0.92)
                             .opacity(isPulsing ? 0.0 : 0.8)
@@ -479,26 +520,32 @@ struct ActiveRoundView: View {
                                        value: isPulsing)
 
                         Circle()
-                            .fill(Color.cyan.opacity(0.7))
+                            .fill(typeColor.opacity(0.7))
                             .frame(width: buttonSize * 1.5, height: buttonSize * 1.5)
-                            .shadow(color: .cyan.opacity(0.4), radius: 8, x: 0, y: 0)
+                            .shadow(color: typeColor.opacity(0.4), radius: 8, x: 0, y: 0)
 
-                        // Motion lines behind the golfer
-                        HStack(spacing: 2) {
-                            ForEach(0..<3, id: \.self) { i in
-                                RoundedRectangle(cornerRadius: 1)
-                                    .fill(Color.white.opacity(0.4 - Double(i) * 0.1))
-                                    .frame(width: 2, height: CGFloat(8 - i * 2))
+                        if swingDetector.autoAdd {
+                            Image(systemName: "arrow.uturn.backward")
+                                .font(.system(size: iconSize * 1.4, weight: .bold))
+                                .foregroundColor(.white)
+                        } else {
+                            // Motion lines behind the golfer
+                            HStack(spacing: 2) {
+                                ForEach(0..<3, id: \.self) { i in
+                                    RoundedRectangle(cornerRadius: 1)
+                                        .fill(Color.white.opacity(0.4 - Double(i) * 0.1))
+                                        .frame(width: 2, height: CGFloat(8 - i * 2))
+                                }
+                                Spacer()
                             }
-                            Spacer()
-                        }
-                        .frame(width: buttonSize * 1.2)
-                        .offset(x: -iconSize * 0.3)
+                            .frame(width: buttonSize * 1.2)
+                            .offset(x: -iconSize * 0.3)
 
-                        Image(systemName: "figure.golf")
-                            .font(.system(size: iconSize * 1.4, weight: .bold))
-                            .foregroundColor(.white)
-                            .rotationEffect(.degrees(-8))
+                            Image(systemName: "figure.golf")
+                                .font(.system(size: iconSize * 1.4, weight: .bold))
+                                .foregroundColor(.white)
+                                .rotationEffect(.degrees(-8))
+                        }
                     }
                 }
                 .buttonStyle(PlainButtonStyle())
@@ -512,8 +559,12 @@ struct ActiveRoundView: View {
                     isPulsing = false
                 }
 
-                // Dismiss button - smaller X below, closer
+                // Dismiss button - smaller X below; in auto_add mode, saves current club to the stroke
                 Button(action: {
+                    if swingDetector.autoAdd, let strokeId = autoAddedStrokeId, let club = selectedClub {
+                        store.updateStrokeClub(strokeId: strokeId, clubId: club.id)
+                        autoAddedStrokeId = nil
+                    }
                     swingDetector.clearLastSwing()
                     WKInterfaceDevice.current().play(.click)
                     isMainViewFocused = true
@@ -530,6 +581,11 @@ struct ActiveRoundView: View {
                 }
                 .buttonStyle(PlainButtonStyle())
                 .focusable(false)
+
+                // Swing type label
+                Text(swingTypeLabel(swing))
+                    .font(.system(size: 10, weight: .bold, design: .monospaced))
+                    .foregroundColor(typeColor)
             }
             .offset(y: -15)
             .transition(.scale.combined(with: .opacity))
@@ -781,7 +837,7 @@ struct ActiveRoundView: View {
 
             // Request HealthKit authorization and start workout if there's an active round
             if store.currentRound != nil && !workoutManager.isWorkoutActive {
-                workoutManager.requestAuthorization { success in
+                workoutManager.requestAuthorization { success, _ in
                     if success {
                         print("⌚ [ActiveRoundView] HealthKit authorized, starting workout")
                         workoutManager.startWorkout()
@@ -805,10 +861,41 @@ struct ActiveRoundView: View {
             if !isPlacingTarget {
                 updateMapPosition()
             }
+
+            // Auto-switch to putter when stepping onto current hole's green
+            guard store.clubPredictionMode != .off else { return }
+            let nowOnGreen = isOnCurrentGreen
+            if nowOnGreen && !onGreenOverride && !manualClubOverride {
+                if let putterIndex = putterClubIndex() {
+                    onGreenOverride = true
+                    isAutoSelectingClub = true
+                    selectedClubIndex = Double(putterIndex)
+                    updateSwingDetectorClub()
+                    isAutoSelectingClub = false
+                }
+            } else if !nowOnGreen && onGreenOverride {
+                onGreenOverride = false
+                // Re-run distance prediction if user hasn't manually overridden
+                if !manualClubOverride, let distance = distanceToHole,
+                   let predictedIndex = ClubPredictionManager.shared.predictClubIndex(
+                       forDistance: distance,
+                       clubs: clubs,
+                       clubTypes: store.clubTypes,
+                       mode: store.clubPredictionMode,
+                       customAverages: store.customClubAverages,
+                       disabledClubs: store.disabledPredictionClubs
+                   ) {
+                    isAutoSelectingClub = true
+                    selectedClubIndex = Double(predictedIndex)
+                    updateSwingDetectorClub()
+                    isAutoSelectingClub = false
+                }
+            }
         }
         .onChange(of: distanceToHole) { _, newDistance in
             // Auto-predict club based on distance if enabled and not manually overridden
             guard !manualClubOverride,
+                  !onGreenOverride,
                   store.clubPredictionMode != .off,
                   let distance = newDistance else { return }
 
@@ -829,6 +916,7 @@ struct ActiveRoundView: View {
         .onChange(of: store.currentHoleIndex) { _, _ in
             // Watch syncs hole index from phone - update map when it changes
             manualClubOverride = false  // Reset manual override on hole change
+            onGreenOverride = false
             updateMapPosition()
         }
         .onChange(of: store.currentHole) { _, _ in
@@ -850,6 +938,25 @@ struct ActiveRoundView: View {
                 isMapFocused = false
                 isMainViewFocused = true
                 updateMapPosition()
+            }
+        }
+        .onChange(of: swingDetector.lastDetectedSwing?.timestamp) { _, newValue in
+            // Auto-select putter when putt detected within range and putter not already selected
+            if let swing = swingDetector.lastDetectedSwing,
+               swing.swingType == .putt,
+               swingDetector.puttAutoSelectYards > 0,
+               swingDetector.selectedClubTypeName != "Putt",
+               let distance = distanceToHole,
+               distance <= swingDetector.puttAutoSelectYards,
+               let putterIndex = putterClubIndex() {
+                isAutoSelectingClub = true
+                selectedClubIndex = Double(putterIndex)
+                updateSwingDetectorClub()
+                isAutoSelectingClub = false
+            }
+            // Auto-add stroke when a new swing is detected and autoAdd is on
+            if swingDetector.autoAdd, newValue != nil {
+                autoAddStrokeFromSwing()
             }
         }
         .onChange(of: selectedClubIndex) { _, _ in
@@ -1120,13 +1227,28 @@ struct ActiveRoundView: View {
 
     // MARK: - Actions
 
+    private func applyClubPrediction() {
+        guard store.clubPredictionMode != .off,
+              let distance = distanceToHole else { return }
+        if let predictedIndex = ClubPredictionManager.shared.predictClubIndex(
+            forDistance: distance,
+            clubs: clubs,
+            clubTypes: store.clubTypes,
+            mode: store.clubPredictionMode,
+            customAverages: store.customClubAverages,
+            disabledClubs: store.disabledPredictionClubs
+        ) {
+            isAutoSelectingClub = true
+            selectedClubIndex = Double(predictedIndex)
+            updateSwingDetectorClub()
+            isAutoSelectingClub = false
+        }
+    }
+
     private func updateSwingDetectorClub() {
         guard let club = selectedClub else { return }
         let newTypeName = store.getTypeName(for: club)
-        let wasPutter = swingDetector.selectedClubTypeName == "Putt"
-        let isPutter = newTypeName == "Putt"
         swingDetector.selectedClubTypeName = newTypeName
-        if wasPutter != isPutter { swingDetector.resetToIdle() }
     }
 
     private func toggleAimDirection() {
@@ -1195,8 +1317,9 @@ struct ActiveRoundView: View {
         }
         store.addStroke(clubId: club.id, trajectoryHeading: trajectoryHeading)
 
-        // Reset manual club override so auto-prediction resumes
+        // Reset manual club override and immediately re-predict based on current distance
         manualClubOverride = false
+        applyClubPrediction()
 
         // Reset aim direction after stroke is recorded
         swingDetector.capturedAimDirection = nil
@@ -1218,9 +1341,12 @@ struct ActiveRoundView: View {
     }
 
     private func handleDoubleTapGesture() {
-        // If there's a detected swing, add that. Otherwise, add a regular stroke.
         if swingDetector.lastDetectedSwing != nil && store.currentHole != nil {
-            addStrokeFromLastSwing()
+            if swingDetector.autoAdd {
+                undoAutoAddedStroke()
+            } else {
+                addStrokeFromLastSwing()
+            }
         } else {
             recordStroke()
         }
@@ -1256,6 +1382,7 @@ struct ActiveRoundView: View {
         )
 
         manualClubOverride = false
+        applyClubPrediction()
         swingDetector.capturedAimDirection = nil
         swingDetector.clearLastSwing()
 
@@ -1263,6 +1390,50 @@ struct ActiveRoundView: View {
         isMainViewFocused = true
 
         print("⌚ [AddLastSwing] Added stroke from detected swing at \(swing.location) with \(swing.peakAcceleration)G")
+    }
+
+    /// Auto-add a stroke from the detected swing without clearing the overlay.
+    /// Called by onChange when autoAdd is enabled.
+    private func autoAddStrokeFromSwing() {
+        guard let swing = swingDetector.lastDetectedSwing else { return }
+        guard store.currentRound != nil, let hole = store.currentHole else { return }
+        guard !store.isHoleCompleted(hole.number) else { return }
+
+        var trajectoryHeading = swing.trajectoryHeading
+        if trajectoryHeading == nil, let holeCoord = hole.coordinate {
+            trajectoryHeading = calculateBearing(from: swing.location, to: holeCoord)
+        }
+
+        guard let club = selectedClub else { return }
+
+        let strokeId = store.addStroke(
+            clubId: club.id,
+            trajectoryHeading: trajectoryHeading,
+            coordinate: swing.location,
+            acceleration: swing.peakAcceleration
+        )
+
+        manualClubOverride = false
+        applyClubPrediction()
+        swingDetector.capturedAimDirection = nil
+        autoAddedStrokeId = strokeId
+
+        // Same feedback as normal add
+        WKInterfaceDevice.current().play(.success)
+
+        print("⌚ [AutoAdd] Auto-added stroke from detected swing at \(swing.location)")
+    }
+
+    /// Undo the most recently auto-added stroke and dismiss the overlay.
+    private func undoAutoAddedStroke() {
+        if autoAddedStrokeId != nil {
+            store.deleteLastStroke()
+            autoAddedStrokeId = nil
+            print("⌚ [AutoAdd] Undid auto-added stroke (false detection)")
+        }
+        swingDetector.clearLastSwing()
+        WKInterfaceDevice.current().play(.click)
+        isMainViewFocused = true
     }
 
     private func deleteLastStroke() {

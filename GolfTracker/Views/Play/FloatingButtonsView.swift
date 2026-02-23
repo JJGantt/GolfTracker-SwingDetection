@@ -17,6 +17,7 @@ struct FloatingButtonsView: View {
     let onCaptureAimDirection: () -> Void
     let onToggleTargetPlacement: () -> Void
     let onUndo: () -> Void
+    let onShowScorecard: () -> Void
 
     var body: some View {
         ZStack {
@@ -77,7 +78,21 @@ struct FloatingButtonsView: View {
                 Spacer()
                 HStack {
                     VStack(spacing: 12) {
-                        // Target button (top)
+                        // Scorecard button (top)
+                        Button(action: onShowScorecard) {
+                            ZStack {
+                                Circle()
+                                    .fill(Color.white.opacity(0.95))
+                                    .frame(width: 60, height: 60)
+                                    .shadow(color: .black.opacity(0.3), radius: 8, x: 0, y: 4)
+                                Image(systemName: "list.clipboard")
+                                    .font(.title2)
+                                    .fontWeight(.semibold)
+                                    .foregroundColor(.black)
+                            }
+                        }
+
+                        // Target button
                         Button(action: onToggleTargetPlacement) {
                             ZStack {
                                 Circle()

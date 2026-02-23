@@ -1,15 +1,16 @@
 import Foundation
 import HealthKit
-import Combine
 
 class WorkoutManager: NSObject, ObservableObject {
     static let shared = WorkoutManager()
 
     let healthStore = HKHealthStore()
     var session: HKWorkoutSession?
-    var builder: HKLiveWorkoutBuilder?
 
     @Published var isWorkoutActive = false
+
+    /// Called once when the HKWorkoutSession first reaches `.running`. Cleared after firing.
+    var onSessionRunning: (() -> Void)?
 
     private override init() {
         super.init()
@@ -17,11 +18,11 @@ class WorkoutManager: NSObject, ObservableObject {
 
     // MARK: - Authorization
 
-    func requestAuthorization(completion: @escaping (Bool) -> Void) {
+    func requestAuthorization(completion: @escaping (Bool, Error?) -> Void) {
         // Check if HealthKit is available on this device
         guard HKHealthStore.isHealthDataAvailable() else {
             print("⌚ [WorkoutManager] HealthKit is not available on this device")
-            completion(false)
+            completion(false, nil)
             return
         }
 
@@ -30,18 +31,12 @@ class WorkoutManager: NSObject, ObservableObject {
             HKQuantityType.workoutType()
         ]
 
-        let typesToRead: Set = [
-            HKQuantityType.quantityType(forIdentifier: .heartRate)!,
-            HKQuantityType.quantityType(forIdentifier: .activeEnergyBurned)!,
-            HKQuantityType.quantityType(forIdentifier: .distanceWalkingRunning)!,
-            HKObjectType.activitySummaryType()
-        ]
+        let typesToRead: Set<HKObjectType> = []
 
         healthStore.requestAuthorization(toShare: typesToShare, read: typesToRead) { success, error in
-            if let error = error {
-                print("⌚ [WorkoutManager] Authorization error: \(error.localizedDescription)")
-            }
-            completion(success)
+            let errMsg = error?.localizedDescription ?? "none"
+            print("⌚ [WorkoutManager] requestAuthorization completed: success=\(success) error=\(errMsg)")
+            completion(success, error)
         }
     }
 
@@ -54,65 +49,28 @@ class WorkoutManager: NSObject, ObservableObject {
         configuration.locationType = .outdoor
 
         do {
-            // Create workout session
+            // Create workout session — the session alone keeps the app alive screen-off.
+            // No builder/data source so the optical heart rate sensor is never activated.
             session = try HKWorkoutSession(healthStore: healthStore, configuration: configuration)
-            builder = session?.associatedWorkoutBuilder()
-
-            // Set ourselves as delegate
             session?.delegate = self
-            builder?.delegate = self
-
-            // Skip setting data source — we don't need heart rate, calories, or distance
-            // from HealthKit. The workout session alone keeps the app alive in the foreground.
-            // Not setting a data source avoids activating the optical heart rate sensor.
-
-            // Start the session
-            let startDate = Date()
-            session?.startActivity(with: startDate)
-            builder?.beginCollection(withStart: startDate) { success, error in
-                if let error = error {
-                    print("⌚ [WorkoutManager] Failed to begin collection: \(error.localizedDescription)")
-                } else {
-                    print("⌚ [WorkoutManager] Workout started successfully")
-                }
-            }
-
+            session?.startActivity(with: Date())
             isWorkoutActive = true
-
+            print("⌚ [WorkoutManager] Workout session started (no data collection)")
         } catch {
             print("⌚ [WorkoutManager] Failed to start workout: \(error.localizedDescription)")
         }
     }
 
     func endWorkout() {
-        guard let session = session, let builder = builder else {
+        guard let session = session else {
             print("⌚ [WorkoutManager] No active workout session to end")
             return
         }
-
-        // End the session
         session.end()
-
-        // End data collection
-        builder.endCollection(withEnd: Date()) { success, error in
-            if let error = error {
-                print("⌚ [WorkoutManager] Failed to end collection: \(error.localizedDescription)")
-            }
-
-            // Finish the workout
-            builder.finishWorkout { workout, error in
-                if let error = error {
-                    print("⌚ [WorkoutManager] Failed to finish workout: \(error.localizedDescription)")
-                } else if let workout = workout {
-                    print("⌚ [WorkoutManager] Workout saved successfully: \(workout)")
-                }
-
-                DispatchQueue.main.async {
-                    self.isWorkoutActive = false
-                    self.session = nil
-                    self.builder = nil
-                }
-            }
+        print("⌚ [WorkoutManager] Workout session ended")
+        DispatchQueue.main.async {
+            self.isWorkoutActive = false
+            self.session = nil
         }
     }
 }
@@ -127,45 +85,35 @@ extension WorkoutManager: HKWorkoutSessionDelegate {
         DispatchQueue.main.async {
             switch toState {
             case .running:
-                print("⌚ [WorkoutManager] Workout session running")
+                print("⌚ [WorkoutManager] HKWorkoutSession → RUNNING (app should stay alive screen-off)")
+                self.onSessionRunning?()
+                self.onSessionRunning = nil
             case .ended:
-                print("⌚ [WorkoutManager] Workout session ended")
+                print("⌚ [WorkoutManager] HKWorkoutSession → ended")
                 self.isWorkoutActive = false
             case .paused:
-                print("⌚ [WorkoutManager] Workout session paused")
+                print("⌚ [WorkoutManager] HKWorkoutSession → paused")
             case .prepared:
-                print("⌚ [WorkoutManager] Workout session prepared")
+                print("⌚ [WorkoutManager] HKWorkoutSession → prepared")
             case .stopped:
-                print("⌚ [WorkoutManager] Workout session stopped")
+                print("⌚ [WorkoutManager] HKWorkoutSession → stopped")
                 self.isWorkoutActive = false
             case .notStarted:
-                print("⌚ [WorkoutManager] Workout session not started")
+                print("⌚ [WorkoutManager] HKWorkoutSession → notStarted")
                 self.isWorkoutActive = false
                 break
             @unknown default:
-                print("⌚ [WorkoutManager] Unknown workout session state")
+                print("⌚ [WorkoutManager] HKWorkoutSession → unknown state")
             }
         }
     }
 
     func workoutSession(_ workoutSession: HKWorkoutSession,
                        didFailWithError error: Error) {
-        print("⌚ [WorkoutManager] Workout session failed: \(error.localizedDescription)")
+        print("⌚ [WorkoutManager] HKWorkoutSession FAILED: \(error.localizedDescription)")
         DispatchQueue.main.async {
             self.isWorkoutActive = false
         }
     }
 }
 
-// MARK: - HKLiveWorkoutBuilderDelegate
-
-extension WorkoutManager: HKLiveWorkoutBuilderDelegate {
-    func workoutBuilder(_ workoutBuilder: HKLiveWorkoutBuilder,
-                       didCollectDataOf collectedTypes: Set<HKSampleType>) {
-        // No data source set — this will never be called.
-    }
-
-    func workoutBuilderDidCollectEvent(_ workoutBuilder: HKLiveWorkoutBuilder) {
-        // Handle workout events if needed
-    }
-}

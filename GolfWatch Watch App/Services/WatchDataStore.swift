@@ -83,9 +83,10 @@ class WatchDataStore: ObservableObject {
 
     // MARK: - Stroke Management
 
-    func addStroke(clubId: UUID, trajectoryHeading: Double? = nil, coordinate: CLLocationCoordinate2D? = nil, acceleration: Double? = nil, isPenalty: Bool = false) {
-        guard var round = currentRound else { return }
-        guard let strokeCoordinate = coordinate ?? LocationManager.shared.location?.coordinate else { return }
+    @discardableResult
+    func addStroke(clubId: UUID, trajectoryHeading: Double? = nil, coordinate: CLLocationCoordinate2D? = nil, acceleration: Double? = nil, isPenalty: Bool = false) -> UUID? {
+        guard var round = currentRound else { return nil }
+        guard let strokeCoordinate = coordinate ?? LocationManager.shared.location?.coordinate else { return nil }
 
         // Determine hole number - use current hole if it exists, otherwise use next hole number
         let holeNumber: Int
@@ -115,6 +116,16 @@ class WatchDataStore: ObservableObject {
 
         saveRound()
         savePendingStrokes()
+        syncStrokes()
+        return stroke.id
+    }
+
+    func updateStrokeClub(strokeId: UUID, clubId: UUID) {
+        guard var round = currentRound else { return }
+        guard let index = round.strokes.firstIndex(where: { $0.id == strokeId }) else { return }
+        round.strokes[index].clubId = clubId
+        currentRound = round
+        saveRound()
         syncStrokes()
     }
 

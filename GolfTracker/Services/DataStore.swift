@@ -12,6 +12,7 @@ class DataStore: ObservableObject {
     @Published var holeDetectionDataByCourse: [UUID: CourseHoleDetectionData] = [:]
     @Published var holeDetectionRunStateByCourse: [UUID: HoleDetectionRunState] = [:]
     @Published var holeFilterSettings: HoleDetectionFilterSettings = .default
+    @Published var playerStats: PlayerStats = .empty
 
     private let coursesFileName = "courses.json"
     private let roundsFileName = "rounds.json"
@@ -19,6 +20,7 @@ class DataStore: ObservableObject {
     private let clubsFileName = "clubs.json"
     private let clubSetsFileName = "clubSets.json"
     private let holeDetectionFileName = "holeDetectionData.json"
+    private let playerStatsFileName = "playerStats.json"
     private let holeFilterSettingsKey = "holeFilterSettings"
     private let holeDetectionAnalyzer = HoleDetectionAnalyzer()
     private let holeDetectionTestCenter = CLLocationCoordinate2D(
@@ -69,6 +71,13 @@ class DataStore: ObservableObject {
             )
             clubSets.append(defaultSet)
             saveClubSets()
+        }
+
+        // Load or build aggregate stats
+        loadPlayerStats()
+        if playerStats.totalRounds != rounds.count {
+            // Stale cache — rebuild from current rounds
+            rebuildPlayerStats()
         }
 
         // Set up Watch Connectivity callbacks
@@ -203,6 +212,11 @@ class DataStore: ObservableObject {
         FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
             .appendingPathComponent(holeDetectionFileName)
     }
+
+    private var playerStatsFileURL: URL {
+        FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent(playerStatsFileName)
+    }
     
     func loadCourses() {
         guard FileManager.default.fileExists(atPath: coursesFileURL.path) else { return }
@@ -246,6 +260,39 @@ class DataStore: ObservableObject {
         } catch {
             errorMessage = "Failed to save rounds: \(error.localizedDescription)"
         }
+    }
+
+    // MARK: - Player Stats
+
+    func loadPlayerStats() {
+        guard FileManager.default.fileExists(atPath: playerStatsFileURL.path) else { return }
+        do {
+            let data = try Data(contentsOf: playerStatsFileURL)
+            playerStats = try JSONDecoder().decode(PlayerStats.self, from: data)
+        } catch {
+            print("⚠️ Failed to load player stats: \(error.localizedDescription)")
+        }
+    }
+
+    private func savePlayerStats() {
+        do {
+            let data = try JSONEncoder().encode(playerStats)
+            try data.write(to: playerStatsFileURL)
+        } catch {
+            print("⚠️ Failed to save player stats: \(error.localizedDescription)")
+        }
+    }
+
+    /// Recomputes aggregate stats from all rounds and persists the result.
+    /// Called after a round ends or is deleted. Also safe to call manually.
+    func rebuildPlayerStats() {
+        playerStats = StatsEngine.compute(
+            rounds: rounds,
+            clubs: availableClubs,
+            clubTypes: clubTypes
+        )
+        savePlayerStats()
+        print("📊 Player stats rebuilt: \(rounds.count) rounds, \(playerStats.perClubTypeStats.count) club types")
     }
 
     func loadClubTypes() {
@@ -898,23 +945,15 @@ class DataStore: ObservableObject {
         WatchConnectivityManager.shared.sendRound(rounds[roundIndex])
     }
 
-    func updateStrokeDetails(in round: Round, stroke: Stroke, direction: StrokeDirection?) {
-        guard let roundIndex = rounds.firstIndex(where: { $0.id == round.id }),
-              let strokeIndex = rounds[roundIndex].strokes.firstIndex(where: { $0.id == stroke.id }) else { return }
-
-        rounds[roundIndex].strokes[strokeIndex].direction = direction
-
-        saveRounds()
-    }
-
     func endRound(_ round: Round) {
-        // Round is already saved, just need to ensure it's persisted
         saveRounds()
+        rebuildPlayerStats()
     }
 
     func deleteRound(_ round: Round) {
         rounds.removeAll { $0.id == round.id }
         saveRounds()
+        rebuildPlayerStats()
     }
 
     func hasRounds(for course: Course) -> Bool {

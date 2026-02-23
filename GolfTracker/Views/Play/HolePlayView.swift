@@ -37,6 +37,7 @@ struct HolePlayView: View {
     @State private var showingClubSelection = false
     @State private var showingStrokeDetails = false
     @State private var showingCourseEditor = false
+    @State private var showingRoundSummary = false
 
     // MARK: - Input State
     @State private var selectedStrokeIndex: Int = 0
@@ -351,7 +352,8 @@ struct HolePlayView: View {
                     },
                     onCaptureAimDirection: captureAimDirection,
                     onToggleTargetPlacement: toggleTargetPlacement,
-                    onUndo: undoLastAction
+                    onUndo: undoLastAction,
+                    onShowScorecard: { showingRoundSummary = true }
                 )
             } else {
                 Color.clear
@@ -468,6 +470,16 @@ struct HolePlayView: View {
                 savedMapRegion: $savedMapRegion,
                 store: store
             ))
+            .sheet(isPresented: $showingRoundSummary) {
+                if let round = currentRound {
+                    InRoundScorecardView(
+                        round: round,
+                        currentHoleNumber: currentHole?.number,
+                        store: store
+                    )
+                    .presentationDetents([.medium, .large])
+                }
+            }
     }
 
     // MARK: - Body

@@ -70,31 +70,6 @@ struct ClubSet: Identifiable, Codable, Hashable {
 }
 
 
-enum StrokeDirection: Codable, CaseIterable {
-    case redRight
-    case yellowRight
-    case center
-    case yellowLeft
-    case redLeft
-
-    var displayName: String {
-        switch self {
-        case .redRight, .yellowRight: return "Right"
-        case .center: return "Center"
-        case .yellowLeft, .redLeft: return "Left"
-        }
-    }
-
-    var severity: Int {
-        switch self {
-        case .redRight, .redLeft: return 2
-        case .yellowRight, .yellowLeft: return 1
-        case .center: return 0
-        }
-    }
-}
-
-
 struct Course: Identifiable, Codable, Hashable {
     var id = UUID()
     var name: String
@@ -148,7 +123,6 @@ struct Stroke: Identifiable, Codable, Hashable {
     var longitude: Double
     var clubId: UUID              // References ClubData.id
     var timestamp: Date
-    var direction: StrokeDirection?
     var landingLatitude: Double?
     var landingLongitude: Double?
     var isPenalty: Bool
