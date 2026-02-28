@@ -35,3 +35,30 @@ Carthage/Build/
 
 # Claude Code
 .claude/
+
+# IDE
+.specstory/
+.cursorindexingignore
+
+# Python
+__pycache__/
+*.pyc
+
+# Planning docs
+docs/TODO.md
+docs/SMALL_ADJUSTMENTS.md
+docs/VISION.md
+
+# Research
+prompt_lab/
+swing_detection/
+
+# Old consolidated directories (removed from repo)
+full_swing_samples/
+iregular_samples/
+putt_logs/
+putts_samples/
+unified_detection/
+
+# Cache
+.cache/

@@ -12,6 +12,9 @@ struct OptionsView: View {
     @Binding var isFullViewMode: Bool
     @Binding var manualClubOverride: Bool
     @Binding var navigateToAccelTest: Bool
+    @Binding var navigateToViewSettings: Bool
+    @Binding var navigateToClubRecommend: Bool
+    @Binding var navigateToPredictGreen: Bool
     @Binding var isPlacingPenalty: Bool
 
     // Closures for actions
@@ -100,7 +103,7 @@ struct OptionsView: View {
                         }
                         .foregroundColor(.white)
                         .frame(maxWidth: .infinity)
-                        .padding(.vertical, 12)
+                        .padding(.vertical, 14)
                         .background(Color.red.opacity(0.9))
                         .cornerRadius(8)
                     }
@@ -121,8 +124,8 @@ struct OptionsView: View {
                         }
                         .foregroundColor(.white)
                         .frame(maxWidth: .infinity)
-                        .padding(.vertical, 12)
-                        .background(Color.orange.opacity(0.9))
+                        .padding(.vertical, 14)
+                        .background(Color.yellow.opacity(0.9))
                         .cornerRadius(8)
                     }
                     .buttonStyle(PlainButtonStyle())
@@ -147,7 +150,7 @@ struct OptionsView: View {
                         }
                         .foregroundColor(.white)
                         .frame(maxWidth: .infinity)
-                        .padding(.vertical, 12)
+                        .padding(.vertical, 14)
                         .background(Color.orange.opacity(0.9))
                         .cornerRadius(8)
                     }
@@ -170,7 +173,7 @@ struct OptionsView: View {
                         }
                         .foregroundColor(.white)
                         .frame(maxWidth: .infinity)
-                        .padding(.vertical, 12)
+                        .padding(.vertical, 14)
                         .background(Color.gray.opacity(0.9))
                         .cornerRadius(8)
                     }
@@ -178,142 +181,40 @@ struct OptionsView: View {
                 }
                 .padding(.horizontal, 8)
 
+                // Settings section
                 VStack(alignment: .leading, spacing: 8) {
-                    // Full View Mode Toggle
-                    Toggle(isOn: Binding(
-                        get: { isFullViewMode },
-                        set: { newValue in
-                            isFullViewMode = newValue
-                            WKInterfaceDevice.current().play(.click)
-                            if store.currentHole != nil {
-                                updateMapPosition()
-                            } else {
-                                updateNoHoleMapPosition()
-                            }
-                        }
-                    )) {
-                        Text("Full View")
-                            .font(.system(size: 13))
-                    }
-                    .toggleStyle(RadioToggleStyle())
-                    .padding(.horizontal, 8)
+                    Text("Settings")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundColor(.secondary)
+                        .padding(.horizontal, 8)
 
-                    // Motion Config button
-                    Button(action: {
+                    settingsNavButton("View") {
+                        showingOptions = false
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                            navigateToViewSettings = true
+                        }
+                    }
+
+                    settingsNavButton("Club Recommend") {
+                        showingOptions = false
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                            navigateToClubRecommend = true
+                        }
+                    }
+
+                    settingsNavButton("Motion Config") {
                         showingOptions = false
                         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
                             navigateToAccelTest = true
                         }
-                    }) {
-                        HStack {
-                            Image(systemName: "waveform.path.ecg")
-                                .font(.system(size: 14))
-                            Text("Motion Config")
-                                .font(.system(size: 13))
-                            Spacer()
-                            Image(systemName: "chevron.right")
-                                .font(.system(size: 10))
-                                .foregroundColor(.secondary)
+                    }
+
+                    settingsNavButton("Predict Green") {
+                        showingOptions = false
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                            navigateToPredictGreen = true
                         }
                     }
-                    .buttonStyle(PlainButtonStyle())
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
-
-                    // Predict Club setting
-                    VStack(alignment: .leading, spacing: 6) {
-                        HStack {
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text("Predict Club")
-                                    .font(.system(size: 13, weight: .semibold))
-                                    .foregroundColor(.white)
-                                Text("auto-select club based on distance")
-                                    .font(.system(size: 9))
-                                    .foregroundColor(.secondary)
-                            }
-                            Spacer()
-                            // Edit button for Manual mode
-                            if store.clubPredictionMode == .manual {
-                                Button(action: {
-                                    showingOptions = false
-                                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                                        showingDistanceEditor = true
-                                    }
-                                }) {
-                                    Image(systemName: "slider.horizontal.3")
-                                        .font(.system(size: 14, weight: .bold))
-                                        .foregroundColor(.white)
-                                        .padding(8)
-                                        .background(Color.blue.opacity(0.9))
-                                        .clipShape(Circle())
-                                }
-                                .buttonStyle(PlainButtonStyle())
-                            }
-                        }
-                        .padding(.bottom, 2)
-
-                        // Mode selector as radio buttons
-                        ForEach(ClubPredictionMode.allCases, id: \.self) { mode in
-                            RadioButton(
-                                title: mode.rawValue,
-                                isSelected: store.clubPredictionMode == mode
-                            ) {
-                                store.clubPredictionMode = mode
-                                manualClubOverride = false
-                                WKInterfaceDevice.current().play(.click)
-                            }
-                        }
-                    }
-                    .padding(.horizontal, 8)
-
-                    // Hole detection filtering (watch-owned settings)
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("Hole Filter")
-                            .font(.system(size: 13, weight: .semibold))
-                            .foregroundColor(.white)
-                            .padding(.bottom, 2)
-
-                        Stepper(value: Binding(
-                            get: { store.holeFilterSettings.minArea },
-                            set: { newValue in
-                                store.holeFilterSettings.minArea = newValue
-                            }
-                        ), in: 0...5000, step: 50) {
-                            Text("Min Area: \(store.holeFilterSettings.minArea)")
-                                .font(.system(size: 12))
-                        }
-
-                        Stepper(value: Binding(
-                            get: { store.holeFilterSettings.minWidth },
-                            set: { newValue in
-                                store.holeFilterSettings.minWidth = newValue
-                            }
-                        ), in: 0...80, step: 1) {
-                            Text("Min Width: \(Int(store.holeFilterSettings.minWidth.rounded()))")
-                                .font(.system(size: 12))
-                        }
-
-                        Stepper(value: Binding(
-                            get: { store.holeFilterSettings.maxElongation },
-                            set: { newValue in
-                                store.holeFilterSettings.maxElongation = newValue
-                            }
-                        ), in: 1.0...6.0, step: 0.1) {
-                            Text(String(format: "Max Elong: %.1f", store.holeFilterSettings.maxElongation))
-                                .font(.system(size: 12))
-                        }
-
-                        Stepper(value: Binding(
-                            get: { store.holeFilterSettings.minGreennessScore },
-                            set: { newValue in
-                                store.holeFilterSettings.minGreennessScore = newValue
-                            }
-                        ), in: 0...1200, step: 25) {
-                            Text("Min Score: \(store.holeFilterSettings.minGreennessScore)")
-                                .font(.system(size: 12))
-                        }
-                    }
-                    .padding(.horizontal, 8)
                 }
             }
             .padding()
@@ -325,6 +226,23 @@ struct OptionsView: View {
             }
             Button("Cancel", role: .cancel) { }
         }
+    }
+
+    @ViewBuilder
+    private func settingsNavButton(_ title: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack {
+                Text(title)
+                    .font(.system(size: 13))
+                Spacer()
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 10))
+                    .foregroundColor(.secondary)
+            }
+        }
+        .buttonStyle(PlainButtonStyle())
+        .padding(.horizontal, 8)
+        .padding(.vertical, 8)
     }
 }
 

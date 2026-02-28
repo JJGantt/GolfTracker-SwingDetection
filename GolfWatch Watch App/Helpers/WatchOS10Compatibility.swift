@@ -14,9 +14,15 @@ struct HideMapControlsModifier: ViewModifier {
 
     func body(content: Content) -> some View {
         if #available(watchOS 11.0, *) {
-            content
-                .mapControls {}
-                .mapControlVisibility(.hidden)
+            if isInteractive {
+                // When interactive (target/penalty placement), allow map's built-in
+                // crown zoom and pan gestures to work
+                content
+            } else {
+                content
+                    .mapControls {}
+                    .mapControlVisibility(.hidden)
+            }
         } else {
             // On watchOS 10, disable the map when not interactive
             // to prevent its built-in controls from capturing crown input

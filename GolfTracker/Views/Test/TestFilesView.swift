@@ -1,104 +1,38 @@
 import SwiftUI
 
-enum TestFileType {
-    case motion
-    case satellite
-}
-
 struct TestFilesView: View {
     @EnvironmentObject var motionDataHandler: MotionDataHandler
-    @ObservedObject var satelliteLogHandler = SatelliteLogHandler.shared
     @State private var selectedFiles: Set<UUID> = []
     @State private var showingShareSheet = false
     @State private var filesToShare: [URL] = []
-    @State private var selectedType: TestFileType = .satellite
 
     private var allSelected: Bool {
-        switch selectedType {
-        case .motion:
-            return !motionDataHandler.testFiles.isEmpty && selectedFiles.count == motionDataHandler.testFiles.count
-        case .satellite:
-            return !satelliteLogHandler.logFiles.isEmpty && selectedFiles.count == satelliteLogHandler.logFiles.count
-        }
+        !motionDataHandler.testFiles.isEmpty && selectedFiles.count == motionDataHandler.testFiles.count
     }
 
     var body: some View {
         NavigationStack {
             VStack {
-                // Segmented control to switch between types
-                Picker("Test Type", selection: $selectedType) {
-                    Text("Satellite Logs").tag(TestFileType.satellite)
-                    Text("Motion Tests").tag(TestFileType.motion)
-                }
-                .pickerStyle(.segmented)
-                .padding()
-                .onChange(of: selectedType) { _ in
-                    selectedFiles.removeAll()
-                }
-
-                // Debug button for satellite logs
-                if selectedType == .satellite {
-                    Button("Create Test Log") {
-                        createTestLog()
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .padding(.bottom, 8)
-                }
-
-                if selectedType == .motion {
-                    motionTestsView
+                if motionDataHandler.testFiles.isEmpty {
+                    ContentUnavailableView(
+                        "No Motion Tests",
+                        systemImage: "waveform"
+                    )
                 } else {
-                    satelliteLogsView
+                    testFilesList(
+                        files: motionDataHandler.testFiles.map { TestFileItem(id: $0.id, displayName: $0.displayName, fileURL: motionDataHandler.getFileURL(for: $0)) }
+                    )
                 }
             }
-            .navigationTitle(selectedType == .motion ? "Motion Tests" : "Satellite Logs")
+            .navigationTitle("Motion Tests")
             .sheet(isPresented: $showingShareSheet) {
                 ShareSheet(items: filesToShare)
             }
         }
     }
 
-    private func createTestLog() {
-        let testRoundId = UUID()
-        satelliteLogHandler.startNewLog(roundId: testRoundId, courseName: "Test Course")
-        satelliteLogHandler.log("This is a test log entry")
-        satelliteLogHandler.log("Checking if logging system works")
-        satelliteLogHandler.log("Current log files count: \(satelliteLogHandler.logFiles.count)")
-    }
-
     @ViewBuilder
-    private var motionTestsView: some View {
-        if motionDataHandler.testFiles.isEmpty {
-            ContentUnavailableView(
-                "No Motion Tests",
-                systemImage: "waveform"
-            )
-        } else {
-            testFilesList(
-                files: motionDataHandler.testFiles.map { TestFileItem(id: $0.id, displayName: $0.displayName, fileURL: motionDataHandler.getFileURL(for: $0)) },
-                emptyMessage: "No Motion Tests"
-            )
-        }
-    }
-
-    @ViewBuilder
-    private var satelliteLogsView: some View {
-        if satelliteLogHandler.logFiles.isEmpty {
-            ContentUnavailableView(
-                "No Satellite Logs",
-                systemImage: "globe",
-                description: Text("Satellite logs are created when you start a round")
-            )
-        } else {
-            testFilesList(
-                files: satelliteLogHandler.logFiles.map { TestFileItem(id: $0.id, displayName: $0.displayName, fileURL: satelliteLogHandler.getFileURL(for: $0)) },
-                emptyMessage: "No Satellite Logs"
-            )
-        }
-    }
-
-    @ViewBuilder
-    private func testFilesList(files: [TestFileItem], emptyMessage: String) -> some View {
+    private func testFilesList(files: [TestFileItem]) -> some View {
         VStack {
             List {
                 ForEach(files.sorted(by: { file1, file2 in
@@ -169,26 +103,14 @@ struct TestFilesView: View {
     }
 
     private func shareSelected() {
-        switch selectedType {
-        case .motion:
-            let selectedTestFiles = motionDataHandler.testFiles.filter { selectedFiles.contains($0.id) }
-            filesToShare = selectedTestFiles.map { motionDataHandler.getFileURL(for: $0) }
-        case .satellite:
-            let selectedLogFiles = satelliteLogHandler.logFiles.filter { selectedFiles.contains($0.id) }
-            filesToShare = selectedLogFiles.map { satelliteLogHandler.getFileURL(for: $0) }
-        }
+        let selectedTestFiles = motionDataHandler.testFiles.filter { selectedFiles.contains($0.id) }
+        filesToShare = selectedTestFiles.map { motionDataHandler.getFileURL(for: $0) }
         showingShareSheet = true
     }
 
     private func deleteSelected() {
-        switch selectedType {
-        case .motion:
-            let selectedTestFiles = motionDataHandler.testFiles.filter { selectedFiles.contains($0.id) }
-            motionDataHandler.deleteTestFiles(selectedTestFiles)
-        case .satellite:
-            let selectedLogFiles = satelliteLogHandler.logFiles.filter { selectedFiles.contains($0.id) }
-            satelliteLogHandler.deleteLogFiles(selectedLogFiles)
-        }
+        let selectedTestFiles = motionDataHandler.testFiles.filter { selectedFiles.contains($0.id) }
+        motionDataHandler.deleteTestFiles(selectedTestFiles)
         selectedFiles.removeAll()
     }
 }

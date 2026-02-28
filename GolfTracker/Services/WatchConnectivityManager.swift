@@ -525,7 +525,8 @@ extension WatchConnectivityManager: WCSessionDelegate {
         let metadata = file.metadata ?? [:]
         let fileType = metadata["type"] as? String ?? ""
 
-        guard fileType == "motionData" || fileType == "puttEventData" || fileType == "continuousLog" else {
+        guard fileType == "motionData" || fileType == "puttEventData" || fileType == "continuousLog"
+                || fileType == "rollingSnapshot" || fileType == "detectionEventData" || fileType == "undoMotionData" else {
             print("📱 [iPhone] Received unexpected file: \(fileName)")
             return
         }

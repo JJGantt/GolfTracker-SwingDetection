@@ -511,6 +511,9 @@ class WatchDataStore: ObservableObject {
 class ClubPredictionManager {
     static let shared = ClubPredictionManager()
 
+    // Club types excluded from prediction entirely
+    static let excludedFromPrediction: Set<String> = ["Sand"]
+
     // Naive mode default distances (in yards) - used when clubType.averageDistance is nil
     private let naiveDistances: [String: Int] = [
         "Drive": 245,
@@ -526,7 +529,6 @@ class ClubPredictionManager {
         "9-Iron": 118,
         "Pitch": 106,
         "Gap": 93,
-        "Sand": 78,
         "Lob": 45,
         "Putt": 10
     ]
@@ -553,6 +555,7 @@ class ClubPredictionManager {
 
         for (index, club) in clubs.enumerated() {
             guard let clubType = clubTypes.first(where: { $0.id == club.clubTypeId }) else { continue }
+            guard !Self.excludedFromPrediction.contains(clubType.name) else { continue }
             guard !disabledClubs.contains(clubType.name) else { continue }
 
             let average = getAverage(for: clubType, mode: mode, customAverages: customAverages)

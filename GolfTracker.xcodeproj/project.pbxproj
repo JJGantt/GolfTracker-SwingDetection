@@ -22,6 +22,9 @@
 		6A6298212F0A0A3700303CB6 /* FloatingButtonsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6A62981E2F0A0A3700303CB6 /* FloatingButtonsView.swift */; };
 		6A7A65B12F147F4E00A58C9D /* WatchHomeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6A7A65B02F147F4E00A58C9D /* WatchHomeView.swift */; };
 		6AACTIONS2F16000000000001 /* OptionsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6AACTIONS2F16000000000002 /* OptionsView.swift */; };
+		6ASETTV2F17000000000001 /* ViewSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6ASETTV2F17000000000002 /* ViewSettingsView.swift */; };
+		6ASETTC2F17000000000001 /* ClubRecommendSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6ASETTC2F17000000000002 /* ClubRecommendSettingsView.swift */; };
+		6ASETTP2F17000000000001 /* PredictGreenSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6ASETTP2F17000000000002 /* PredictGreenSettingsView.swift */; };
 		6AB09FE92F15D47F0087C4ED /* ClubSetEditorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6AB09FE62F15D47F0087C4ED /* ClubSetEditorView.swift */; };
 		6AB09FEA2F15D47F0087C4ED /* HomeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6AB09FE72F15D47F0087C4ED /* HomeView.swift */; };
 		6AB09FEB2F15D47F0087C4ED /* ClubManagementView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6AB09FE52F15D47F0087C4ED /* ClubManagementView.swift */; };
@@ -38,8 +41,6 @@
 		6AB83CEB2EDFB1EF00CE341C /* CourseEditorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6AB83CEA2EDFB1EF00CE341C /* CourseEditorView.swift */; };
 		6AB83CEE2EDFB75100CE341C /* HolePlayView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6AB83CED2EDFB75100CE341C /* HolePlayView.swift */; };
 		6AB83CF02EDFB78400CE341C /* LocationManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6AB83CEF2EDFB78400CE341C /* LocationManager.swift */; };
-		6AC7D0B12F0DBE83005D4932 /* SatelliteCacheManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6AC7D0B02F0DBE83005D4932 /* SatelliteCacheManager.swift */; };
-		6AC7D0B32F0DC2CF005D4932 /* SatelliteTransferManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6AC7D0B22F0DC2CF005D4932 /* SatelliteTransferManager.swift */; };
 		6AD5EA7F2EE3A5F000DDDCF0 /* EditModeViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6AD5EA7A2EE3A5EF00DDDCF0 /* EditModeViews.swift */; };
 		6AD5EA802EE3A5F000DDDCF0 /* HolePlayModifiers.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6AD5EA7B2EE3A5EF00DDDCF0 /* HolePlayModifiers.swift */; };
 		6AD5EA812EE3A5F000DDDCF0 /* MapAnnotations.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6AD5EA7C2EE3A5EF00DDDCF0 /* MapAnnotations.swift */; };
@@ -64,6 +65,11 @@
 		AA11BB22CC33DD44EE550003 /* PuttDetector.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA11BB22CC33DD44EE550004 /* PuttDetector.swift */; };
 		AA11BB22CC33DD44EE550005 /* PartialDetector.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA11BB22CC33DD44EE550006 /* PartialDetector.swift */; };
 		AA11BB22CC33DD44EE550007 /* FullSwingDetector.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA11BB22CC33DD44EE550008 /* FullSwingDetector.swift */; };
+		AA11BB22CC33DD44EE550010 /* DetectionEvents.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA11BB22CC33DD44EE550011 /* DetectionEvents.swift */; };
+		AA11BB22CC33DD44EE550012 /* IncrementalPeakDetector.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA11BB22CC33DD44EE550013 /* IncrementalPeakDetector.swift */; };
+		AA11BB22CC33DD44EE550014 /* RollingMotionBuffer.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA11BB22CC33DD44EE550015 /* RollingMotionBuffer.swift */; };
+		AA11BB22CC33DD44EE550016 /* EventBasedDetector.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA11BB22CC33DD44EE550017 /* EventBasedDetector.swift */; };
+		AA11BB22CC33DD44EE550018 /* UnifiedDetector.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA11BB22CC33DD44EE550019 /* UnifiedDetector.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -106,6 +112,9 @@
 		6A7A65B02F147F4E00A58C9D /* WatchHomeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchHomeView.swift; sourceTree = "<group>"; };
 		6A9CD5A92F46B29F00BC0552 /* GolfWatch Watch App.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = "GolfWatch Watch App.entitlements"; sourceTree = "<group>"; };
 		6AACTIONS2F16000000000002 /* OptionsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OptionsView.swift; sourceTree = "<group>"; };
+		6ASETTV2F17000000000002 /* ViewSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ViewSettingsView.swift; sourceTree = "<group>"; };
+		6ASETTC2F17000000000002 /* ClubRecommendSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClubRecommendSettingsView.swift; sourceTree = "<group>"; };
+		6ASETTP2F17000000000002 /* PredictGreenSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PredictGreenSettingsView.swift; sourceTree = "<group>"; };
 		6AB09FE42F15D47F0087C4ED /* TypeEditorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TypeEditorView.swift; sourceTree = "<group>"; };
 		6AB09FE52F15D47F0087C4ED /* ClubManagementView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClubManagementView.swift; sourceTree = "<group>"; };
 		6AB09FE62F15D47F0087C4ED /* ClubSetEditorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClubSetEditorView.swift; sourceTree = "<group>"; };
@@ -126,8 +135,6 @@
 		6AB83CED2EDFB75100CE341C /* HolePlayView.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = HolePlayView.swift; sourceTree = "<group>"; };
 		6AB83CEF2EDFB78400CE341C /* LocationManager.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = LocationManager.swift; sourceTree = "<group>"; };
 		6AB83CF12EDFB79300CE341C /* Info.plist */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
-		6AC7D0B02F0DBE83005D4932 /* SatelliteCacheManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SatelliteCacheManager.swift; sourceTree = "<group>"; };
-		6AC7D0B22F0DC2CF005D4932 /* SatelliteTransferManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SatelliteTransferManager.swift; sourceTree = "<group>"; };
 		6AD5EA7A2EE3A5EF00DDDCF0 /* EditModeViews.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = EditModeViews.swift; sourceTree = "<group>"; };
 		6AD5EA7B2EE3A5EF00DDDCF0 /* HolePlayModifiers.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = HolePlayModifiers.swift; sourceTree = "<group>"; };
 		6AD5EA7C2EE3A5EF00DDDCF0 /* MapAnnotations.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = MapAnnotations.swift; sourceTree = "<group>"; };
@@ -150,6 +157,11 @@
 		AA11BB22CC33DD44EE550004 /* PuttDetector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PuttDetector.swift; sourceTree = "<group>"; };
 		AA11BB22CC33DD44EE550006 /* PartialDetector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PartialDetector.swift; sourceTree = "<group>"; };
 		AA11BB22CC33DD44EE550008 /* FullSwingDetector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FullSwingDetector.swift; sourceTree = "<group>"; };
+		AA11BB22CC33DD44EE550011 /* DetectionEvents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DetectionEvents.swift; sourceTree = "<group>"; };
+		AA11BB22CC33DD44EE550013 /* IncrementalPeakDetector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IncrementalPeakDetector.swift; sourceTree = "<group>"; };
+		AA11BB22CC33DD44EE550015 /* RollingMotionBuffer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RollingMotionBuffer.swift; sourceTree = "<group>"; };
+		AA11BB22CC33DD44EE550017 /* EventBasedDetector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EventBasedDetector.swift; sourceTree = "<group>"; };
+		AA11BB22CC33DD44EE550019 /* UnifiedDetector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UnifiedDetector.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -293,8 +305,6 @@
 		6AB83CE32EDFB12B00CE341C /* Services */ = {
 			isa = PBXGroup;
 			children = (
-				6AC7D0B22F0DC2CF005D4932 /* SatelliteTransferManager.swift */,
-				6AC7D0B02F0DBE83005D4932 /* SatelliteCacheManager.swift */,
 				6AD5EACD2EE47B0D00DDDCF0 /* WatchConnectivityManager.swift */,
 				6AB83CEF2EDFB78400CE341C /* LocationManager.swift */,
 				6AB83CE62EDFB19E00CE341C /* DataStore.swift */,
@@ -386,6 +396,11 @@
 				AA11BB22CC33DD44EE550004 /* PuttDetector.swift */,
 				AA11BB22CC33DD44EE550006 /* PartialDetector.swift */,
 				AA11BB22CC33DD44EE550008 /* FullSwingDetector.swift */,
+				AA11BB22CC33DD44EE550011 /* DetectionEvents.swift */,
+				AA11BB22CC33DD44EE550013 /* IncrementalPeakDetector.swift */,
+				AA11BB22CC33DD44EE550015 /* RollingMotionBuffer.swift */,
+				AA11BB22CC33DD44EE550017 /* EventBasedDetector.swift */,
+				AA11BB22CC33DD44EE550019 /* UnifiedDetector.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -397,6 +412,9 @@
 				6A27A5732EF7ABA000D64047 /* AddHoleNavigationView.swift */,
 				6A3253AA2EF2E9C80022829E /* EditHoleView.swift */,
 				6AACTIONS2F16000000000002 /* OptionsView.swift */,
+				6ASETTV2F17000000000002 /* ViewSettingsView.swift */,
+				6ASETTC2F17000000000002 /* ClubRecommendSettingsView.swift */,
+				6ASETTP2F17000000000002 /* PredictGreenSettingsView.swift */,
 				6AD5EAC62EE3B7EB00DDDCF0 /* ActiveRoundView.swift */,
 				0103B059B95381AAE6DFE359 /* AccelTestView.swift */,
 			);
@@ -512,7 +530,6 @@
 				6AD5EA7F2EE3A5F000DDDCF0 /* EditModeViews.swift in Sources */,
 				6AB83CE52EDFB17500CE341C /* Models.swift in Sources */,
 				6AD5EA822EE3A5F000DDDCF0 /* HoleOverlayControls.swift in Sources */,
-				6AC7D0B32F0DC2CF005D4932 /* SatelliteTransferManager.swift in Sources */,
 				6AB83CE72EDFB19E00CE341C /* DataStore.swift in Sources */,
 				292FA1B1CDCE4D5D80F8A5D6 /* PlayerStats.swift in Sources */,
 				5143D17BE2F7418983D61086 /* StatsEngine.swift in Sources */,
@@ -524,7 +541,6 @@
 				6AD5EACE2EE47B0D00DDDCF0 /* WatchConnectivityManager.swift in Sources */,
 				6AB83CE92EDFB1D000CE341C /* CourseListView.swift in Sources */,
 				19E70996A39C481D84518D00 /* TestFilesView.swift in Sources */,
-				6AC7D0B12F0DBE83005D4932 /* SatelliteCacheManager.swift in Sources */,
 				06FE06C8A5C9410FB47BCF49 /* RoundsHistoryView.swift in Sources */,
 				6AD5EA812EE3A5F000DDDCF0 /* MapAnnotations.swift in Sources */,
 				6C8B4EAC38754620BA3C4CB0 /* RoundDetailView.swift in Sources */,
@@ -555,6 +571,9 @@
 				6A7A65B12F147F4E00A58C9D /* WatchHomeView.swift in Sources */,
 				6A3253AB2EF2E9C80022829E /* EditHoleView.swift in Sources */,
 				6AACTIONS2F16000000000001 /* OptionsView.swift in Sources */,
+				6ASETTV2F17000000000001 /* ViewSettingsView.swift in Sources */,
+				6ASETTC2F17000000000001 /* ClubRecommendSettingsView.swift in Sources */,
+				6ASETTP2F17000000000001 /* PredictGreenSettingsView.swift in Sources */,
 				FAEE76F6916D6EF479166310 /* AccelTestView.swift in Sources */,
 				6AD5EAC72EE3B7EB00DDDCF0 /* ActiveRoundView.swift in Sources */,
 				6AD5EAB62EE3B79B00DDDCF0 /* GolfWatchApp.swift in Sources */,
@@ -564,6 +583,11 @@
 				AA11BB22CC33DD44EE550003 /* PuttDetector.swift in Sources */,
 				AA11BB22CC33DD44EE550005 /* PartialDetector.swift in Sources */,
 				AA11BB22CC33DD44EE550007 /* FullSwingDetector.swift in Sources */,
+				AA11BB22CC33DD44EE550010 /* DetectionEvents.swift in Sources */,
+				AA11BB22CC33DD44EE550012 /* IncrementalPeakDetector.swift in Sources */,
+				AA11BB22CC33DD44EE550014 /* RollingMotionBuffer.swift in Sources */,
+				AA11BB22CC33DD44EE550016 /* EventBasedDetector.swift in Sources */,
+				AA11BB22CC33DD44EE550018 /* UnifiedDetector.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

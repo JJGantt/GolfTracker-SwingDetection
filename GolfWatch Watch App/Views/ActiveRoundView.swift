@@ -29,8 +29,12 @@ struct ActiveRoundView: View {
     @State private var manualClubOverride = false       // True when user manually changed club
     @State private var onGreenOverride = false          // True when auto-switched to putter for current green
     @State private var navigateToAccelTest = false
+    @State private var navigateToViewSettings = false
+    @State private var navigateToClubRecommend = false
+    @State private var navigateToPredictGreen = false
     @State private var isAutoSelectingClub = false      // True when we're programmatically updating club
     @State private var autoAddedStrokeId: UUID?          // Tracks the auto-added stroke for undo/club update
+    @State private var lastAutoAddedLocation: CLLocationCoordinate2D?  // GPS of last auto-added stroke for practice replacement
     @FocusState private var isMapFocused: Bool
     @FocusState private var isMainViewFocused: Bool
 
@@ -488,8 +492,7 @@ struct ActiveRoundView: View {
         guard let swing = swing else { return .cyan }
         switch swing.swingType {
         case .putt: return .cyan
-        case .partial: return .green
-        case .fullSwing: return .orange
+        case .swing: return .orange
         }
     }
 
@@ -497,8 +500,7 @@ struct ActiveRoundView: View {
         guard let swing = swing else { return "" }
         switch swing.swingType {
         case .putt: return "PUTT"
-        case .partial: return "PARTIAL"
-        case .fullSwing: return "FULL"
+        case .swing: return "SWING"
         }
     }
 
@@ -800,6 +802,9 @@ struct ActiveRoundView: View {
                 isFullViewMode: $isFullViewMode,
                 manualClubOverride: $manualClubOverride,
                 navigateToAccelTest: $navigateToAccelTest,
+                navigateToViewSettings: $navigateToViewSettings,
+                navigateToClubRecommend: $navigateToClubRecommend,
+                navigateToPredictGreen: $navigateToPredictGreen,
                 isPlacingPenalty: $isPlacingPenalty,
                 updateMapPosition: updateMapPosition,
                 updateNoHoleMapPosition: updateNoHoleMapPosition,
@@ -816,8 +821,26 @@ struct ActiveRoundView: View {
         .sheet(isPresented: $showingDistanceEditor) {
             ClubDistanceEditorView(store: store)
         }
-        .navigationDestination(isPresented: $navigateToAccelTest) {
+        .sheet(isPresented: $navigateToAccelTest) {
             AccelTestView()
+        }
+        .sheet(isPresented: $navigateToViewSettings) {
+            ViewSettingsView(
+                isFullViewMode: $isFullViewMode,
+                updateMapPosition: updateMapPosition,
+                updateNoHoleMapPosition: updateNoHoleMapPosition,
+                hasCurrentHole: store.currentHole != nil
+            )
+        }
+        .sheet(isPresented: $navigateToClubRecommend) {
+            ClubRecommendSettingsView(
+                store: store,
+                manualClubOverride: $manualClubOverride,
+                showingDistanceEditor: $showingDistanceEditor
+            )
+        }
+        .sheet(isPresented: $navigateToPredictGreen) {
+            PredictGreenSettingsView(store: store)
         }
         .onAppear {
             print("⌚ [ActiveRoundView] View appeared")
@@ -917,6 +940,8 @@ struct ActiveRoundView: View {
             // Watch syncs hole index from phone - update map when it changes
             manualClubOverride = false  // Reset manual override on hole change
             onGreenOverride = false
+            lastAutoAddedLocation = nil
+            autoAddedStrokeId = nil
             updateMapPosition()
         }
         .onChange(of: store.currentHole) { _, _ in
@@ -1191,8 +1216,17 @@ struct ActiveRoundView: View {
                     var coords = targetCoordinatesBinding.wrappedValue
                     let tappedLocation = CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude)
 
-                    // Check if tap is within ~6 meters of any existing target
-                    let deletionRadius: Double = 6.0 // meters
+                    // Calculate deletion radius dynamically based on zoom level
+                    // Convert a 30pt screen radius to meters at the current zoom
+                    let tapPixelRadius: CGFloat = 30
+                    let offsetPoint = CGPoint(x: screenLocation.x + tapPixelRadius, y: screenLocation.y)
+                    let deletionRadius: Double
+                    if let offsetCoord = proxy.convert(offsetPoint, from: .local) {
+                        let offsetLocation = CLLocation(latitude: offsetCoord.latitude, longitude: offsetCoord.longitude)
+                        deletionRadius = max(tappedLocation.distance(from: offsetLocation), 6.0)
+                    } else {
+                        deletionRadius = 6.0 // fallback
+                    }
                     var deletedIndex: Int?
 
                     for (index, targetCoord) in coords.enumerated() {
@@ -1374,12 +1408,16 @@ struct ActiveRoundView: View {
             return
         }
 
-        store.addStroke(
+        let strokeId = store.addStroke(
             clubId: club.id,
             trajectoryHeading: trajectoryHeading,
             coordinate: swing.location,
             acceleration: swing.peakAcceleration
         )
+
+        if let strokeId = strokeId, let meta = swingDetector.lastDetectionMetadata {
+            swingDetector.cacheDetectionMetadata(strokeId: strokeId, metadata: meta)
+        }
 
         manualClubOverride = false
         applyClubPrediction()
@@ -1394,6 +1432,8 @@ struct ActiveRoundView: View {
 
     /// Auto-add a stroke from the detected swing without clearing the overlay.
     /// Called by onChange when autoAdd is enabled.
+    /// When ignorePractice is ON and the swing type is not putt, replaces the previous
+    /// auto-added stroke if the user hasn't moved (within ignorePracticeRadius yards).
     private func autoAddStrokeFromSwing() {
         guard let swing = swingDetector.lastDetectedSwing else { return }
         guard store.currentRound != nil, let hole = store.currentHole else { return }
@@ -1406,6 +1446,18 @@ struct ActiveRoundView: View {
 
         guard let club = selectedClub else { return }
 
+        // Practice swing replacement: delete previous auto-added stroke if same location
+        if autoAddedStrokeId != nil,
+           let prevLoc = lastAutoAddedLocation,
+           swingDetector.shouldReplacePreviousStroke(
+               newLocation: swing.location,
+               previousLocation: prevLoc,
+               swingType: swing.swingType
+           ) {
+            store.deleteLastStroke()
+            print("⌚ [AutoAdd] Replaced previous stroke (practice swing, same location)")
+        }
+
         let strokeId = store.addStroke(
             clubId: club.id,
             trajectoryHeading: trajectoryHeading,
@@ -1413,10 +1465,15 @@ struct ActiveRoundView: View {
             acceleration: swing.peakAcceleration
         )
 
+        if let strokeId = strokeId, let meta = swingDetector.lastDetectionMetadata {
+            swingDetector.cacheDetectionMetadata(strokeId: strokeId, metadata: meta)
+        }
+
         manualClubOverride = false
         applyClubPrediction()
         swingDetector.capturedAimDirection = nil
         autoAddedStrokeId = strokeId
+        lastAutoAddedLocation = swing.location
 
         // Same feedback as normal add
         WKInterfaceDevice.current().play(.success)
@@ -1426,7 +1483,8 @@ struct ActiveRoundView: View {
 
     /// Undo the most recently auto-added stroke and dismiss the overlay.
     private func undoAutoAddedStroke() {
-        if autoAddedStrokeId != nil {
+        if let strokeId = autoAddedStrokeId {
+            swingDetector.logUndoEvent(strokeId: strokeId)
             store.deleteLastStroke()
             autoAddedStrokeId = nil
             print("⌚ [AutoAdd] Undid auto-added stroke (false detection)")
@@ -1587,10 +1645,13 @@ struct ClubDistanceEditorView: View {
     @State private var editingDistance: Double = 100
     @FocusState private var isCrownFocused: Bool
 
-    // Get enabled clubs with their type names
+    // Get enabled clubs with their type names (excludes clubs not eligible for prediction)
     private var enabledClubs: [(club: ClubData, typeName: String)] {
         store.availableClubs.compactMap { club in
             guard let clubType = store.clubTypes.first(where: { $0.id == club.clubTypeId }) else {
+                return nil
+            }
+            guard !ClubPredictionManager.excludedFromPrediction.contains(clubType.name) else {
                 return nil
             }
             return (club, clubType.name)

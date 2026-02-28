@@ -236,6 +236,13 @@ class MotionDataHandler: ObservableObject {
         let outcome = metadata["outcome"] as? String
         let finalState = metadata["finalState"] as? String ?? ""
         let timestamp = Date().timeIntervalSince1970
+        let receivedName = url.lastPathComponent
+        let sourceFileName: String = {
+            if receivedName.hasPrefix("received_") {
+                return String(receivedName.dropFirst("received_".count))
+            }
+            return receivedName
+        }()
 
         // Determine file prefix and header based on type/dataType
         let (prefix, header): (String, String)
@@ -256,13 +263,47 @@ class MotionDataHandler: ObservableObject {
         case ("continuousLog", _):
             prefix = "continuous_log"
             header = ""
+        case ("rollingSnapshot", "deviceMotion"):
+            prefix = "snapshot"
+            header = "Rolling Buffer Snapshot (Device Motion @ 100Hz)\nSample Count: \(sampleCount)\n\n"
+        case ("rollingSnapshot", "rawAccel"):
+            prefix = "snapshot_raw"
+            header = "Rolling Buffer Snapshot (Raw Accelerometer @ 800Hz)\nSample Count: \(sampleCount)\n\n"
+        case ("detectionEventData", "deviceMotion"):
+            prefix = "detect_event"
+            header = "Detection Event (Device Motion @ 100Hz)\nSample Count: \(sampleCount)\n\n"
+        case ("detectionEventData", "rawAccel"):
+            prefix = "detect_event_raw"
+            header = "Detection Event (Raw Accelerometer @ 800Hz)\nSample Count: \(sampleCount)\n\n"
+        case ("undoMotionData", "deviceMotion"):
+            prefix = "undo_motion"
+            header = "Undo Motion Data (Device Motion @ 100Hz)\nSample Count: \(sampleCount)\n\n"
+        case ("undoMotionData", "rawAccel"):
+            prefix = "undo_motion_raw"
+            header = "Undo Motion Data (Raw Accelerometer @ 800Hz)\nSample Count: \(sampleCount)\n\n"
         default:
             print("📱 [MotionDataHandler] Unknown file type '\(fileType)/\(dataType)', skipping")
             return
         }
 
         let ext = fileType == "continuousLog" ? "txt" : "csv"
-        let fileName = "\(prefix)_\(Int(timestamp)).\(ext)"
+        let fallbackName = "\(prefix)_\(Int(timestamp)).\(ext)"
+        let candidateName: String = {
+            guard !sourceFileName.isEmpty else { return fallbackName }
+            guard sourceFileName.hasSuffix(".\(ext)") else { return fallbackName }
+            return sourceFileName
+        }()
+        let fileName: String = {
+            let base = (candidateName as NSString).deletingPathExtension
+            let fileExt = (candidateName as NSString).pathExtension
+            var name = candidateName
+            var i = 1
+            while FileManager.default.fileExists(atPath: testFilesDirectory.appendingPathComponent(name).path) {
+                name = "\(base)_\(i).\(fileExt)"
+                i += 1
+            }
+            return name
+        }()
         let destURL = testFilesDirectory.appendingPathComponent(fileName)
 
         do {
@@ -309,152 +350,6 @@ class MotionDataHandler: ObservableObject {
 
     private func saveTestFiles() {
         guard let data = try? JSONEncoder().encode(testFiles) else { return }
-        try? data.write(to: metadataURL)
-    }
-}
-
-// MARK: - SatelliteLogFile
-
-struct SatelliteLogFile: Identifiable, Codable {
-    let id: UUID
-    let date: Date
-    let roundId: UUID
-    let courseName: String
-    let fileName: String
-
-    var displayName: String {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "MMM d, h:mm a"
-        return "\(formatter.string(from: date)) - \(courseName)"
-    }
-}
-
-// MARK: - SatelliteLogHandler
-
-class SatelliteLogHandler: ObservableObject {
-    static let shared = SatelliteLogHandler()
-
-    @Published var logFiles: [SatelliteLogFile] = []
-
-    private let logFilesDirectory: URL
-    private let metadataURL: URL
-    private var currentLogFile: URL?
-    private var currentRoundId: UUID?
-
-    init() {
-        // Create log files directory in Documents
-        let documentsDirectory = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-        logFilesDirectory = documentsDirectory.appendingPathComponent("SatelliteLogs")
-        metadataURL = documentsDirectory.appendingPathComponent("satellite_logs_metadata.json")
-
-        // Create directory if needed
-        try? FileManager.default.createDirectory(at: logFilesDirectory, withIntermediateDirectories: true)
-
-        // Load existing log files
-        loadLogFiles()
-    }
-
-    func startNewLog(roundId: UUID, courseName: String) {
-        print("🚀🚀🚀 [SatelliteLogHandler] startNewLog called for \(courseName)")
-
-        // Create new log file for this round
-        let fileName = "satellite_log_\(Date().timeIntervalSince1970).txt"
-        let fileURL = logFilesDirectory.appendingPathComponent(fileName)
-        currentLogFile = fileURL
-        currentRoundId = roundId
-
-        print("🚀 [SatelliteLogHandler] Log file path: \(fileURL.path)")
-
-        // Write header
-        let header = """
-        ═══════════════════════════════════════════════════════
-        SATELLITE IMAGERY LOG
-        ═══════════════════════════════════════════════════════
-        Round Started: \(Date())
-        Course: \(courseName)
-        Round ID: \(roundId)
-        ═══════════════════════════════════════════════════════
-
-
-        """
-
-        do {
-            try header.write(to: fileURL, atomically: true, encoding: .utf8)
-            print("🚀 [SatelliteLogHandler] Successfully wrote log file header")
-        } catch {
-            print("❌ [SatelliteLogHandler] Failed to write log file: \(error)")
-        }
-
-        // Create metadata entry
-        let logFile = SatelliteLogFile(
-            id: UUID(),
-            date: Date(),
-            roundId: roundId,
-            courseName: courseName,
-            fileName: fileName
-        )
-
-        logFiles.append(logFile)
-        print("🚀 [SatelliteLogHandler] Added to logFiles array, now have \(logFiles.count) logs")
-
-        saveLogFiles()
-        print("🚀 [SatelliteLogHandler] Saved log files metadata")
-
-        log("📱 Satellite log started for round on \(courseName)")
-    }
-
-    func log(_ message: String) {
-        guard let fileURL = currentLogFile else {
-            print("❌ [SatelliteLogHandler] log() called but currentLogFile is nil!")
-            return
-        }
-
-        let timestamp = DateFormatter.localizedString(from: Date(), dateStyle: .none, timeStyle: .medium)
-        let logEntry = "[\(timestamp)] \(message)\n"
-
-        // Append to file
-        do {
-            if let fileHandle = try? FileHandle(forWritingTo: fileURL) {
-                fileHandle.seekToEndOfFile()
-                if let data = logEntry.data(using: .utf8) {
-                    fileHandle.write(data)
-                }
-                fileHandle.closeFile()
-            } else {
-                // File doesn't exist, create it with this entry
-                try logEntry.write(to: fileURL, atomically: true, encoding: .utf8)
-            }
-        } catch {
-            print("❌ [SatelliteLogHandler] Failed to write log entry: \(error)")
-        }
-
-        // Also print to console for debugging in Xcode
-        print(message)
-    }
-
-    func getFileURL(for logFile: SatelliteLogFile) -> URL {
-        return logFilesDirectory.appendingPathComponent(logFile.fileName)
-    }
-
-    func deleteLogFiles(_ logFilesToDelete: [SatelliteLogFile]) {
-        for logFile in logFilesToDelete {
-            let fileURL = getFileURL(for: logFile)
-            try? FileManager.default.removeItem(at: fileURL)
-            logFiles.removeAll { $0.id == logFile.id }
-        }
-        saveLogFiles()
-    }
-
-    private func loadLogFiles() {
-        guard let data = try? Data(contentsOf: metadataURL),
-              let files = try? JSONDecoder().decode([SatelliteLogFile].self, from: data) else {
-            return
-        }
-        logFiles = files
-    }
-
-    private func saveLogFiles() {
-        guard let data = try? JSONEncoder().encode(logFiles) else { return }
         try? data.write(to: metadataURL)
     }
 }
