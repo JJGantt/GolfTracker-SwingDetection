@@ -16,6 +16,8 @@ class LocationManager: NSObject, ObservableObject {
     @Published var authorizationStatus: CLAuthorizationStatus = .notDetermined
     @Published var errorMessage: String?
     @Published var isTestModeEnabled: Bool = false
+    @Published var isLowPowerMode: Bool = false
+    private var lowPowerTimer: Timer?
 
     private var forcedTestLocation: CLLocation {
         CLLocation(latitude: Self.testCoordinate.latitude, longitude: Self.testCoordinate.longitude)
@@ -122,6 +124,28 @@ class LocationManager: NSObject, ObservableObject {
         #if os(iOS) || os(watchOS)
         locationManager.stopUpdatingHeading()
         #endif
+        exitLowPowerMode()
+    }
+
+    func enterLowPowerMode() {
+        guard !isLowPowerMode, !isTestModeEnabled else { return }
+        isLowPowerMode = true
+        locationManager.stopUpdatingLocation()
+        // Single fix immediately, then every 30s
+        locationManager.requestLocation()
+        lowPowerTimer = Timer.scheduledTimer(withTimeInterval: 30.0, repeats: true) { [weak self] _ in
+            self?.locationManager.requestLocation()
+        }
+        print("[LocationManager] Entered low power mode (30s periodic fixes)")
+    }
+
+    func exitLowPowerMode() {
+        guard isLowPowerMode else { return }
+        lowPowerTimer?.invalidate()
+        lowPowerTimer = nil
+        isLowPowerMode = false
+        locationManager.startUpdatingLocation()
+        print("[LocationManager] Exited low power mode (continuous updates)")
     }
 
     func distance(to coordinate: CLLocationCoordinate2D) -> CLLocationDistance? {

@@ -9,6 +9,7 @@ struct ActiveRoundView: View {
     @StateObject private var workoutManager = WorkoutManager.shared
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.dismiss) private var dismiss
+    @AppStorage("minimalScreenMode") private var minimalScreenMode: Bool = false
     @State private var selectedClubIndex: Double = 0
     @State private var position: MapCameraPosition = .automatic
     @State private var showingRecordedFeedback = false
@@ -32,8 +33,15 @@ struct ActiveRoundView: View {
     @State private var navigateToViewSettings = false
     @State private var navigateToClubRecommend = false
     @State private var navigateToPredictGreen = false
+
+    enum SettingsSheet: String, Identifiable {
+        case viewSettings, clubRecommend, accelTest, predictGreen
+        var id: String { rawValue }
+    }
+    @State private var activeSettingsSheet: SettingsSheet?
     @State private var isAutoSelectingClub = false      // True when we're programmatically updating club
     @State private var autoAddedStrokeId: UUID?          // Tracks the auto-added stroke for undo/club update
+    @State private var overlayClubIndex: Double = 0     // Crown-controlled club shown in auto-add overlay
     @State private var lastAutoAddedLocation: CLLocationCoordinate2D?  // GPS of last auto-added stroke for practice replacement
     @FocusState private var isMapFocused: Bool
     @FocusState private var isMainViewFocused: Bool
@@ -45,6 +53,12 @@ struct ActiveRoundView: View {
     private var selectedClub: ClubData? {
         guard !clubs.isEmpty else { return nil }
         let index = Int(selectedClubIndex.rounded()) % clubs.count
+        return clubs[index]
+    }
+
+    private var overlaySelectedClub: ClubData? {
+        guard !clubs.isEmpty else { return nil }
+        let index = Int(overlayClubIndex.rounded()) % clubs.count
         return clubs[index]
     }
 
@@ -184,6 +198,8 @@ struct ActiveRoundView: View {
                     .foregroundColor(.white)
             } else {
                 clubSelectorOverlayModern(clubFontSize: clubFontSize)
+                    // Dim when overlay is open — crown is controlling the overlay club, not this
+                    .opacity(autoAddedStrokeId != nil ? 0.35 : 1.0)
             }
         }
         // watchOS 10: club selector is shown in buttonsOverlay via legacyClubSelector()
@@ -553,23 +569,20 @@ struct ActiveRoundView: View {
                 .buttonStyle(PlainButtonStyle())
                 .focusable(false)
                 .onAppear {
-                    // This single change starts the forever animation.
                     isPulsing = true
                 }
                 .onDisappear {
-                    // Optional: helps if the view reappears and you want it to restart cleanly.
                     isPulsing = false
                 }
 
-                // Dismiss button - smaller X below; in auto_add mode, saves current club to the stroke
+                // Dismiss button - saves overlay club to the stroke and closes
                 Button(action: {
-                    if swingDetector.autoAdd, let strokeId = autoAddedStrokeId, let club = selectedClub {
-                        store.updateStrokeClub(strokeId: strokeId, clubId: club.id)
-                        autoAddedStrokeId = nil
-                    }
+                    commitOverlayClub()
+                    autoAddedStrokeId = nil
                     swingDetector.clearLastSwing()
                     WKInterfaceDevice.current().play(.click)
                     isMainViewFocused = true
+                    applyClubPrediction()
                 }) {
                     ZStack {
                         Circle()
@@ -584,10 +597,24 @@ struct ActiveRoundView: View {
                 .buttonStyle(PlainButtonStyle())
                 .focusable(false)
 
-                // Swing type label
-                Text(swingTypeLabel(swing))
-                    .font(.system(size: 10, weight: .bold, design: .monospaced))
-                    .foregroundColor(typeColor)
+                // Overlay info: club (crown-controlled) + rot mag
+                if swingDetector.autoAdd {
+                    VStack(spacing: 1) {
+                        Text(overlaySelectedClub.map { store.getTypeName(for: $0) } ?? "—")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundColor(.white)
+                        Text(String(format: "%.2f rot", swing.fsPeakRotMag))
+                            .font(.system(size: 9, weight: .regular, design: .monospaced))
+                            .foregroundColor(.white.opacity(0.65))
+                    }
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 3)
+                    .background(
+                        RoundedRectangle(cornerRadius: 5)
+                            .fill(.ultraThinMaterial)
+                            .opacity(0.9)
+                    )
+                }
             }
             .offset(y: -15)
             .transition(.scale.combined(with: .opacity))
@@ -722,14 +749,16 @@ struct ActiveRoundView: View {
         let buttonSize = geometry.size.width * 0.25
         let iconSize = buttonSize * 0.45
         let clubFontSize = geometry.size.width * 0.055
+        let needsInteractiveMap = isPlacingTarget || isPlacingPenalty
 
         ZStack {
-            // Full screen map
-            if let hole = store.currentHole {
+            // Full screen map or black background
+            if minimalScreenMode && !needsInteractiveMap {
+                Color.black.ignoresSafeArea()
+            } else if let hole = store.currentHole {
                 mapView(for: hole)
                     .ignoresSafeArea()
             } else {
-                // No hole defined - show map centered on user (briefly, before navigating to AddHoleNavigationView)
                 noHoleMapView()
                     .ignoresSafeArea()
             }
@@ -739,6 +768,26 @@ struct ActiveRoundView: View {
 
             // Info overlay (top left) - distance and hole info
             holeInfoOverlay
+
+            // Minimal mode toggle (left side, middle)
+            VStack {
+                Spacer()
+                Button(action: {
+                    minimalScreenMode.toggle()
+                    WKInterfaceDevice.current().play(.click)
+                }) {
+                    Image(systemName: minimalScreenMode ? "map" : "map.fill")
+                        .font(.system(size: 12))
+                        .foregroundColor(.white.opacity(0.7))
+                        .frame(width: 28, height: 28)
+                        .background(Color.black.opacity(0.4))
+                        .clipShape(Circle())
+                }
+                .buttonStyle(PlainButtonStyle())
+                Spacer()
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.leading, 4)
 
             // Buttons overlay (bottom)
             buttonsOverlay(buttonSize: buttonSize, iconSize: iconSize)
@@ -789,7 +838,7 @@ struct ActiveRoundView: View {
                 .navigationBarBackButtonHidden(true)
                 .focusable()
                 .focused($isMainViewFocused)
-                .modifier(ClubCrownRotationModifier(selectedClubIndex: $selectedClubIndex, clubCount: clubs.count))
+                .modifier(ClubCrownRotationModifier(selectedClubIndex: autoAddedStrokeId != nil ? $overlayClubIndex : $selectedClubIndex, clubCount: clubs.count))
                 .digitalCrownAccessory(.hidden)
             }
         }
@@ -821,26 +870,30 @@ struct ActiveRoundView: View {
         .sheet(isPresented: $showingDistanceEditor) {
             ClubDistanceEditorView(store: store)
         }
-        .sheet(isPresented: $navigateToAccelTest) {
-            AccelTestView()
-        }
-        .sheet(isPresented: $navigateToViewSettings) {
-            ViewSettingsView(
-                isFullViewMode: $isFullViewMode,
-                updateMapPosition: updateMapPosition,
-                updateNoHoleMapPosition: updateNoHoleMapPosition,
-                hasCurrentHole: store.currentHole != nil
-            )
-        }
-        .sheet(isPresented: $navigateToClubRecommend) {
-            ClubRecommendSettingsView(
-                store: store,
-                manualClubOverride: $manualClubOverride,
-                showingDistanceEditor: $showingDistanceEditor
-            )
-        }
-        .sheet(isPresented: $navigateToPredictGreen) {
-            PredictGreenSettingsView(store: store)
+        .onChange(of: navigateToViewSettings) { if navigateToViewSettings { navigateToViewSettings = false; activeSettingsSheet = .viewSettings } }
+        .onChange(of: navigateToClubRecommend) { if navigateToClubRecommend { navigateToClubRecommend = false; activeSettingsSheet = .clubRecommend } }
+        .onChange(of: navigateToAccelTest) { if navigateToAccelTest { navigateToAccelTest = false; activeSettingsSheet = .accelTest } }
+        .onChange(of: navigateToPredictGreen) { if navigateToPredictGreen { navigateToPredictGreen = false; activeSettingsSheet = .predictGreen } }
+        .sheet(item: $activeSettingsSheet) { sheet in
+            switch sheet {
+            case .accelTest:
+                AccelTestView()
+            case .viewSettings:
+                ViewSettingsView(
+                    isFullViewMode: $isFullViewMode,
+                    updateMapPosition: updateMapPosition,
+                    updateNoHoleMapPosition: updateNoHoleMapPosition,
+                    hasCurrentHole: store.currentHole != nil
+                )
+            case .clubRecommend:
+                ClubRecommendSettingsView(
+                    store: store,
+                    manualClubOverride: $manualClubOverride,
+                    showingDistanceEditor: $showingDistanceEditor
+                )
+            case .predictGreen:
+                PredictGreenSettingsView(store: store)
+            }
         }
         .onAppear {
             print("⌚ [ActiveRoundView] View appeared")
@@ -917,8 +970,10 @@ struct ActiveRoundView: View {
         }
         .onChange(of: distanceToHole) { _, newDistance in
             // Auto-predict club based on distance if enabled and not manually overridden
+            // Don't update while auto-add overlay is showing — user may be reviewing last club
             guard !manualClubOverride,
                   !onGreenOverride,
+                  autoAddedStrokeId == nil,
                   store.clubPredictionMode != .off,
                   let distance = newDistance else { return }
 
@@ -942,6 +997,7 @@ struct ActiveRoundView: View {
             onGreenOverride = false
             lastAutoAddedLocation = nil
             autoAddedStrokeId = nil
+            locationManager.exitLowPowerMode()
             updateMapPosition()
         }
         .onChange(of: store.currentHole) { _, _ in
@@ -1261,6 +1317,13 @@ struct ActiveRoundView: View {
 
     // MARK: - Actions
 
+    /// Commits the overlay's crown-selected club to the auto-added stroke.
+    /// Called on dismiss (X) and at the start of any new auto-add (covers "dismissed by new stroke").
+    private func commitOverlayClub() {
+        guard let strokeId = autoAddedStrokeId, let club = overlaySelectedClub else { return }
+        store.updateStrokeClub(strokeId: strokeId, clubId: club.id)
+    }
+
     private func applyClubPrediction() {
         guard store.clubPredictionMode != .off,
               let distance = distanceToHole else { return }
@@ -1283,6 +1346,11 @@ struct ActiveRoundView: View {
         guard let club = selectedClub else { return }
         let newTypeName = store.getTypeName(for: club)
         swingDetector.selectedClubTypeName = newTypeName
+
+        // GPS low power when putter is selected
+        if newTypeName == "Putt" {
+            locationManager.enterLowPowerMode()
+        }
     }
 
     private func toggleAimDirection() {
@@ -1439,6 +1507,9 @@ struct ActiveRoundView: View {
         guard store.currentRound != nil, let hole = store.currentHole else { return }
         guard !store.isHoleCompleted(hole.number) else { return }
 
+        // Commit the overlay club from any previous auto-added stroke before processing this new one
+        commitOverlayClub()
+
         var trajectoryHeading = swing.trajectoryHeading
         if trajectoryHeading == nil, let holeCoord = hole.coordinate {
             trajectoryHeading = calculateBearing(from: swing.location, to: holeCoord)
@@ -1470,10 +1541,11 @@ struct ActiveRoundView: View {
         }
 
         manualClubOverride = false
-        applyClubPrediction()
         swingDetector.capturedAimDirection = nil
         autoAddedStrokeId = strokeId
         lastAutoAddedLocation = swing.location
+        // Initialize overlay club to what was just saved — crown controls this while overlay is open
+        overlayClubIndex = selectedClubIndex
 
         // Same feedback as normal add
         WKInterfaceDevice.current().play(.success)
@@ -1492,6 +1564,7 @@ struct ActiveRoundView: View {
         swingDetector.clearLastSwing()
         WKInterfaceDevice.current().play(.click)
         isMainViewFocused = true
+        applyClubPrediction()
     }
 
     private func deleteLastStroke() {

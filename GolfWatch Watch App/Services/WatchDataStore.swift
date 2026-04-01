@@ -33,7 +33,7 @@ class WatchDataStore: ObservableObject {
         }
     }
 
-    @Published var clubPredictionMode: ClubPredictionMode = .off {
+    @Published var clubPredictionMode: ClubPredictionMode = .manual {
         didSet {
             UserDefaults.standard.set(clubPredictionMode.rawValue, forKey: "clubPredictionMode")
         }
