@@ -21,10 +21,8 @@
 		6A6298202F0A0A3700303CB6 /* StrokeDetailsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6A62981F2F0A0A3700303CB6 /* StrokeDetailsView.swift */; };
 		6A6298212F0A0A3700303CB6 /* FloatingButtonsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6A62981E2F0A0A3700303CB6 /* FloatingButtonsView.swift */; };
 		6A7A65B12F147F4E00A58C9D /* WatchHomeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6A7A65B02F147F4E00A58C9D /* WatchHomeView.swift */; };
+		6A9A2C582F7DED6B008ADD6B /* ActiveRoundConfiguredView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6A9A2C572F7DED6B008ADD6B /* ActiveRoundConfiguredView.swift */; };
 		6AACTIONS2F16000000000001 /* OptionsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6AACTIONS2F16000000000002 /* OptionsView.swift */; };
-		6ASETTV2F17000000000001 /* ViewSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6ASETTV2F17000000000002 /* ViewSettingsView.swift */; };
-		6ASETTC2F17000000000001 /* ClubRecommendSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6ASETTC2F17000000000002 /* ClubRecommendSettingsView.swift */; };
-		6ASETTP2F17000000000001 /* PredictGreenSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6ASETTP2F17000000000002 /* PredictGreenSettingsView.swift */; };
 		6AB09FE92F15D47F0087C4ED /* ClubSetEditorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6AB09FE62F15D47F0087C4ED /* ClubSetEditorView.swift */; };
 		6AB09FEA2F15D47F0087C4ED /* HomeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6AB09FE72F15D47F0087C4ED /* HomeView.swift */; };
 		6AB09FEB2F15D47F0087C4ED /* ClubManagementView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6AB09FE52F15D47F0087C4ED /* ClubManagementView.swift */; };
@@ -57,10 +55,11 @@
 		6AD5EACC2EE3B83600DDDCF0 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6AB83CE42EDFB17500CE341C /* Models.swift */; };
 		6AD5EACE2EE47B0D00DDDCF0 /* WatchConnectivityManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6AD5EACD2EE47B0D00DDDCF0 /* WatchConnectivityManager.swift */; };
 		6AD5EACF2EE47B1500DDDCF0 /* WatchConnectivityManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6AD5EACD2EE47B0D00DDDCF0 /* WatchConnectivityManager.swift */; };
+		6ASETTC2F17000000000001 /* ClubRecommendSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6ASETTC2F17000000000002 /* ClubRecommendSettingsView.swift */; };
+		6ASETTP2F17000000000001 /* PredictGreenSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6ASETTP2F17000000000002 /* PredictGreenSettingsView.swift */; };
+		6ASETTV2F17000000000001 /* ViewSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6ASETTV2F17000000000002 /* ViewSettingsView.swift */; };
 		6C8B4EAC38754620BA3C4CB0 /* RoundDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 70A60D673360436FB2457C24 /* RoundDetailView.swift */; };
 		7E4B930B6ED84C57A8AB3034 /* StatsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 65E4113738034AF2B535116F /* StatsView.swift */; };
-		E4F925C1F0D4499B99626884 /* CourseDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B06522DFDE374AFFB8DC4411 /* CourseDetailView.swift */; };
-		FAEE76F6916D6EF479166310 /* AccelTestView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0103B059B95381AAE6DFE359 /* AccelTestView.swift */; };
 		AA11BB22CC33DD44EE550001 /* SwingAlgorithmProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA11BB22CC33DD44EE550002 /* SwingAlgorithmProtocol.swift */; };
 		AA11BB22CC33DD44EE550003 /* PuttDetector.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA11BB22CC33DD44EE550004 /* PuttDetector.swift */; };
 		AA11BB22CC33DD44EE550005 /* PartialDetector.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA11BB22CC33DD44EE550006 /* PartialDetector.swift */; };
@@ -70,6 +69,8 @@
 		AA11BB22CC33DD44EE550014 /* RollingMotionBuffer.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA11BB22CC33DD44EE550015 /* RollingMotionBuffer.swift */; };
 		AA11BB22CC33DD44EE550016 /* EventBasedDetector.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA11BB22CC33DD44EE550017 /* EventBasedDetector.swift */; };
 		AA11BB22CC33DD44EE550018 /* UnifiedDetector.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA11BB22CC33DD44EE550019 /* UnifiedDetector.swift */; };
+		E4F925C1F0D4499B99626884 /* CourseDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B06522DFDE374AFFB8DC4411 /* CourseDetailView.swift */; };
+		FAEE76F6916D6EF479166310 /* AccelTestView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0103B059B95381AAE6DFE359 /* AccelTestView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -110,11 +111,9 @@
 		6A62981E2F0A0A3700303CB6 /* FloatingButtonsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FloatingButtonsView.swift; sourceTree = "<group>"; };
 		6A62981F2F0A0A3700303CB6 /* StrokeDetailsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StrokeDetailsView.swift; sourceTree = "<group>"; };
 		6A7A65B02F147F4E00A58C9D /* WatchHomeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchHomeView.swift; sourceTree = "<group>"; };
+		6A9A2C572F7DED6B008ADD6B /* ActiveRoundConfiguredView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ActiveRoundConfiguredView.swift; sourceTree = "<group>"; };
 		6A9CD5A92F46B29F00BC0552 /* GolfWatch Watch App.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = "GolfWatch Watch App.entitlements"; sourceTree = "<group>"; };
 		6AACTIONS2F16000000000002 /* OptionsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OptionsView.swift; sourceTree = "<group>"; };
-		6ASETTV2F17000000000002 /* ViewSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ViewSettingsView.swift; sourceTree = "<group>"; };
-		6ASETTC2F17000000000002 /* ClubRecommendSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClubRecommendSettingsView.swift; sourceTree = "<group>"; };
-		6ASETTP2F17000000000002 /* PredictGreenSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PredictGreenSettingsView.swift; sourceTree = "<group>"; };
 		6AB09FE42F15D47F0087C4ED /* TypeEditorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TypeEditorView.swift; sourceTree = "<group>"; };
 		6AB09FE52F15D47F0087C4ED /* ClubManagementView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClubManagementView.swift; sourceTree = "<group>"; };
 		6AB09FE62F15D47F0087C4ED /* ClubSetEditorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClubSetEditorView.swift; sourceTree = "<group>"; };
@@ -148,11 +147,11 @@
 		6AD5EAC62EE3B7EB00DDDCF0 /* ActiveRoundView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ActiveRoundView.swift; sourceTree = "<group>"; };
 		6AD5EAC82EE3B80700DDDCF0 /* WatchDataStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchDataStore.swift; sourceTree = "<group>"; };
 		6AD5EACD2EE47B0D00DDDCF0 /* WatchConnectivityManager.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = WatchConnectivityManager.swift; sourceTree = "<group>"; };
+		6ASETTC2F17000000000002 /* ClubRecommendSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClubRecommendSettingsView.swift; sourceTree = "<group>"; };
+		6ASETTP2F17000000000002 /* PredictGreenSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PredictGreenSettingsView.swift; sourceTree = "<group>"; };
+		6ASETTV2F17000000000002 /* ViewSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ViewSettingsView.swift; sourceTree = "<group>"; };
 		70A60D673360436FB2457C24 /* RoundDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RoundDetailView.swift; sourceTree = "<group>"; };
 		8713ACF846B0498E97AAC629 /* PlayerStats.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlayerStats.swift; sourceTree = "<group>"; };
-		B06522DFDE374AFFB8DC4411 /* CourseDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CourseDetailView.swift; sourceTree = "<group>"; };
-		ED2724CFBFA6421AA2088B76 /* InRoundScorecardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InRoundScorecardView.swift; sourceTree = "<group>"; };
-		EF978CD92BED4BEA9163F87B /* TestFilesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TestFilesView.swift; sourceTree = "<group>"; };
 		AA11BB22CC33DD44EE550002 /* SwingAlgorithmProtocol.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SwingAlgorithmProtocol.swift; sourceTree = "<group>"; };
 		AA11BB22CC33DD44EE550004 /* PuttDetector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PuttDetector.swift; sourceTree = "<group>"; };
 		AA11BB22CC33DD44EE550006 /* PartialDetector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PartialDetector.swift; sourceTree = "<group>"; };
@@ -162,6 +161,9 @@
 		AA11BB22CC33DD44EE550015 /* RollingMotionBuffer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RollingMotionBuffer.swift; sourceTree = "<group>"; };
 		AA11BB22CC33DD44EE550017 /* EventBasedDetector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EventBasedDetector.swift; sourceTree = "<group>"; };
 		AA11BB22CC33DD44EE550019 /* UnifiedDetector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UnifiedDetector.swift; sourceTree = "<group>"; };
+		B06522DFDE374AFFB8DC4411 /* CourseDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CourseDetailView.swift; sourceTree = "<group>"; };
+		ED2724CFBFA6421AA2088B76 /* InRoundScorecardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InRoundScorecardView.swift; sourceTree = "<group>"; };
+		EF978CD92BED4BEA9163F87B /* TestFilesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TestFilesView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -417,6 +419,7 @@
 				6ASETTP2F17000000000002 /* PredictGreenSettingsView.swift */,
 				6AD5EAC62EE3B7EB00DDDCF0 /* ActiveRoundView.swift */,
 				0103B059B95381AAE6DFE359 /* AccelTestView.swift */,
+				6A9A2C572F7DED6B008ADD6B /* ActiveRoundConfiguredView.swift */,
 			);
 			path = Views;
 			sourceTree = "<group>";
@@ -564,6 +567,7 @@
 				6A27A5742EF7ABA000D64047 /* AddHoleNavigationView.swift in Sources */,
 				6AD5EAB82EE3B79B00DDDCF0 /* ContentView.swift in Sources */,
 				6AD5EACF2EE47B1500DDDCF0 /* WatchConnectivityManager.swift in Sources */,
+				6A9A2C582F7DED6B008ADD6B /* ActiveRoundConfiguredView.swift in Sources */,
 				6AD5EAC92EE3B80700DDDCF0 /* WatchDataStore.swift in Sources */,
 				6A27A5752F0C000000000001 /* SwingDetectionManager.swift in Sources */,
 				6A27A5772F0C000000000003 /* WorkoutManager.swift in Sources */,
@@ -732,15 +736,15 @@
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_ASSET_PATHS = "\"GolfTracker/Preview Content\"";
 				DEVELOPMENT_TEAM = XMH4AVFC78;
-					ENABLE_PREVIEWS = YES;
-					GENERATE_INFOPLIST_FILE = NO;
-					INFOPLIST_FILE = GolfTracker/Info.plist;
-					INFOPLIST_KEY_NSHumanReadableCopyright = "";
-					IPHONEOS_DEPLOYMENT_TARGET = 17.0;
-					LD_RUNPATH_SEARCH_PATHS = (
-						"$(inherited)",
-						"@executable_path/../Frameworks",
-					);
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = GolfTracker/Info.plist;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.Jared.GolfTracker;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -764,15 +768,15 @@
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_ASSET_PATHS = "\"GolfTracker/Preview Content\"";
 				DEVELOPMENT_TEAM = XMH4AVFC78;
-					ENABLE_PREVIEWS = YES;
-					GENERATE_INFOPLIST_FILE = NO;
-					INFOPLIST_FILE = GolfTracker/Info.plist;
-					INFOPLIST_KEY_NSHumanReadableCopyright = "";
-					IPHONEOS_DEPLOYMENT_TARGET = 17.0;
-					LD_RUNPATH_SEARCH_PATHS = (
-						"$(inherited)",
-						"@executable_path/../Frameworks",
-					);
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = GolfTracker/Info.plist;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.Jared.GolfTracker;
 				PRODUCT_NAME = "$(TARGET_NAME)";

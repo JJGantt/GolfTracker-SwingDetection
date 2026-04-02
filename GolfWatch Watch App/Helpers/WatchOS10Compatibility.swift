@@ -22,6 +22,7 @@ struct HideMapControlsModifier: ViewModifier {
                 content
                     .mapControls {}
                     .mapControlVisibility(.hidden)
+                    .disabled(true)
             }
         } else {
             // On watchOS 10, disable the map when not interactive

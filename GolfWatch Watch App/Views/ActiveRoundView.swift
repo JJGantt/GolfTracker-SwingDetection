@@ -62,6 +62,18 @@ struct ActiveRoundView: View {
         return clubs[index]
     }
 
+    private var crownSelectedClubIndex: Binding<Double> {
+        autoAddedStrokeId != nil ? $overlayClubIndex : $selectedClubIndex
+    }
+
+    private var minimalModeIconName: String {
+        minimalScreenMode ? "batteryblock" : "batteryblock.fill"
+    }
+
+    private var isInteractiveMapMode: Bool {
+        isPlacingTarget || isPlacingPenalty
+    }
+
     private var canUndo: Bool {
         guard let hole = store.currentHole else { return false }
 
@@ -422,20 +434,40 @@ struct ActiveRoundView: View {
                     if !isPlacingPenalty && store.currentHole != nil {
                         Button(action: toggleTargetPlacement) {
                             ZStack {
-                                Circle()
-                                    .fill(Color.white.opacity(0.95))
-                                    .frame(width: buttonSize, height: buttonSize)
-                                    .shadow(color: .black.opacity(0.3), radius: 2, x: 0, y: 1)
-
-                                if isPlacingTarget {
+                                if minimalScreenMode {
                                     Circle()
-                                        .stroke(Color.yellow, lineWidth: 3)
+                                        .fill(Color.black.opacity(0.001))
                                         .frame(width: buttonSize, height: buttonSize)
-                                }
 
-                                Image(systemName: "scope")
-                                    .font(.system(size: iconSize, weight: .bold))
-                                    .foregroundColor(.black)
+                                    Circle()
+                                        .stroke(Color.white.opacity(0.95), lineWidth: isPlacingTarget ? 2.5 : 2)
+                                        .frame(width: buttonSize, height: buttonSize)
+                                        .shadow(
+                                            color: isPlacingTarget ? Color.yellow.opacity(0.6) : Color.black.opacity(0.25),
+                                            radius: isPlacingTarget ? 4 : 2,
+                                            x: 0,
+                                            y: 0
+                                        )
+
+                                    Image(systemName: "scope")
+                                        .font(.system(size: iconSize, weight: .bold))
+                                        .foregroundColor(.white)
+                                } else {
+                                    Circle()
+                                        .fill(Color.white.opacity(0.95))
+                                        .frame(width: buttonSize, height: buttonSize)
+                                        .shadow(color: .black.opacity(0.3), radius: 2, x: 0, y: 1)
+
+                                    if isPlacingTarget {
+                                        Circle()
+                                            .stroke(Color.yellow, lineWidth: 3)
+                                            .frame(width: buttonSize, height: buttonSize)
+                                    }
+
+                                    Image(systemName: "scope")
+                                        .font(.system(size: iconSize, weight: .bold))
+                                        .foregroundColor(.black)
+                                }
                             }
                         }
                         .buttonStyle(PlainButtonStyle())
@@ -480,14 +512,34 @@ struct ActiveRoundView: View {
                         // Green stroke button - always show
                         Button(action: recordStroke) {
                             ZStack {
-                                Circle()
-                                    .fill(showingRecordedFeedback ? Color.white.opacity(0.95) : Color.green.opacity(0.95))
-                                    .frame(width: buttonSize, height: buttonSize)
-                                    .shadow(color: .black.opacity(0.3), radius: 2, x: 0, y: 1)
+                                if minimalScreenMode {
+                                    Circle()
+                                        .fill(Color.black.opacity(0.001))
+                                        .frame(width: buttonSize, height: buttonSize)
 
-                                Image(systemName: showingRecordedFeedback ? "checkmark" : "plus")
-                                    .font(.system(size: iconSize, weight: .bold))
-                                    .foregroundColor(showingRecordedFeedback ? .green : .white)
+                                    Circle()
+                                        .stroke(Color.green.opacity(0.95), lineWidth: 2)
+                                        .frame(width: buttonSize, height: buttonSize)
+                                        .shadow(
+                                            color: Color.green.opacity(showingRecordedFeedback ? 0.45 : 0.25),
+                                            radius: showingRecordedFeedback ? 4 : 2,
+                                            x: 0,
+                                            y: 0
+                                        )
+
+                                    Image(systemName: showingRecordedFeedback ? "checkmark" : "plus")
+                                        .font(.system(size: iconSize, weight: .bold))
+                                        .foregroundColor(.green)
+                                } else {
+                                    Circle()
+                                        .fill(showingRecordedFeedback ? Color.white.opacity(0.95) : Color.green.opacity(0.95))
+                                        .frame(width: buttonSize, height: buttonSize)
+                                        .shadow(color: .black.opacity(0.3), radius: 2, x: 0, y: 1)
+
+                                    Image(systemName: showingRecordedFeedback ? "checkmark" : "plus")
+                                        .font(.system(size: iconSize, weight: .bold))
+                                        .foregroundColor(showingRecordedFeedback ? .green : .white)
+                                }
                             }
                         }
                         .buttonStyle(PlainButtonStyle())
@@ -537,32 +589,47 @@ struct ActiveRoundView: View {
                             .animation(.easeOut(duration: 1.0).repeatForever(autoreverses: false),
                                        value: isPulsing)
 
-                        Circle()
-                            .fill(typeColor.opacity(0.7))
-                            .frame(width: buttonSize * 1.5, height: buttonSize * 1.5)
-                            .shadow(color: typeColor.opacity(0.4), radius: 8, x: 0, y: 0)
+                        if minimalScreenMode {
+                            Circle()
+                                .fill(Color.black.opacity(0.001))
+                                .frame(width: buttonSize * 1.4, height: buttonSize * 1.4)
 
-                        if swingDetector.autoAdd {
-                            Image(systemName: "arrow.uturn.backward")
-                                .font(.system(size: iconSize * 1.4, weight: .bold))
-                                .foregroundColor(.white)
+                            Circle()
+                                .stroke(typeColor.opacity(0.95), lineWidth: 2.5)
+                                .frame(width: buttonSize * 1.4, height: buttonSize * 1.4)
+                                .shadow(color: typeColor.opacity(0.4), radius: 8, x: 0, y: 0)
+
+                            Image(systemName: swingDetector.autoAdd ? "arrow.uturn.backward" : "figure.golf")
+                                .font(.system(size: iconSize * 1.25, weight: .bold))
+                                .foregroundColor(typeColor)
+                                .rotationEffect(.degrees(swingDetector.autoAdd ? 0 : -8))
                         } else {
-                            // Motion lines behind the golfer
-                            HStack(spacing: 2) {
-                                ForEach(0..<3, id: \.self) { i in
-                                    RoundedRectangle(cornerRadius: 1)
-                                        .fill(Color.white.opacity(0.4 - Double(i) * 0.1))
-                                        .frame(width: 2, height: CGFloat(8 - i * 2))
-                                }
-                                Spacer()
-                            }
-                            .frame(width: buttonSize * 1.2)
-                            .offset(x: -iconSize * 0.3)
+                            Circle()
+                                .fill(typeColor.opacity(0.7))
+                                .frame(width: buttonSize * 1.5, height: buttonSize * 1.5)
+                                .shadow(color: typeColor.opacity(0.4), radius: 8, x: 0, y: 0)
 
-                            Image(systemName: "figure.golf")
-                                .font(.system(size: iconSize * 1.4, weight: .bold))
-                                .foregroundColor(.white)
-                                .rotationEffect(.degrees(-8))
+                            if swingDetector.autoAdd {
+                                Image(systemName: "arrow.uturn.backward")
+                                    .font(.system(size: iconSize * 1.4, weight: .bold))
+                                    .foregroundColor(.white)
+                            } else {
+                                HStack(spacing: 2) {
+                                    ForEach(0..<3, id: \.self) { i in
+                                        RoundedRectangle(cornerRadius: 1)
+                                            .fill(Color.white.opacity(0.4 - Double(i) * 0.1))
+                                            .frame(width: 2, height: CGFloat(8 - i * 2))
+                                    }
+                                    Spacer()
+                                }
+                                .frame(width: buttonSize * 1.2)
+                                .offset(x: -iconSize * 0.3)
+
+                                Image(systemName: "figure.golf")
+                                    .font(.system(size: iconSize * 1.4, weight: .bold))
+                                    .foregroundColor(.white)
+                                    .rotationEffect(.degrees(-8))
+                            }
                         }
                     }
                 }
@@ -585,13 +652,27 @@ struct ActiveRoundView: View {
                     applyClubPrediction()
                 }) {
                     ZStack {
-                        Circle()
-                            .fill(Color.red.opacity(0.7))
-                            .frame(width: buttonSize * 0.6, height: buttonSize * 0.6)
+                        if minimalScreenMode {
+                            Circle()
+                                .fill(Color.black.opacity(0.001))
+                                .frame(width: buttonSize * 0.6, height: buttonSize * 0.6)
 
-                        Image(systemName: "xmark")
-                            .font(.system(size: iconSize * 0.5, weight: .bold))
-                            .foregroundColor(.white)
+                            Circle()
+                                .stroke(Color.white.opacity(0.85), lineWidth: 1.5)
+                                .frame(width: buttonSize * 0.6, height: buttonSize * 0.6)
+
+                            Image(systemName: "xmark")
+                                .font(.system(size: iconSize * 0.5, weight: .bold))
+                                .foregroundColor(.white.opacity(0.9))
+                        } else {
+                            Circle()
+                                .fill(Color.red.opacity(0.7))
+                                .frame(width: buttonSize * 0.6, height: buttonSize * 0.6)
+
+                            Image(systemName: "xmark")
+                                .font(.system(size: iconSize * 0.5, weight: .bold))
+                                .foregroundColor(.white)
+                        }
                     }
                 }
                 .buttonStyle(PlainButtonStyle())
@@ -610,9 +691,20 @@ struct ActiveRoundView: View {
                     .padding(.horizontal, 6)
                     .padding(.vertical, 3)
                     .background(
-                        RoundedRectangle(cornerRadius: 5)
-                            .fill(.ultraThinMaterial)
-                            .opacity(0.9)
+                        Group {
+                            if minimalScreenMode {
+                                RoundedRectangle(cornerRadius: 5)
+                                    .fill(Color.black.opacity(0.001))
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 5)
+                                            .stroke(Color.white.opacity(0.4), lineWidth: 1)
+                                    )
+                            } else {
+                                RoundedRectangle(cornerRadius: 5)
+                                    .fill(.ultraThinMaterial)
+                                    .opacity(0.9)
+                            }
+                        }
                     )
                 }
             }
@@ -749,7 +841,7 @@ struct ActiveRoundView: View {
         let buttonSize = geometry.size.width * 0.25
         let iconSize = buttonSize * 0.45
         let clubFontSize = geometry.size.width * 0.055
-        let needsInteractiveMap = isPlacingTarget || isPlacingPenalty
+        let needsInteractiveMap = isInteractiveMapMode
 
         ZStack {
             // Full screen map or black background
@@ -776,9 +868,9 @@ struct ActiveRoundView: View {
                     minimalScreenMode.toggle()
                     WKInterfaceDevice.current().play(.click)
                 }) {
-                    Image(systemName: minimalScreenMode ? "map" : "map.fill")
+                    Image(systemName: minimalModeIconName)
                         .font(.system(size: 12))
-                        .foregroundColor(.white.opacity(0.7))
+                        .foregroundColor(minimalScreenMode ? .white : .white.opacity(0.75))
                         .frame(width: 28, height: 28)
                         .background(Color.black.opacity(0.4))
                         .clipShape(Circle())
@@ -824,244 +916,199 @@ struct ActiveRoundView: View {
         return !hole.hasLocation
     }
 
-    var body: some View {
+    private var activeRoundContent: some View {
+        GeometryReader { geometry in
+            mainContent(geometry: geometry)
+        }
+        .toolbar(.hidden, for: .navigationBar)
+        .navigationBarBackButtonHidden(true)
+        .focusable()
+        .focused($isMainViewFocused)
+        .modifier(ClubCrownRotationModifier(selectedClubIndex: crownSelectedClubIndex, clubCount: clubs.count))
+        .digitalCrownAccessory(.hidden)
+    }
+
+    private var rootBodyContent: some View {
         Group {
             if needsFlagPlacement, let hole = store.currentHole {
-                // Current hole exists but has no flag location - show placement view
                 HolePlacementView(store: store, locationManager: locationManager, hole: hole, isEditing: false)
             } else {
-                // Normal active round view
-                GeometryReader { geometry in
-                    mainContent(geometry: geometry)
-                }
-                .toolbar(.hidden, for: .navigationBar)
-                .navigationBarBackButtonHidden(true)
-                .focusable()
-                .focused($isMainViewFocused)
-                .modifier(ClubCrownRotationModifier(selectedClubIndex: autoAddedStrokeId != nil ? $overlayClubIndex : $selectedClubIndex, clubCount: clubs.count))
-                .digitalCrownAccessory(.hidden)
+                activeRoundContent
             }
         }
-        .sheet(isPresented: $showingOptions) {
-            OptionsView(
-                store: store,
-                showingOptions: $showingOptions,
-                showingEditHole: $showingEditHole,
-                showingDistanceEditor: $showingDistanceEditor,
-                isFullViewMode: $isFullViewMode,
-                manualClubOverride: $manualClubOverride,
-                navigateToAccelTest: $navigateToAccelTest,
-                navigateToViewSettings: $navigateToViewSettings,
-                navigateToClubRecommend: $navigateToClubRecommend,
-                navigateToPredictGreen: $navigateToPredictGreen,
-                isPlacingPenalty: $isPlacingPenalty,
-                updateMapPosition: updateMapPosition,
-                updateNoHoleMapPosition: updateNoHoleMapPosition,
-                deleteLastStroke: deleteLastStroke,
-                dismissParent: { dismiss() },
-                canUndo: canUndo
-            )
-        }
-        .sheet(isPresented: $showingEditHole) {
-            if let hole = store.currentHole {
-                HolePlacementView(store: store, locationManager: locationManager, hole: hole, isEditing: true)
-            }
-        }
-        .sheet(isPresented: $showingDistanceEditor) {
-            ClubDistanceEditorView(store: store)
-        }
-        .onChange(of: navigateToViewSettings) { if navigateToViewSettings { navigateToViewSettings = false; activeSettingsSheet = .viewSettings } }
-        .onChange(of: navigateToClubRecommend) { if navigateToClubRecommend { navigateToClubRecommend = false; activeSettingsSheet = .clubRecommend } }
-        .onChange(of: navigateToAccelTest) { if navigateToAccelTest { navigateToAccelTest = false; activeSettingsSheet = .accelTest } }
-        .onChange(of: navigateToPredictGreen) { if navigateToPredictGreen { navigateToPredictGreen = false; activeSettingsSheet = .predictGreen } }
-        .sheet(item: $activeSettingsSheet) { sheet in
-            switch sheet {
-            case .accelTest:
-                AccelTestView()
-            case .viewSettings:
-                ViewSettingsView(
-                    isFullViewMode: $isFullViewMode,
-                    updateMapPosition: updateMapPosition,
-                    updateNoHoleMapPosition: updateNoHoleMapPosition,
-                    hasCurrentHole: store.currentHole != nil
-                )
-            case .clubRecommend:
-                ClubRecommendSettingsView(
-                    store: store,
-                    manualClubOverride: $manualClubOverride,
-                    showingDistanceEditor: $showingDistanceEditor
-                )
-            case .predictGreen:
-                PredictGreenSettingsView(store: store)
-            }
-        }
-        .onAppear {
-            print("⌚ [ActiveRoundView] View appeared")
-            print("⌚ [ActiveRoundView] Current location: \(locationManager.location?.description ?? "nil")")
-            print("⌚ [ActiveRoundView] Authorization status: \(locationManager.authorizationStatus)")
-            locationManager.requestPermission()
-            locationManager.startTracking()
-            print("⌚ [ActiveRoundView] Called requestPermission and startTracking")
-            updateMapPosition()
-            // Set focus to main view for crown control
-            isMainViewFocused = true
-            // Start swing detection
-            swingDetector.startMonitoring()
+    }
 
-            // Push selected club type to detector for smart_detect
-            updateSwingDetectorClub()
+    var body: some View {
+        ActiveRoundConfiguredView(
+            content: AnyView(rootBodyContent),
+            store: store,
+            locationManager: locationManager,
+            showingOptions: $showingOptions,
+            showingEditHole: $showingEditHole,
+            showingDistanceEditor: $showingDistanceEditor,
+            activeSettingsSheet: $activeSettingsSheet,
+            isFullViewMode: $isFullViewMode,
+            manualClubOverride: $manualClubOverride,
+            navigateToAccelTest: $navigateToAccelTest,
+            navigateToViewSettings: $navigateToViewSettings,
+            navigateToClubRecommend: $navigateToClubRecommend,
+            navigateToPredictGreen: $navigateToPredictGreen,
+            isPlacingPenalty: $isPlacingPenalty,
+            minimalScreenMode: $minimalScreenMode,
+            selectedClubIndex: $selectedClubIndex,
+            currentHole: store.currentHole,
+            distanceToHole: distanceToHole,
+            detectedSwingTimestamp: swingDetector.lastDetectedSwing?.timestamp,
+            canUndo: canUndo,
+            dismissParent: { dismiss() },
+            updateMapPosition: { updateMapPosition() },
+            updateNoHoleMapPosition: updateNoHoleMapPosition,
+            deleteLastStroke: deleteLastStroke,
+            onViewAppear: handleViewAppear,
+            onViewDisappear: handleViewDisappear,
+            onLocationChange: handleLocationChange,
+            onDistanceToHoleChange: handleDistanceToHoleChange,
+            onCurrentHoleIndexChange: handleCurrentHoleIndexChange,
+            onCurrentHoleChange: handleCurrentHoleChange,
+            onShowingOptionsChange: handleShowingOptionsChange,
+            onPlacingPenaltyChange: handlePlacingPenaltyChange,
+            onMinimalScreenModeChange: handleMinimalScreenModeChange,
+            onDetectedSwingChange: handleDetectedSwingChange,
+            onSelectedClubIndexChange: handleSelectedClubIndexChange
+        )
+    }
 
-            // Request HealthKit authorization and start workout if there's an active round
-            if store.currentRound != nil && !workoutManager.isWorkoutActive {
-                workoutManager.requestAuthorization { success, _ in
-                    if success {
-                        print("⌚ [ActiveRoundView] HealthKit authorized, starting workout")
-                        workoutManager.startWorkout()
-                    } else {
-                        print("⌚ [ActiveRoundView] HealthKit authorization failed")
-                    }
-                }
-            }
-        }
-        .onDisappear {
-            // Don't stop motion monitoring here - onDisappear fires when pushing
-            // to child views (e.g. AccelTestView) on watchOS, which would kill
-            // motion updates. Monitoring continues while the round is active,
-            // same as the workout. It gets stopped via stopMonitoring() when needed.
-            // Clean up crown scroll timer
-            crownScrollTimer?.invalidate()
-        }
-        .onChange(of: locationManager.location) { _, _ in
-            // Trigger view refresh when location updates (for distance display)
-            // Also update map orientation to keep user at bottom, flag at top
-            if !isPlacingTarget {
-                updateMapPosition()
-            }
+    private func handleViewAppear() {
+        print("⌚ [ActiveRoundView] View appeared")
+        print("⌚ [ActiveRoundView] Current location: \(locationManager.location?.description ?? "nil")")
+        print("⌚ [ActiveRoundView] Authorization status: \(locationManager.authorizationStatus)")
+        locationManager.requestPermission()
+        locationManager.startTracking()
+        print("⌚ [ActiveRoundView] Called requestPermission and startTracking")
+        restoreCalculatedMapPosition(force: true)
+        isMainViewFocused = true
+        swingDetector.startMonitoring()
+        updateSwingDetectorClub()
 
-            // Auto-switch to putter when stepping onto current hole's green
-            guard store.clubPredictionMode != .off else { return }
-            let nowOnGreen = isOnCurrentGreen
-            if nowOnGreen && !onGreenOverride && !manualClubOverride {
-                if let putterIndex = putterClubIndex() {
-                    onGreenOverride = true
-                    isAutoSelectingClub = true
-                    selectedClubIndex = Double(putterIndex)
-                    updateSwingDetectorClub()
-                    isAutoSelectingClub = false
-                }
-            } else if !nowOnGreen && onGreenOverride {
-                onGreenOverride = false
-                // Re-run distance prediction if user hasn't manually overridden
-                if !manualClubOverride, let distance = distanceToHole,
-                   let predictedIndex = ClubPredictionManager.shared.predictClubIndex(
-                       forDistance: distance,
-                       clubs: clubs,
-                       clubTypes: store.clubTypes,
-                       mode: store.clubPredictionMode,
-                       customAverages: store.customClubAverages,
-                       disabledClubs: store.disabledPredictionClubs
-                   ) {
-                    isAutoSelectingClub = true
-                    selectedClubIndex = Double(predictedIndex)
-                    updateSwingDetectorClub()
-                    isAutoSelectingClub = false
-                }
-            }
-        }
-        .onChange(of: distanceToHole) { _, newDistance in
-            // Auto-predict club based on distance if enabled and not manually overridden
-            // Don't update while auto-add overlay is showing — user may be reviewing last club
-            guard !manualClubOverride,
-                  !onGreenOverride,
-                  autoAddedStrokeId == nil,
-                  store.clubPredictionMode != .off,
-                  let distance = newDistance else { return }
-
-            if let predictedIndex = ClubPredictionManager.shared.predictClubIndex(
-                forDistance: distance,
-                clubs: clubs,
-                clubTypes: store.clubTypes,
-                mode: store.clubPredictionMode,
-                customAverages: store.customClubAverages,
-                disabledClubs: store.disabledPredictionClubs
-            ) {
-                isAutoSelectingClub = true
-                selectedClubIndex = Double(predictedIndex)
-                updateSwingDetectorClub()
-                isAutoSelectingClub = false
-            }
-        }
-        .onChange(of: store.currentHoleIndex) { _, _ in
-            // Watch syncs hole index from phone - update map when it changes
-            manualClubOverride = false  // Reset manual override on hole change
-            onGreenOverride = false
-            lastAutoAddedLocation = nil
-            autoAddedStrokeId = nil
-            locationManager.exitLowPowerMode()
-            updateMapPosition()
-        }
-        .onChange(of: store.currentHole) { _, _ in
-            // Update map when hole changes (also covers new holes added from phone)
-            updateMapPosition()
-        }
-        .onChange(of: showingOptions) { _, isShowing in
-            // When actions sheet closes, restore focus to main view (unless entering penalty mode)
-            if !isShowing && !isPlacingPenalty {
-                isMainViewFocused = true
-            }
-        }
-        .onChange(of: isPlacingPenalty) { _, isPlacing in
-            // Handle focus when entering/exiting penalty placement mode
-            if isPlacing {
-                isMapFocused = true
-                isMainViewFocused = false
+        guard store.currentRound != nil, !workoutManager.isWorkoutActive else { return }
+        workoutManager.requestAuthorization { success, _ in
+            if success {
+                print("⌚ [ActiveRoundView] HealthKit authorized, starting workout")
+                workoutManager.startWorkout()
             } else {
-                isMapFocused = false
-                isMainViewFocused = true
-                updateMapPosition()
+                print("⌚ [ActiveRoundView] HealthKit authorization failed")
             }
         }
-        .onChange(of: swingDetector.lastDetectedSwing?.timestamp) { _, newValue in
-            // Auto-select putter when putt detected within range and putter not already selected
-            if let swing = swingDetector.lastDetectedSwing,
-               swing.swingType == .putt,
-               swingDetector.puttAutoSelectYards > 0,
-               swingDetector.selectedClubTypeName != "Putt",
-               let distance = distanceToHole,
-               distance <= swingDetector.puttAutoSelectYards,
-               let putterIndex = putterClubIndex() {
+    }
+
+    private func handleViewDisappear() {
+        crownScrollTimer?.invalidate()
+    }
+
+    private func handleLocationChange() {
+        if !isInteractiveMapMode {
+            restoreCalculatedMapPosition()
+        }
+
+        guard store.clubPredictionMode != .off else { return }
+        let nowOnGreen = isOnCurrentGreen
+        if nowOnGreen && !onGreenOverride && !manualClubOverride {
+            if let putterIndex = putterClubIndex() {
                 isAutoSelectingClub = true
+                onGreenOverride = true
                 selectedClubIndex = Double(putterIndex)
                 updateSwingDetectorClub()
                 isAutoSelectingClub = false
             }
-            // Auto-add stroke when a new swing is detected and autoAdd is on
-            if swingDetector.autoAdd, newValue != nil {
-                autoAddStrokeFromSwing()
-            }
+            return
         }
-        .onChange(of: selectedClubIndex) { _, _ in
-            // Detect manual club change (user scrolling vs auto-prediction)
-            if !isAutoSelectingClub && store.clubPredictionMode != .off {
-                manualClubOverride = true
-            }
 
-            // Push selected club type to detector for smart_detect
+        if !nowOnGreen && onGreenOverride {
+            onGreenOverride = false
+            applyClubPrediction()
+        }
+    }
+
+    private func handleDistanceToHoleChange(_ newDistance: Int?) {
+        guard !manualClubOverride,
+              !onGreenOverride,
+              autoAddedStrokeId == nil,
+              store.clubPredictionMode != .off,
+              newDistance != nil else { return }
+        applyClubPrediction()
+    }
+
+    private func handleCurrentHoleIndexChange() {
+        manualClubOverride = false
+        onGreenOverride = false
+        lastAutoAddedLocation = nil
+        autoAddedStrokeId = nil
+        locationManager.exitLowPowerMode()
+        restoreCalculatedMapPosition(force: true)
+    }
+
+    private func handleCurrentHoleChange() {
+        restoreCalculatedMapPosition(force: true)
+    }
+
+    private func handleShowingOptionsChange(_ isShowing: Bool) {
+        if !isShowing && !isPlacingPenalty {
+            isMainViewFocused = true
+        }
+    }
+
+    private func handlePlacingPenaltyChange(_ isPlacing: Bool) {
+        if isPlacing {
+            restoreCalculatedMapPosition(force: true)
+            isMapFocused = true
+            isMainViewFocused = false
+        } else {
+            isMapFocused = false
+            isMainViewFocused = true
+            restoreCalculatedMapPosition(force: true)
+        }
+    }
+
+    private func handleMinimalScreenModeChange(_ isMinimal: Bool) {
+        if !isMinimal {
+            restoreCalculatedMapPosition(force: true)
+        }
+    }
+
+    private func handleDetectedSwingChange(_ newValue: Date?) {
+        if let swing = swingDetector.lastDetectedSwing,
+           swing.swingType == .putt,
+           swingDetector.puttAutoSelectYards > 0,
+           swingDetector.selectedClubTypeName != "Putt",
+           let distance = distanceToHole,
+           distance <= swingDetector.puttAutoSelectYards,
+           let putterIndex = putterClubIndex() {
+            isAutoSelectingClub = true
+            selectedClubIndex = Double(putterIndex)
             updateSwingDetectorClub()
+            isAutoSelectingClub = false
+        }
 
-            // Crown is being scrolled - show enlarged text
-            withAnimation(.easeInOut(duration: 0.15)) {
-                isCrownScrolling = true
-            }
+        if swingDetector.autoAdd, newValue != nil {
+            autoAddStrokeFromSwing()
+        }
+    }
 
-            // Cancel existing timer
-            crownScrollTimer?.invalidate()
+    private func handleSelectedClubIndexChange() {
+        if !isAutoSelectingClub && store.clubPredictionMode != .off {
+            manualClubOverride = true
+        }
 
-            // Set new timer to detect when scrolling stops
-            crownScrollTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: false) { _ in
-                withAnimation(.easeInOut(duration: 0.2)) {
-                    isCrownScrolling = false
-                }
+        updateSwingDetectorClub()
+
+        withAnimation(.easeInOut(duration: 0.15)) {
+            isCrownScrolling = true
+        }
+
+        crownScrollTimer?.invalidate()
+        crownScrollTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: false) { _ in
+            withAnimation(.easeInOut(duration: 0.2)) {
+                isCrownScrolling = false
             }
         }
     }
@@ -1076,7 +1123,7 @@ struct ActiveRoundView: View {
     @ViewBuilder
     private func noHoleMapView() -> some View {
         MapReader { proxy in
-            Map(position: $position) {
+            Map(position: $position, interactionModes: isInteractiveMapMode ? .all : []) {
                 // User location
                 if let userLocation = locationManager.location {
                     Annotation("", coordinate: userLocation.coordinate) {
@@ -1116,7 +1163,7 @@ struct ActiveRoundView: View {
             .modifier(HideMapControlsModifier(isInteractive: false))
         }
         .onAppear {
-            updateNoHoleMapPosition()
+            restoreCalculatedMapPosition(force: true)
         }
     }
 
@@ -1125,7 +1172,7 @@ struct ActiveRoundView: View {
         // Note: This view is only called when hole.hasLocation is true (via needsFlagPlacement check)
         let holeCoord = hole.coordinate!
         MapReader { proxy in
-            Map(position: $position) {
+            Map(position: $position, interactionModes: isInteractiveMapMode ? .all : []) {
                 // Hole marker (top) - green if completed, yellow if not
                 Annotation("", coordinate: holeCoord) {
                     Image(systemName: "flag.fill")
@@ -1265,6 +1312,9 @@ struct ActiveRoundView: View {
             .allowsHitTesting(isPlacingTarget || isPlacingPenalty)
             .focusable(isPlacingTarget || isPlacingPenalty)
             .focused($isMapFocused)
+            .onAppear {
+                restoreCalculatedMapPosition(force: true)
+            }
             .onTapGesture { screenLocation in
                 guard let coordinate = proxy.convert(screenLocation, from: .local) else { return }
 
@@ -1622,17 +1672,25 @@ struct ActiveRoundView: View {
             isMainViewFocused = true
             // Force immediate map update when exiting target mode
             DispatchQueue.main.async {
-                updateMapPosition()
+                restoreCalculatedMapPosition(force: true)
             }
         } else {
+            restoreCalculatedMapPosition(force: true)
             isMapFocused = true
             isMainViewFocused = false
         }
     }
 
-    private func updateMapPosition() {
-        // Don't update map during target placement mode
-        guard !isPlacingTarget else { return }
+    private func restoreCalculatedMapPosition(force: Bool = false) {
+        if store.currentHole != nil {
+            updateMapPosition(force: force)
+        } else {
+            updateNoHoleMapPosition()
+        }
+    }
+
+    private func updateMapPosition(force: Bool = false) {
+        guard force || !isInteractiveMapMode else { return }
 
         guard let hole = store.currentHole,
               let holeCoord = hole.coordinate else { return }
