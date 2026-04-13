@@ -84,7 +84,7 @@ class WatchDataStore: ObservableObject {
     // MARK: - Stroke Management
 
     @discardableResult
-    func addStroke(clubId: UUID, trajectoryHeading: Double? = nil, coordinate: CLLocationCoordinate2D? = nil, acceleration: Double? = nil, isPenalty: Bool = false) -> UUID? {
+    func addStroke(clubId: UUID, trajectoryHeading: Double? = nil, coordinate: CLLocationCoordinate2D? = nil, isPenalty: Bool = false) -> UUID? {
         guard var round = currentRound else { return nil }
         guard let strokeCoordinate = coordinate ?? LocationManager.shared.location?.coordinate else { return nil }
 
@@ -105,8 +105,7 @@ class WatchDataStore: ObservableObject {
             coordinate: strokeCoordinate,
             clubId: clubId,
             isPenalty: isPenalty,
-            trajectoryHeading: trajectoryHeading,
-            acceleration: acceleration
+            trajectoryHeading: trajectoryHeading
         )
 
         round.strokes.append(stroke)

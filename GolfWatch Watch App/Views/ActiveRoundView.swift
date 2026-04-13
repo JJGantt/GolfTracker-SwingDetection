@@ -1545,8 +1545,7 @@ struct ActiveRoundView: View {
         let strokeId = store.addStroke(
             clubId: club.id,
             trajectoryHeading: trajectoryHeading,
-            coordinate: swing.location,
-            acceleration: swing.peakAcceleration
+            coordinate: swing.location
         )
 
         if let strokeId = strokeId, let meta = swingDetector.lastDetectionMetadata {
@@ -1598,8 +1597,7 @@ struct ActiveRoundView: View {
         let strokeId = store.addStroke(
             clubId: club.id,
             trajectoryHeading: trajectoryHeading,
-            coordinate: swing.location,
-            acceleration: swing.peakAcceleration
+            coordinate: swing.location
         )
 
         if let strokeId = strokeId, let meta = swingDetector.lastDetectionMetadata {

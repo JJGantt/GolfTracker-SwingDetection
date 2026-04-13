@@ -123,22 +123,14 @@ struct Stroke: Identifiable, Codable, Hashable {
     var longitude: Double
     var clubId: UUID              // References ClubData.id
     var timestamp: Date
-    var landingLatitude: Double?
-    var landingLongitude: Double?
     var isPenalty: Bool
     var trajectoryHeading: Double? // Direction user was trying to hit (in degrees)
-    var acceleration: Double? // Peak acceleration in G when swing was detected
 
     var coordinate: CLLocationCoordinate2D {
         CLLocationCoordinate2D(latitude: latitude, longitude: longitude)
     }
 
-    var landingCoordinate: CLLocationCoordinate2D? {
-        guard let lat = landingLatitude, let lon = landingLongitude else { return nil }
-        return CLLocationCoordinate2D(latitude: lat, longitude: lon)
-    }
-
-    init(holeNumber: Int, strokeNumber: Int, coordinate: CLLocationCoordinate2D, clubId: UUID, isPenalty: Bool = false, trajectoryHeading: Double? = nil, acceleration: Double? = nil) {
+    init(holeNumber: Int, strokeNumber: Int, coordinate: CLLocationCoordinate2D, clubId: UUID, isPenalty: Bool = false, trajectoryHeading: Double? = nil) {
         self.holeNumber = holeNumber
         self.strokeNumber = strokeNumber
         self.latitude = coordinate.latitude
@@ -147,7 +139,6 @@ struct Stroke: Identifiable, Codable, Hashable {
         self.timestamp = Date()
         self.isPenalty = isPenalty
         self.trajectoryHeading = trajectoryHeading
-        self.acceleration = acceleration
     }
 }
 
