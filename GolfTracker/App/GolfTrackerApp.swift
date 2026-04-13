@@ -281,6 +281,12 @@ class MotionDataHandler: ObservableObject {
         case ("undoMotionData", "rawAccel"):
             prefix = "undo_motion_raw"
             header = "Undo Motion Data (Raw Accelerometer @ 800Hz)\nSample Count: \(sampleCount)\n\n"
+        case ("falsePositive", _):
+            prefix = "false_positive"
+            header = "False Positive (Device Motion @ 100Hz)\nSample Count: \(sampleCount)\n\n"
+        case ("swingDataLog", _):
+            prefix = "swing_data_log"
+            header = ""
         default:
             print("📱 [MotionDataHandler] Unknown file type '\(fileType)/\(dataType)', skipping")
             return

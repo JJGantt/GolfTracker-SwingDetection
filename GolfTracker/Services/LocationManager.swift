@@ -16,7 +16,14 @@ class LocationManager: NSObject, ObservableObject {
     @Published var authorizationStatus: CLAuthorizationStatus = .notDetermined
     @Published var errorMessage: String?
     @Published var isTestModeEnabled: Bool = false
-    @Published var isLowPowerMode: Bool = false
+    enum GPSPowerMode: String {
+        case full       // kCLLocationAccuracyBest, 1m filter
+        case moderate   // kCLLocationAccuracyNearestTenMeters, 10m filter
+        case off        // GPS completely stopped (on green)
+    }
+
+    @Published var gpsPowerMode: GPSPowerMode = .full
+    @Published var isLowPowerMode: Bool = false  // deprecated — use gpsPowerMode == .off
     private var lowPowerTimer: Timer?
 
     private var forcedTestLocation: CLLocation {
@@ -124,29 +131,44 @@ class LocationManager: NSObject, ObservableObject {
         #if os(iOS) || os(watchOS)
         locationManager.stopUpdatingHeading()
         #endif
-        exitLowPowerMode()
-    }
-
-    func enterLowPowerMode() {
-        guard !isLowPowerMode, !isTestModeEnabled else { return }
-        isLowPowerMode = true
-        locationManager.stopUpdatingLocation()
-        // Single fix immediately, then every 30s
-        locationManager.requestLocation()
-        lowPowerTimer = Timer.scheduledTimer(withTimeInterval: 30.0, repeats: true) { [weak self] _ in
-            self?.locationManager.requestLocation()
-        }
-        print("[LocationManager] Entered low power mode (30s periodic fixes)")
-    }
-
-    func exitLowPowerMode() {
-        guard isLowPowerMode else { return }
         lowPowerTimer?.invalidate()
         lowPowerTimer = nil
+        gpsPowerMode = .full
         isLowPowerMode = false
-        locationManager.startUpdatingLocation()
-        print("[LocationManager] Exited low power mode (continuous updates)")
     }
+
+    func setGPSPowerMode(_ mode: GPSPowerMode) {
+        guard mode != gpsPowerMode, !isTestModeEnabled else { return }
+
+        // Clean up previous state
+        lowPowerTimer?.invalidate()
+        lowPowerTimer = nil
+
+        gpsPowerMode = mode
+        isLowPowerMode = mode == .off
+
+        switch mode {
+        case .full:
+            locationManager.desiredAccuracy = kCLLocationAccuracyBest
+            locationManager.distanceFilter = 1
+            locationManager.startUpdatingLocation()
+            print("[LocationManager] GPS: full (best accuracy, 1m filter)")
+
+        case .moderate:
+            locationManager.desiredAccuracy = kCLLocationAccuracyNearestTenMeters
+            locationManager.distanceFilter = 10
+            locationManager.startUpdatingLocation()
+            print("[LocationManager] GPS: moderate (10m accuracy, 10m filter)")
+
+        case .off:
+            locationManager.stopUpdatingLocation()
+            print("[LocationManager] GPS: off")
+        }
+    }
+
+    // Legacy wrappers
+    func enterLowPowerMode() { setGPSPowerMode(.off) }
+    func exitLowPowerMode() { setGPSPowerMode(.full) }
 
     func distance(to coordinate: CLLocationCoordinate2D) -> CLLocationDistance? {
         guard let location = location else { return nil }

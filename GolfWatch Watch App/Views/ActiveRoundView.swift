@@ -798,9 +798,9 @@ struct ActiveRoundView: View {
 
                     // Main container: Yards + H/P row
                     VStack(alignment: .leading, spacing: 4) {
-                        Text(distanceToHole.map { String($0) } ?? "XXX")
+                        Text(locationManager.gpsPowerMode == .off ? "GRN" : (distanceToHole.map { String($0) } ?? "XXX"))
                             .font(.system(size: 32, weight: .bold, design: .rounded))
-                            .foregroundColor(.white)
+                            .foregroundColor(locationManager.gpsPowerMode == .off ? .green : .white)
 
                         HStack(spacing: 8) {
                             Text("H: \(hole.number)")
@@ -1030,6 +1030,11 @@ struct ActiveRoundView: View {
     }
 
     private func handleDistanceToHoleChange(_ newDistance: Int?) {
+        // Update GPS power mode based on distance (skip if GPS is off for putter)
+        if locationManager.gpsPowerMode != .off {
+            updateGPSForDistance()
+        }
+
         guard !manualClubOverride,
               !onGreenOverride,
               autoAddedStrokeId == nil,
@@ -1038,12 +1043,21 @@ struct ActiveRoundView: View {
         applyClubPrediction()
     }
 
+    private func updateGPSForDistance() {
+        let threshold = swingDetector.gpsModerateYards
+        guard threshold > 0, let distance = distanceToHole else {
+            locationManager.setGPSPowerMode(.full)
+            return
+        }
+        locationManager.setGPSPowerMode(distance > threshold ? .moderate : .full)
+    }
+
     private func handleCurrentHoleIndexChange() {
         manualClubOverride = false
         onGreenOverride = false
         lastAutoAddedLocation = nil
         autoAddedStrokeId = nil
-        locationManager.exitLowPowerMode()
+        locationManager.setGPSPowerMode(.full)
         restoreCalculatedMapPosition(force: true)
     }
 
@@ -1180,8 +1194,8 @@ struct ActiveRoundView: View {
                         .foregroundColor(store.isHoleCompleted(hole.number) ? .green : .yellow)
                 }
 
-                // User location (bottom) - shows frozen state with white outline
-                if let userLocation = locationManager.location {
+                // User location (bottom) - shows frozen state with white outline, hidden on green (GPS off)
+                if let userLocation = locationManager.location, locationManager.gpsPowerMode != .off {
                     Annotation("", coordinate: userLocation.coordinate) {
                         let isFrozen = swingDetector.capturedAimDirection != nil
                         let bearingToHole = calculateBearing(from: userLocation.coordinate, to: holeCoord)
@@ -1397,9 +1411,11 @@ struct ActiveRoundView: View {
         let newTypeName = store.getTypeName(for: club)
         swingDetector.selectedClubTypeName = newTypeName
 
-        // GPS low power when putter is selected
         if newTypeName == "Putt" {
-            locationManager.enterLowPowerMode()
+            locationManager.setGPSPowerMode(.off)
+        } else if locationManager.gpsPowerMode == .off {
+            // Switching away from putter — restore GPS based on distance
+            updateGPSForDistance()
         }
     }
 
