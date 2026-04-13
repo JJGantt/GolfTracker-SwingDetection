@@ -65,6 +65,10 @@
 		AA11BB22CC33DD44EE550012 /* IncrementalPeakDetector.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA11BB22CC33DD44EE550013 /* IncrementalPeakDetector.swift */; };
 		AA11BB22CC33DD44EE550014 /* RollingMotionBuffer.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA11BB22CC33DD44EE550015 /* RollingMotionBuffer.swift */; };
 		AA11BB22CC33DD44EE550018 /* UnifiedDetector.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA11BB22CC33DD44EE550019 /* UnifiedDetector.swift */; };
+		17FCA42178A14303B6F331C5 /* SwingDetectionManager+RawAccel.swift in Sources */ = {isa = PBXBuildFile; fileRef = FB7FE8DA8D214A009C45D055 /* SwingDetectionManager+RawAccel.swift */; };
+		DCD05079795E4F9EB659C7AF /* SwingDetectionManager+ContactGates.swift in Sources */ = {isa = PBXBuildFile; fileRef = 870F6DC4F3184CDF81331B32 /* SwingDetectionManager+ContactGates.swift */; };
+		0CDECE5DE9CC4C14A11A1FD1 /* SwingDetectionManager+DataCollection.swift in Sources */ = {isa = PBXBuildFile; fileRef = F25CB6D57A294246AD44AF60 /* SwingDetectionManager+DataCollection.swift */; };
+		9C0EB1FEC65B49BE83542622 /* SwingDetectionManager+MotionCapture.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEDFC0FA75D24B279C2593AC /* SwingDetectionManager+MotionCapture.swift */; };
 		E4F925C1F0D4499B99626884 /* CourseDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B06522DFDE374AFFB8DC4411 /* CourseDetailView.swift */; };
 		FAEE76F6916D6EF479166310 /* AccelTestView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0103B059B95381AAE6DFE359 /* AccelTestView.swift */; };
 /* End PBXBuildFile section */
@@ -153,6 +157,10 @@
 		AA11BB22CC33DD44EE550013 /* IncrementalPeakDetector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IncrementalPeakDetector.swift; sourceTree = "<group>"; };
 		AA11BB22CC33DD44EE550015 /* RollingMotionBuffer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RollingMotionBuffer.swift; sourceTree = "<group>"; };
 		AA11BB22CC33DD44EE550019 /* UnifiedDetector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UnifiedDetector.swift; sourceTree = "<group>"; };
+		FB7FE8DA8D214A009C45D055 /* SwingDetectionManager+RawAccel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "SwingDetectionManager+RawAccel.swift"; sourceTree = "<group>"; };
+		870F6DC4F3184CDF81331B32 /* SwingDetectionManager+ContactGates.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "SwingDetectionManager+ContactGates.swift"; sourceTree = "<group>"; };
+		F25CB6D57A294246AD44AF60 /* SwingDetectionManager+DataCollection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "SwingDetectionManager+DataCollection.swift"; sourceTree = "<group>"; };
+		BEDFC0FA75D24B279C2593AC /* SwingDetectionManager+MotionCapture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "SwingDetectionManager+MotionCapture.swift"; sourceTree = "<group>"; };
 		B06522DFDE374AFFB8DC4411 /* CourseDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CourseDetailView.swift; sourceTree = "<group>"; };
 		ED2724CFBFA6421AA2088B76 /* InRoundScorecardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InRoundScorecardView.swift; sourceTree = "<group>"; };
 		EF978CD92BED4BEA9163F87B /* TestFilesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TestFilesView.swift; sourceTree = "<group>"; };
@@ -391,6 +399,10 @@
 				AA11BB22CC33DD44EE550013 /* IncrementalPeakDetector.swift */,
 				AA11BB22CC33DD44EE550015 /* RollingMotionBuffer.swift */,
 				AA11BB22CC33DD44EE550019 /* UnifiedDetector.swift */,
+				FB7FE8DA8D214A009C45D055 /* SwingDetectionManager+RawAccel.swift */,
+				870F6DC4F3184CDF81331B32 /* SwingDetectionManager+ContactGates.swift */,
+				F25CB6D57A294246AD44AF60 /* SwingDetectionManager+DataCollection.swift */,
+				BEDFC0FA75D24B279C2593AC /* SwingDetectionManager+MotionCapture.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -576,6 +588,10 @@
 				AA11BB22CC33DD44EE550012 /* IncrementalPeakDetector.swift in Sources */,
 				AA11BB22CC33DD44EE550014 /* RollingMotionBuffer.swift in Sources */,
 				AA11BB22CC33DD44EE550018 /* UnifiedDetector.swift in Sources */,
+				17FCA42178A14303B6F331C5 /* SwingDetectionManager+RawAccel.swift in Sources */,
+				DCD05079795E4F9EB659C7AF /* SwingDetectionManager+ContactGates.swift in Sources */,
+				0CDECE5DE9CC4C14A11A1FD1 /* SwingDetectionManager+DataCollection.swift in Sources */,
+				9C0EB1FEC65B49BE83542622 /* SwingDetectionManager+MotionCapture.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
