@@ -9,45 +9,45 @@ struct HolePlayView: View {
     let runHoleDetectionWithTestCoordinates: Bool
 
     // MARK: - Core State
-    @StateObject private var locationManager = LocationManager()
-    @State private var currentHoleIndex = 0
-    @State private var activeRound: Round?
+    @StateObject var locationManager = LocationManager()
+    @State var currentHoleIndex = 0
+    @State var activeRound: Round?
 
     // MARK: - Map State
-    @State private var position = MapCameraPosition.automatic
-    @State private var useStandardMap = false
-    @State private var savedMapRegion: MKCoordinateRegion?
+    @State var position = MapCameraPosition.automatic
+    @State var useStandardMap = false
+    @State var savedMapRegion: MKCoordinateRegion?
 
     // MARK: - Editing Modes
-    @State private var isAddingHole = false
-    @State private var isMovingHoleManually = false
-    @State private var isMovingStroke = false
-    @State private var isAddingPenaltyStroke = false
-    @State private var hasUserInteractedWithAddHoleMap = false
-    @State private var isAddHoleManualMode = false
-    @State private var addHoleSelectedBlobId: UUID?
+    @State var isAddingHole = false
+    @State var isMovingHoleManually = false
+    @State var isMovingStroke = false
+    @State var isAddingPenaltyStroke = false
+    @State var hasUserInteractedWithAddHoleMap = false
+    @State var isAddHoleManualMode = false
+    @State var addHoleSelectedBlobId: UUID?
 
     // MARK: - Temporary Positions
-    @State private var temporaryHolePosition: CLLocationCoordinate2D?
-    @State private var temporaryPosition: CLLocationCoordinate2D?
-    @State private var strokeToMove: Stroke?
+    @State var temporaryHolePosition: CLLocationCoordinate2D?
+    @State var temporaryPosition: CLLocationCoordinate2D?
+    @State var strokeToMove: Stroke?
 
     // MARK: - Dialogs & Sheets
-    @State private var showingMoveHoleConfirmation = false
-    @State private var showingClubSelection = false
-    @State private var showingStrokeDetails = false
-    @State private var showingCourseEditor = false
-    @State private var showingRoundSummary = false
+    @State var showingMoveHoleConfirmation = false
+    @State var showingClubSelection = false
+    @State var showingStrokeDetails = false
+    @State var showingCourseEditor = false
+    @State var showingRoundSummary = false
 
     // MARK: - Input State
-    @State private var selectedStrokeIndex: Int = 0
+    @State var selectedStrokeIndex: Int = 0
 
     // MARK: - Stroke Recording
-    @State private var trajectoryHeading: Double? = nil
+    @State var trajectoryHeading: Double? = nil
 
     // MARK: - Target Placement
-    @State private var isPlacingTarget = false
-    @State private var isDeleting = false
+    @State var isPlacingTarget = false
+    @State var isDeleting = false
 
     // MARK: - Initialization
     init(
@@ -69,27 +69,27 @@ struct HolePlayView: View {
     }
 
     // MARK: - Computed Properties
-    private var currentCourse: Course {
+    var currentCourse: Course {
         store.courses.first { $0.id == course.id } ?? course
     }
 
-    private var currentHole: Hole? {
+    var currentHole: Hole? {
         guard currentHoleIndex < currentCourse.holes.count else { return nil }
         return currentCourse.holes[currentHoleIndex]
     }
 
-    private var currentRound: Round? {
+    var currentRound: Round? {
         guard let activeRound = activeRound else { return nil }
         return store.rounds.first { $0.id == activeRound.id }
     }
 
-    private var strokeCountForCurrentHole: Int {
+    var strokeCountForCurrentHole: Int {
         guard let round = currentRound,
               let hole = currentHole else { return 0 }
         return round.strokes.filter { $0.holeNumber == hole.number }.count
     }
 
-    private var strokesForCurrentHole: [Stroke] {
+    var strokesForCurrentHole: [Stroke] {
         guard let round = currentRound,
               let hole = currentHole else { return [] }
         return round.strokes
@@ -97,11 +97,11 @@ struct HolePlayView: View {
             .sorted { $0.timestamp < $1.timestamp }
     }
 
-    private var mostRecentStroke: Stroke? {
+    var mostRecentStroke: Stroke? {
         return strokesForCurrentHole.last
     }
 
-    private var effectiveTrajectoryHeading: Double? {
+    var effectiveTrajectoryHeading: Double? {
         // If user has set a trajectory, use it; otherwise default to heading toward hole
         if let heading = trajectoryHeading {
             return heading
@@ -116,18 +116,18 @@ struct HolePlayView: View {
         return MapCalculations.calculateBearing(from: userCoord, to: holeCoord)
     }
 
-    private var selectedStroke: Stroke? {
+    var selectedStroke: Stroke? {
         guard selectedStrokeIndex < strokesForCurrentHole.count else { return nil }
         return strokesForCurrentHole[selectedStrokeIndex]
     }
 
-    private var isCurrentHoleCompleted: Bool {
+    var isCurrentHoleCompleted: Bool {
         guard let round = currentRound,
               let hole = currentHole else { return false }
         return round.isHoleCompleted(hole.number)
     }
 
-    private var canUndo: Bool {
+    var canUndo: Bool {
         guard activeRound != nil else { return false }
 
         // Can undo if there are strokes on current hole
@@ -145,7 +145,7 @@ struct HolePlayView: View {
         return false
     }
 
-    private var targetCoordinatesBinding: Binding<[CLLocationCoordinate2D]> {
+    var targetCoordinatesBinding: Binding<[CLLocationCoordinate2D]> {
         Binding(
             get: {
                 guard let round = self.currentRound,
@@ -178,7 +178,7 @@ struct HolePlayView: View {
         )
     }
 
-    private func distanceToTarget(_ target: CLLocationCoordinate2D) -> Int? {
+    func distanceToTarget(_ target: CLLocationCoordinate2D) -> Int? {
         guard let userLocation = locationManager.location else { return nil }
 
         let targetLocation = CLLocation(
@@ -191,7 +191,7 @@ struct HolePlayView: View {
     }
 
     // Calculate the rotation angle for the aim arrow
-    private var aimArrowRotation: Double {
+    var aimArrowRotation: Double {
         guard let capturedHeading = trajectoryHeading,
               let userLocation = locationManager.location,
               let hole = currentHole,
@@ -212,93 +212,16 @@ struct HolePlayView: View {
     }
 
     // MARK: - View Components
-    private var mainContent: some View {
+    var mainContent: some View {
         ZStack {
             if isAddingHole {
-                let candidates = (currentRound?.holeDetectionEnabled == true)
-                    ? store.filteredHoleDetectionBlobs(for: currentCourse.id)
-                    : [HoleDetectionBlob]()
-                AddHoleMapView(
-                    position: $position,
-                    temporaryHolePosition: $temporaryHolePosition,
-                    hasUserInteracted: $hasUserInteractedWithAddHoleMap,
-                    isManualPlacement: $isAddHoleManualMode,
-                    selectedGreenBlobId: $addHoleSelectedBlobId,
-                    userLocation: locationManager.location,
-                    heading: locationManager.heading,
-                    greenCandidates: candidates
-                )
-                AddHoleOverlay(
-                    holeCount: currentCourse.holes.count,
-                    hasGreenCandidates: !candidates.isEmpty,
-                    userLocation: locationManager.location,
-                    temporaryHolePosition: $temporaryHolePosition,
-                    selectedGreenBlobId: $addHoleSelectedBlobId,
-                    isManualPlacement: $isAddHoleManualMode,
-                    isAddingHole: $isAddingHole,
-                    saveTemporaryHole: saveTemporaryHole
-                )
+                addHoleModeContent()
             } else if isMovingHoleManually {
-                ManualPlacementMapView(
-                    position: $position,
-                    temporaryPosition: $temporaryPosition,
-                    currentHole: currentHole,
-                    userLocation: locationManager.location,
-                    heading: locationManager.heading,
-                    useStandardMap: useStandardMap,
-                    isAddingTeeManually: false
-                )
-                MoveHoleManuallyOverlay(
-                    currentHole: currentHole,
-                    temporaryPosition: $temporaryPosition,
-                    isMovingHoleManually: $isMovingHoleManually,
-                    savedMapRegion: $savedMapRegion,
-                    userLocation: locationManager.location,
-                    store: store,
-                    currentCourse: currentCourse,
-                    restoreSavedMapRegion: restoreSavedMapRegion
-                )
+                moveHoleModeContent()
             } else if isMovingStroke {
-                StrokeMovementMapView(
-                    position: $position,
-                    temporaryPosition: $temporaryPosition,
-                    currentHole: currentHole,
-                    currentRound: currentRound,
-                    strokeToMove: strokeToMove,
-                    userLocation: locationManager.location,
-                    heading: locationManager.heading,
-                    useStandardMap: useStandardMap
-                )
-                MoveStrokeOverlay(
-                    strokeToMove: strokeToMove,
-                    activeRound: activeRound,
-                    temporaryPosition: $temporaryPosition,
-                    isMovingStroke: $isMovingStroke,
-                    strokeToMoveBinding: $strokeToMove,
-                    savedMapRegion: $savedMapRegion,
-                    userLocation: locationManager.location,
-                    store: store,
-                    restoreSavedMapRegion: restoreSavedMapRegion
-                )
+                moveStrokeModeContent()
             } else if isAddingPenaltyStroke {
-                PenaltyStrokeMapView(
-                    position: $position,
-                    temporaryPosition: $temporaryPosition,
-                    currentHole: currentHole,
-                    currentRound: currentRound,
-                    userLocation: locationManager.location,
-                    heading: locationManager.heading,
-                    useStandardMap: useStandardMap
-                )
-                AddPenaltyStrokeOverlay(
-                    currentHole: currentHole,
-                    activeRound: activeRound,
-                    temporaryPosition: $temporaryPosition,
-                    isAddingPenaltyStroke: $isAddingPenaltyStroke,
-                    userLocation: locationManager.location,
-                    recordPenaltyStroke: recordPenaltyStroke,
-                    updateMapPosition: updateMapPosition
-                )
+                addPenaltyModeContent()
             } else if let hole = currentHole {
                 HoleMapView(
                     hole: hole,
@@ -387,7 +310,7 @@ struct HolePlayView: View {
         }
     }
 
-    private var mapStyleButton: some View {
+    var mapStyleButton: some View {
         Button(action: {
             useStandardMap.toggle()
         }) {
@@ -395,7 +318,7 @@ struct HolePlayView: View {
         }
     }
 
-    private var viewToggleButton: some View {
+    var viewToggleButton: some View {
         Button(action: {
             updateMapPosition()
         }) {
@@ -404,7 +327,7 @@ struct HolePlayView: View {
         .disabled(currentHole == nil)
     }
 
-    private var editHolePositionButton: some View {
+    var editHolePositionButton: some View {
         Button(action: {
             showingMoveHoleConfirmation = true
         }) {
@@ -413,7 +336,7 @@ struct HolePlayView: View {
         .disabled(currentHole == nil || locationManager.location == nil)
     }
 
-    private var contentWithModifiers: some View {
+    var contentWithModifiers: some View {
         mainContent
             .ignoresSafeArea(edges: .all)
             .navigationTitle(isAddingHole ? "" : currentCourse.name)
@@ -597,7 +520,7 @@ struct HolePlayView: View {
     }
 
     // MARK: - Navigation Functions
-    private func previousHole() {
+    func previousHole() {
         guard let round = activeRound else { return }
         if currentHoleIndex > 0 {
             currentHoleIndex -= 1
@@ -605,7 +528,7 @@ struct HolePlayView: View {
         }
     }
 
-    private func nextHole() {
+    func nextHole() {
         guard let round = activeRound else { return }
         if currentHoleIndex < currentCourse.holes.count - 1 {
             currentHoleIndex += 1
@@ -613,7 +536,7 @@ struct HolePlayView: View {
         }
     }
 
-    private func finishCurrentHole() {
+    func finishCurrentHole() {
         guard let round = activeRound,
               let hole = currentHole else { return }
 
@@ -631,7 +554,7 @@ struct HolePlayView: View {
         }
     }
 
-    private func reopenCurrentHole() {
+    func reopenCurrentHole() {
         guard let round = activeRound,
               let hole = currentHole else { return }
 
@@ -640,7 +563,7 @@ struct HolePlayView: View {
     }
 
     // MARK: - Stroke Recording Functions
-    private func captureAimDirection() {
+    func captureAimDirection() {
         var heading: Double?
 
         // Try to get real heading first
@@ -660,11 +583,11 @@ struct HolePlayView: View {
         trajectoryHeading = finalHeading
     }
 
-    private func toggleTargetPlacement() {
+    func toggleTargetPlacement() {
         isPlacingTarget.toggle()
     }
 
-    private func undoLastAction() {
+    func undoLastAction() {
         guard let round = activeRound else { return }
 
         // Check if current hole is completed - if so, undo the completion first
@@ -692,7 +615,7 @@ struct HolePlayView: View {
     }
 
     // MARK: - Map Region Functions
-    private func saveCurrentMapRegion() {
+    func saveCurrentMapRegion() {
         guard let hole = currentHole,
               let holeCoord = hole.coordinate else { return }
 
@@ -735,18 +658,18 @@ struct HolePlayView: View {
         position = .camera(camera)
     }
 
-    private func restoreSavedMapRegion() {
+    func restoreSavedMapRegion() {
         updateMapPosition()
     }
 
     // MARK: - Hole Editing Functions
-    private func moveCurrentHoleToUserLocation() {
+    func moveCurrentHoleToUserLocation() {
         guard let hole = currentHole,
               let location = locationManager.location else { return }
         store.updateHole(hole, in: currentCourse, newCoordinate: location.coordinate)
     }
 
-    private func recordStroke(with club: ClubData) {
+    func recordStroke(with club: ClubData) {
         guard let round = activeRound,
               let hole = currentHole,
               let location = locationManager.location else { return }
@@ -765,7 +688,7 @@ struct HolePlayView: View {
         trajectoryHeading = nil
     }
 
-    private func recordPenaltyStroke() {
+    func recordPenaltyStroke() {
         guard let round = activeRound,
               let hole = currentHole,
               let coordinate = temporaryPosition else { return }
@@ -795,14 +718,14 @@ struct HolePlayView: View {
         temporaryPosition = nil
     }
 
-    private func startAddingNextHole() {
+    func startAddingNextHole() {
         isAddingHole = true
         temporaryHolePosition = nil
         hasUserInteractedWithAddHoleMap = false
         updateAddHoleMapPosition()
     }
 
-    private func saveTemporaryHole(par: Int) {
+    func saveTemporaryHole(par: Int) {
         guard let coordinate = temporaryHolePosition else { return }
 
         // Save the hole with par, passing user location for optimal crop centering
@@ -819,7 +742,7 @@ struct HolePlayView: View {
         updateMapPosition()
     }
 
-    private func updateAddHoleMapPosition() {
+    func updateAddHoleMapPosition() {
         guard let userLocation = locationManager.location else { return }
 
         // Show area ~350 yards (320 meters) around the user
@@ -832,13 +755,13 @@ struct HolePlayView: View {
         ))
     }
 
-    private func applyLocationModeForRound() {
+    func applyLocationModeForRound() {
         let enabled = currentRound?.locationTestModeEnabled == true
         locationManager.setTestModeEnabled(enabled)
         LocationManager.shared.setTestModeEnabled(enabled)
     }
 
-    private func updateMapPosition() {
+    func updateMapPosition() {
         guard let hole = currentHole,
               let holeCoord = hole.coordinate else { return }
 
