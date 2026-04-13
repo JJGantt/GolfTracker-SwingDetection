@@ -3,161 +3,91 @@ import MapKit
 import WatchKit
 
 struct ActiveRoundView: View {
-    @StateObject private var store = WatchDataStore.shared
-    @StateObject private var locationManager = LocationManager.shared
-    @StateObject private var swingDetector = SwingDetectionManager.shared
-    @StateObject private var workoutManager = WorkoutManager.shared
-    @Environment(\.scenePhase) private var scenePhase
-    @Environment(\.dismiss) private var dismiss
-    @AppStorage("minimalScreenMode") private var minimalScreenMode: Bool = false
-    @State private var selectedClubIndex: Double = 0
-    @State private var position: MapCameraPosition = .automatic
-    @State private var showingRecordedFeedback = false
-    @State private var crownOffset: CGFloat = 0
-    @State private var isPlacingTarget = false
-    @State private var isPlacingPenalty = false
-    @State private var temporaryPenaltyPosition: CLLocationCoordinate2D?
-    @State private var showingOptions = false
-    @State private var showingEditHole = false
-    @State private var isLastStrokeViewMode = false
-    @State private var undoHoldProgress: Double = 0.0
-    @State private var undoHoldTimer: Timer?
-    @State private var isFullViewMode = false
-    @State private var isCrownScrolling = false
-    @State private var crownScrollTimer: Timer?
-    @State private var isPulsing = false
-    @State private var showingDistanceEditor = false
-    @State private var manualClubOverride = false       // True when user manually changed club
-    @State private var onGreenOverride = false          // True when auto-switched to putter for current green
-    @State private var navigateToAccelTest = false
-    @State private var navigateToViewSettings = false
-    @State private var navigateToClubRecommend = false
-    @State private var navigateToPredictGreen = false
+    @StateObject var store = WatchDataStore.shared
+    @StateObject var locationManager = LocationManager.shared
+    @StateObject var swingDetector = SwingDetectionManager.shared
+    @StateObject var workoutManager = WorkoutManager.shared
+    @Environment(\.scenePhase) var scenePhase
+    @Environment(\.dismiss) var dismiss
+    @AppStorage("minimalScreenMode") var minimalScreenMode: Bool = false
+    @State var selectedClubIndex: Double = 0
+    @State var position: MapCameraPosition = .automatic
+    @State var showingRecordedFeedback = false
+    @State var crownOffset: CGFloat = 0
+    @State var isPlacingTarget = false
+    @State var isPlacingPenalty = false
+    @State var temporaryPenaltyPosition: CLLocationCoordinate2D?
+    @State var showingOptions = false
+    @State var showingEditHole = false
+    @State var isLastStrokeViewMode = false
+    @State var undoHoldProgress: Double = 0.0
+    @State var undoHoldTimer: Timer?
+    @State var isFullViewMode = false
+    @State var isCrownScrolling = false
+    @State var crownScrollTimer: Timer?
+    @State var isPulsing = false
+    @State var showingDistanceEditor = false
+    @State var manualClubOverride = false       // True when user manually changed club
+    @State var onGreenOverride = false          // True when auto-switched to putter for current green
+    @State var navigateToAccelTest = false
+    @State var navigateToViewSettings = false
+    @State var navigateToClubRecommend = false
+    @State var navigateToPredictGreen = false
 
     enum SettingsSheet: String, Identifiable {
         case viewSettings, clubRecommend, accelTest, predictGreen
         var id: String { rawValue }
     }
-    @State private var activeSettingsSheet: SettingsSheet?
-    @State private var isAutoSelectingClub = false      // True when we're programmatically updating club
-    @State private var autoAddedStrokeId: UUID?          // Tracks the auto-added stroke for undo/club update
-    @State private var overlayClubIndex: Double = 0     // Crown-controlled club shown in auto-add overlay
-    @State private var lastAutoAddedLocation: CLLocationCoordinate2D?  // GPS of last auto-added stroke for practice replacement
-    @FocusState private var isMapFocused: Bool
-    @FocusState private var isMainViewFocused: Bool
+    @State var activeSettingsSheet: SettingsSheet?
+    @State var isAutoSelectingClub = false      // True when we're programmatically updating club
+    @State var autoAddedStrokeId: UUID?          // Tracks the auto-added stroke for undo/club update
+    @State var overlayClubIndex: Double = 0     // Crown-controlled club shown in auto-add overlay
+    @State var lastAutoAddedLocation: CLLocationCoordinate2D?  // GPS of last auto-added stroke for practice replacement
+    @FocusState var isMapFocused: Bool
+    @FocusState var isMainViewFocused: Bool
 
-    private var clubs: [ClubData] {
+    var clubs: [ClubData] {
         return store.availableClubs
     }
 
-    private var selectedClub: ClubData? {
+    var selectedClub: ClubData? {
         guard !clubs.isEmpty else { return nil }
         let index = Int(selectedClubIndex.rounded()) % clubs.count
         return clubs[index]
     }
 
-    private var overlaySelectedClub: ClubData? {
+    var overlaySelectedClub: ClubData? {
         guard !clubs.isEmpty else { return nil }
         let index = Int(overlayClubIndex.rounded()) % clubs.count
         return clubs[index]
     }
 
-    private var crownSelectedClubIndex: Binding<Double> {
+    var crownSelectedClubIndex: Binding<Double> {
         autoAddedStrokeId != nil ? $overlayClubIndex : $selectedClubIndex
     }
 
-    private var minimalModeIconName: String {
+    var minimalModeIconName: String {
         minimalScreenMode ? "batteryblock" : "batteryblock.fill"
     }
 
-    private var isInteractiveMapMode: Bool {
+    var isInteractiveMapMode: Bool {
         isPlacingTarget || isPlacingPenalty
     }
 
-    private var canUndo: Bool {
-        guard let hole = store.currentHole else { return false }
-
-        // Can undo if current hole is finished
-        if store.isHoleCompleted(hole.number) {
-            return true
-        }
-
-        // Can undo if there are strokes on current hole
-        let strokesForHole = store.currentRound?.strokes.filter { $0.holeNumber == hole.number } ?? []
-        if !strokesForHole.isEmpty {
-            return true
-        }
-
-        // Can undo if we just finished the previous hole (no strokes on current, previous is completed)
-        if store.currentHoleIndex > 0,
-           let round = store.currentRound {
-            let previousHoleNumber = round.holes[store.currentHoleIndex - 1].number
-            return round.isHoleCompleted(previousHoleNumber)
-        }
-
-        return false
-    }
-
-    private var currentHoleGreenBlob: HoleDetectionBlob? {
+    var currentHoleGreenBlob: HoleDetectionBlob? {
         guard let courseId = store.currentRound?.courseId,
               let holeCoord = store.currentHole?.coordinate else { return nil }
         return store.filteredGreenCandidates(for: courseId)
             .first { $0.contains(holeCoord) }
     }
 
-    private var isOnCurrentGreen: Bool {
+    var isOnCurrentGreen: Bool {
         guard let userCoord = locationManager.location?.coordinate,
               let blob = currentHoleGreenBlob else { return false }
         return blob.contains(userCoord)
     }
 
-    private func putterClubIndex() -> Int? {
-        clubs.indices.first { index in
-            guard let clubType = store.clubTypes.first(where: { $0.id == clubs[index].clubTypeId }) else { return false }
-            return clubType.name == "Putt"
-        }
-    }
-
-    private var distanceToHole: Int? {
-        guard let userLocation = locationManager.location,
-              let hole = store.currentHole,
-              let holeCoord = hole.coordinate else { return nil }
-
-        let holeLocation = CLLocation(latitude: holeCoord.latitude, longitude: holeCoord.longitude)
-        let distanceInMeters = userLocation.distance(from: holeLocation)
-        return Int(distanceInMeters * 1.09361)
-    }
-
-    private var lastRealStroke: Stroke? {
-        guard let round = store.currentRound,
-              let hole = store.currentHole else { return nil }
-
-        let strokesForHole = round.strokes
-            .filter { $0.holeNumber == hole.number && !$0.isPenalty }
-            .sorted { $0.strokeNumber > $1.strokeNumber }
-
-        return strokesForHole.first
-    }
-
-    private var firstStroke: Stroke? {
-        guard let round = store.currentRound else { return nil }
-
-        // Determine hole number
-        let holeNumber: Int
-        if let hole = store.currentHole {
-            holeNumber = hole.number
-        } else {
-            holeNumber = round.holes.count + 1
-        }
-
-        let strokesForHole = round.strokes
-            .filter { $0.holeNumber == holeNumber }
-            .sorted { $0.strokeNumber < $1.strokeNumber }
-
-        return strokesForHole.first
-    }
-
-    private var targetCoordinatesBinding: Binding<[CLLocationCoordinate2D]> {
+    var targetCoordinatesBinding: Binding<[CLLocationCoordinate2D]> {
         Binding(
             get: {
                 guard let round = self.store.currentRound,
@@ -187,21 +117,9 @@ struct ActiveRoundView: View {
         )
     }
 
-    private func distanceToTarget(_ target: CLLocationCoordinate2D) -> Int? {
-        guard let userLocation = locationManager.location else { return nil }
-
-        let targetLocation = CLLocation(
-            latitude: target.latitude,
-            longitude: target.longitude
-        )
-
-        let distanceInMeters = userLocation.distance(from: targetLocation)
-        return Int(distanceInMeters * 1.09361) // Convert to yards
-    }
-
     // Calculate the rotation angle for the aim arrow
     @ViewBuilder
-    private func clubSelectorOverlay(clubFontSize: CGFloat) -> some View {
+    func clubSelectorOverlay(clubFontSize: CGFloat) -> some View {
         // On watchOS 10, club selector is integrated into buttonsOverlay instead
         if #available(watchOS 11.0, *) {
             if clubs.isEmpty {
@@ -220,7 +138,7 @@ struct ActiveRoundView: View {
     // MARK: - watchOS 11+ Club Selector (crown-based with expanding clubs)
     @available(watchOS 11.0, *)
     @ViewBuilder
-    private func clubSelectorOverlayModern(clubFontSize: CGFloat) -> some View {
+    func clubSelectorOverlayModern(clubFontSize: CGFloat) -> some View {
         let currentIndex = Int(selectedClubIndex.rounded()) % clubs.count
         let previous2Index = (currentIndex - 2 + clubs.count) % clubs.count
         let previous1Index = (currentIndex - 1 + clubs.count) % clubs.count
@@ -352,7 +270,7 @@ struct ActiveRoundView: View {
 
     // MARK: - watchOS 10 Club Selector (inline in button stack)
     @ViewBuilder
-    private func legacyClubSelector(buttonSize: CGFloat) -> some View {
+    func legacyClubSelector(buttonSize: CGFloat) -> some View {
         let currentIndex = Int(selectedClubIndex.rounded()) % clubs.count
         let iconSize: CGFloat = buttonSize * 0.45
 
@@ -423,7 +341,7 @@ struct ActiveRoundView: View {
     }
 
     @ViewBuilder
-    private func buttonsOverlay(buttonSize: CGFloat, iconSize: CGFloat) -> some View {
+    func buttonsOverlay(buttonSize: CGFloat, iconSize: CGFloat) -> some View {
         VStack {
             Spacer()
 
@@ -556,165 +474,8 @@ struct ActiveRoundView: View {
         .ignoresSafeArea()
     }
 
-    private func swingTypeColor(_ swing: SwingDetectionManager.DetectedSwing?) -> Color {
-        guard let swing = swing else { return .cyan }
-        switch swing.swingType {
-        case .putt: return .cyan
-        case .swing: return .orange
-        }
-    }
-
-    private func swingTypeLabel(_ swing: SwingDetectionManager.DetectedSwing?) -> String {
-        guard let swing = swing else { return "" }
-        switch swing.swingType {
-        case .putt: return "PUTT"
-        case .swing: return "SWING"
-        }
-    }
-
     @ViewBuilder
-    private func swingDetectedOverlay(buttonSize: CGFloat, iconSize: CGFloat) -> some View {
-        if let swing = swingDetector.lastDetectedSwing, store.currentHole != nil && !isPlacingTarget && !isPlacingPenalty {
-            let typeColor = swingTypeColor(swing)
-            VStack(spacing: 4) {
-                // Main swing button - add stroke (manual) or undo (auto_add)
-                Button(action: { swingDetector.autoAdd ? undoAutoAddedStroke() : addStrokeFromLastSwing() }) {
-                    ZStack {
-                        // Outer pulse ring for motion effect
-                        Circle()
-                            .stroke(typeColor.opacity(0.3), lineWidth: 2)
-                            .frame(width: buttonSize * 1.7, height: buttonSize * 1.7)
-                            .scaleEffect(isPulsing ? 1.18 : 0.92)
-                            .opacity(isPulsing ? 0.0 : 0.8)
-                            .animation(.easeOut(duration: 1.0).repeatForever(autoreverses: false),
-                                       value: isPulsing)
-
-                        if minimalScreenMode {
-                            Circle()
-                                .fill(Color.black.opacity(0.001))
-                                .frame(width: buttonSize * 1.4, height: buttonSize * 1.4)
-
-                            Circle()
-                                .stroke(typeColor.opacity(0.95), lineWidth: 2.5)
-                                .frame(width: buttonSize * 1.4, height: buttonSize * 1.4)
-                                .shadow(color: typeColor.opacity(0.4), radius: 8, x: 0, y: 0)
-
-                            Image(systemName: swingDetector.autoAdd ? "arrow.uturn.backward" : "figure.golf")
-                                .font(.system(size: iconSize * 1.25, weight: .bold))
-                                .foregroundColor(typeColor)
-                                .rotationEffect(.degrees(swingDetector.autoAdd ? 0 : -8))
-                        } else {
-                            Circle()
-                                .fill(typeColor.opacity(0.7))
-                                .frame(width: buttonSize * 1.5, height: buttonSize * 1.5)
-                                .shadow(color: typeColor.opacity(0.4), radius: 8, x: 0, y: 0)
-
-                            if swingDetector.autoAdd {
-                                Image(systemName: "arrow.uturn.backward")
-                                    .font(.system(size: iconSize * 1.4, weight: .bold))
-                                    .foregroundColor(.white)
-                            } else {
-                                HStack(spacing: 2) {
-                                    ForEach(0..<3, id: \.self) { i in
-                                        RoundedRectangle(cornerRadius: 1)
-                                            .fill(Color.white.opacity(0.4 - Double(i) * 0.1))
-                                            .frame(width: 2, height: CGFloat(8 - i * 2))
-                                    }
-                                    Spacer()
-                                }
-                                .frame(width: buttonSize * 1.2)
-                                .offset(x: -iconSize * 0.3)
-
-                                Image(systemName: "figure.golf")
-                                    .font(.system(size: iconSize * 1.4, weight: .bold))
-                                    .foregroundColor(.white)
-                                    .rotationEffect(.degrees(-8))
-                            }
-                        }
-                    }
-                }
-                .buttonStyle(PlainButtonStyle())
-                .focusable(false)
-                .onAppear {
-                    isPulsing = true
-                }
-                .onDisappear {
-                    isPulsing = false
-                }
-
-                // Dismiss button - saves overlay club to the stroke and closes
-                Button(action: {
-                    commitOverlayClub()
-                    autoAddedStrokeId = nil
-                    swingDetector.clearLastSwing()
-                    WKInterfaceDevice.current().play(.click)
-                    isMainViewFocused = true
-                    applyClubPrediction()
-                }) {
-                    ZStack {
-                        if minimalScreenMode {
-                            Circle()
-                                .fill(Color.black.opacity(0.001))
-                                .frame(width: buttonSize * 0.6, height: buttonSize * 0.6)
-
-                            Circle()
-                                .stroke(Color.white.opacity(0.85), lineWidth: 1.5)
-                                .frame(width: buttonSize * 0.6, height: buttonSize * 0.6)
-
-                            Image(systemName: "xmark")
-                                .font(.system(size: iconSize * 0.5, weight: .bold))
-                                .foregroundColor(.white.opacity(0.9))
-                        } else {
-                            Circle()
-                                .fill(Color.red.opacity(0.7))
-                                .frame(width: buttonSize * 0.6, height: buttonSize * 0.6)
-
-                            Image(systemName: "xmark")
-                                .font(.system(size: iconSize * 0.5, weight: .bold))
-                                .foregroundColor(.white)
-                        }
-                    }
-                }
-                .buttonStyle(PlainButtonStyle())
-                .focusable(false)
-
-                // Overlay info: club (crown-controlled) + rot mag
-                if swingDetector.autoAdd {
-                    VStack(spacing: 1) {
-                        Text(overlaySelectedClub.map { store.getTypeName(for: $0) } ?? "—")
-                            .font(.system(size: 11, weight: .semibold))
-                            .foregroundColor(.white)
-                        Text(String(format: "%.2f rot", swing.fsPeakRotMag))
-                            .font(.system(size: 9, weight: .regular, design: .monospaced))
-                            .foregroundColor(.white.opacity(0.65))
-                    }
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 3)
-                    .background(
-                        Group {
-                            if minimalScreenMode {
-                                RoundedRectangle(cornerRadius: 5)
-                                    .fill(Color.black.opacity(0.001))
-                                    .overlay(
-                                        RoundedRectangle(cornerRadius: 5)
-                                            .stroke(Color.white.opacity(0.4), lineWidth: 1)
-                                    )
-                            } else {
-                                RoundedRectangle(cornerRadius: 5)
-                                    .fill(.ultraThinMaterial)
-                                    .opacity(0.9)
-                            }
-                        }
-                    )
-                }
-            }
-            .offset(y: -15)
-            .transition(.scale.combined(with: .opacity))
-        }
-    }
-
-    @ViewBuilder
-    private var swipeUpIndicator: some View {
+    var swipeUpIndicator: some View {
         VStack {
             Spacer()
 
@@ -738,7 +499,7 @@ struct ActiveRoundView: View {
     }
 
     @ViewBuilder
-    private func penaltyPlacementButtons(buttonSize: CGFloat, iconSize: CGFloat) -> some View {
+    func penaltyPlacementButtons(buttonSize: CGFloat, iconSize: CGFloat) -> some View {
         VStack {
             Spacer()
 
@@ -790,54 +551,7 @@ struct ActiveRoundView: View {
     }
 
     @ViewBuilder
-    private var holeInfoOverlay: some View {
-        VStack(alignment: .leading) {
-            VStack(alignment: .leading, spacing: 4) {
-                if let hole = store.currentHole {
-                    let parText = hole.par.map { String($0) } ?? "-"
-
-                    // Main container: Yards + H/P row
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(locationManager.gpsPowerMode == .off ? "GRN" : (distanceToHole.map { String($0) } ?? "XXX"))
-                            .font(.system(size: 32, weight: .bold, design: .rounded))
-                            .foregroundColor(locationManager.gpsPowerMode == .off ? .green : .white)
-
-                        HStack(spacing: 8) {
-                            Text("H: \(hole.number)")
-                                .font(.system(size: 11, weight: .semibold))
-                                .foregroundColor(.white)
-                            Text("P: \(parText)")
-                                .font(.system(size: 11, weight: .semibold))
-                                .foregroundColor(.white)
-                        }
-                    }
-                    .padding(4)
-                    .background(Color.black.opacity(0.25))
-                    .clipShape(RoundedRectangle(cornerRadius: 8))
-                    .fixedSize()
-
-                    // Separate strokes container
-                    Text("S: \(store.strokeCount(for: hole))")
-                        .font(.system(size: 14, weight: .bold))
-                        .foregroundColor(Color(red: 0.55, green: 0.85, blue: 0.55))
-                        .padding(4)
-                        .background(Color.black.opacity(0.4))
-                        .clipShape(RoundedRectangle(cornerRadius: 8))
-                        .fixedSize()
-                }
-                // No else case - when no hole exists, onAppear navigates to HolePlacementView
-            }
-            .padding(.leading, 6)
-
-            Spacer()
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .ignoresSafeArea()
-        .opacity(isPlacingTarget || isPlacingPenalty ? 0 : 1)
-    }
-
-    @ViewBuilder
-    private func mainContent(geometry: GeometryProxy) -> some View {
+    func mainContent(geometry: GeometryProxy) -> some View {
         let buttonSize = geometry.size.width * 0.25
         let iconSize = buttonSize * 0.45
         let clubFontSize = geometry.size.width * 0.055
@@ -911,12 +625,12 @@ struct ActiveRoundView: View {
     }
 
     /// Whether the current hole needs its flag location to be set
-    private var needsFlagPlacement: Bool {
+    var needsFlagPlacement: Bool {
         guard let hole = store.currentHole else { return false }
         return !hole.hasLocation
     }
 
-    private var activeRoundContent: some View {
+    var activeRoundContent: some View {
         GeometryReader { geometry in
             mainContent(geometry: geometry)
         }
@@ -928,7 +642,7 @@ struct ActiveRoundView: View {
         .digitalCrownAccessory(.hidden)
     }
 
-    private var rootBodyContent: some View {
+    var rootBodyContent: some View {
         Group {
             if needsFlagPlacement, let hole = store.currentHole {
                 HolePlacementView(store: store, locationManager: locationManager, hole: hole, isEditing: false)
@@ -978,7 +692,7 @@ struct ActiveRoundView: View {
         )
     }
 
-    private func handleViewAppear() {
+    func handleViewAppear() {
         dprint("⌚ [ActiveRoundView] View appeared")
         dprint("⌚ [ActiveRoundView] Current location: \(locationManager.location?.description ?? "nil")")
         dprint("⌚ [ActiveRoundView] Authorization status: \(locationManager.authorizationStatus)")
@@ -1001,58 +715,11 @@ struct ActiveRoundView: View {
         }
     }
 
-    private func handleViewDisappear() {
+    func handleViewDisappear() {
         crownScrollTimer?.invalidate()
     }
 
-    private func handleLocationChange() {
-        if !isInteractiveMapMode {
-            restoreCalculatedMapPosition()
-        }
-
-        guard store.clubPredictionMode != .off else { return }
-        let nowOnGreen = isOnCurrentGreen
-        if nowOnGreen && !onGreenOverride && !manualClubOverride {
-            if let putterIndex = putterClubIndex() {
-                isAutoSelectingClub = true
-                onGreenOverride = true
-                selectedClubIndex = Double(putterIndex)
-                updateSwingDetectorClub()
-                isAutoSelectingClub = false
-            }
-            return
-        }
-
-        if !nowOnGreen && onGreenOverride {
-            onGreenOverride = false
-            applyClubPrediction()
-        }
-    }
-
-    private func handleDistanceToHoleChange(_ newDistance: Int?) {
-        // Update GPS power mode based on distance (skip if GPS is off for putter)
-        if locationManager.gpsPowerMode != .off {
-            updateGPSForDistance()
-        }
-
-        guard !manualClubOverride,
-              !onGreenOverride,
-              autoAddedStrokeId == nil,
-              store.clubPredictionMode != .off,
-              newDistance != nil else { return }
-        applyClubPrediction()
-    }
-
-    private func updateGPSForDistance() {
-        let threshold = swingDetector.gpsModerateYards
-        guard threshold > 0, let distance = distanceToHole else {
-            locationManager.setGPSPowerMode(.full)
-            return
-        }
-        locationManager.setGPSPowerMode(distance > threshold ? .moderate : .full)
-    }
-
-    private func handleCurrentHoleIndexChange() {
+    func handleCurrentHoleIndexChange() {
         manualClubOverride = false
         onGreenOverride = false
         lastAutoAddedLocation = nil
@@ -1061,17 +728,17 @@ struct ActiveRoundView: View {
         restoreCalculatedMapPosition(force: true)
     }
 
-    private func handleCurrentHoleChange() {
+    func handleCurrentHoleChange() {
         restoreCalculatedMapPosition(force: true)
     }
 
-    private func handleShowingOptionsChange(_ isShowing: Bool) {
+    func handleShowingOptionsChange(_ isShowing: Bool) {
         if !isShowing && !isPlacingPenalty {
             isMainViewFocused = true
         }
     }
 
-    private func handlePlacingPenaltyChange(_ isPlacing: Bool) {
+    func handlePlacingPenaltyChange(_ isPlacing: Bool) {
         if isPlacing {
             restoreCalculatedMapPosition(force: true)
             isMapFocused = true
@@ -1083,59 +750,21 @@ struct ActiveRoundView: View {
         }
     }
 
-    private func handleMinimalScreenModeChange(_ isMinimal: Bool) {
+    func handleMinimalScreenModeChange(_ isMinimal: Bool) {
         if !isMinimal {
             restoreCalculatedMapPosition(force: true)
-        }
-    }
-
-    private func handleDetectedSwingChange(_ newValue: Date?) {
-        if let swing = swingDetector.lastDetectedSwing,
-           swing.swingType == .putt,
-           swingDetector.puttAutoSelectYards > 0,
-           swingDetector.selectedClubTypeName != "Putt",
-           let distance = distanceToHole,
-           distance <= swingDetector.puttAutoSelectYards,
-           let putterIndex = putterClubIndex() {
-            isAutoSelectingClub = true
-            selectedClubIndex = Double(putterIndex)
-            updateSwingDetectorClub()
-            isAutoSelectingClub = false
-        }
-
-        if swingDetector.autoAdd, newValue != nil {
-            autoAddStrokeFromSwing()
-        }
-    }
-
-    private func handleSelectedClubIndexChange() {
-        if !isAutoSelectingClub && store.clubPredictionMode != .off {
-            manualClubOverride = true
-        }
-
-        updateSwingDetectorClub()
-
-        withAnimation(.easeInOut(duration: 0.15)) {
-            isCrownScrolling = true
-        }
-
-        crownScrollTimer?.invalidate()
-        crownScrollTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: false) { _ in
-            withAnimation(.easeInOut(duration: 0.2)) {
-                isCrownScrolling = false
-            }
         }
     }
 
     // MARK: - Map View
 
     @ViewBuilder
-    private func mapView(for hole: Hole) -> some View {
+    func mapView(for hole: Hole) -> some View {
         standardMapView(for: hole)
     }
 
     @ViewBuilder
-    private func noHoleMapView() -> some View {
+    func noHoleMapView() -> some View {
         MapReader { proxy in
             Map(position: $position, interactionModes: isInteractiveMapMode ? .all : []) {
                 // User location
@@ -1182,7 +811,7 @@ struct ActiveRoundView: View {
     }
 
     @ViewBuilder
-    private func standardMapView(for hole: Hole) -> some View {
+    func standardMapView(for hole: Hole) -> some View {
         // Note: This view is only called when hole.hasLocation is true (via needsFlagPlacement check)
         let holeCoord = hole.coordinate!
         MapReader { proxy in
@@ -1381,302 +1010,7 @@ struct ActiveRoundView: View {
 
     // MARK: - Actions
 
-    /// Commits the overlay's crown-selected club to the auto-added stroke.
-    /// Called on dismiss (X) and at the start of any new auto-add (covers "dismissed by new stroke").
-    private func commitOverlayClub() {
-        guard let strokeId = autoAddedStrokeId, let club = overlaySelectedClub else { return }
-        store.updateStrokeClub(strokeId: strokeId, clubId: club.id)
-    }
-
-    private func applyClubPrediction() {
-        guard store.clubPredictionMode != .off,
-              let distance = distanceToHole else { return }
-        if let predictedIndex = ClubPredictionManager.shared.predictClubIndex(
-            forDistance: distance,
-            clubs: clubs,
-            clubTypes: store.clubTypes,
-            mode: store.clubPredictionMode,
-            customAverages: store.customClubAverages,
-            disabledClubs: store.disabledPredictionClubs
-        ) {
-            isAutoSelectingClub = true
-            selectedClubIndex = Double(predictedIndex)
-            updateSwingDetectorClub()
-            isAutoSelectingClub = false
-        }
-    }
-
-    private func updateSwingDetectorClub() {
-        guard let club = selectedClub else { return }
-        let newTypeName = store.getTypeName(for: club)
-        swingDetector.selectedClubTypeName = newTypeName
-
-        if newTypeName == "Putt" {
-            locationManager.setGPSPowerMode(.off)
-        } else if locationManager.gpsPowerMode == .off {
-            // Switching away from putter — restore GPS based on distance
-            updateGPSForDistance()
-        }
-    }
-
-    private func toggleAimDirection() {
-        dprint("⌚ [AimDirection] User icon tapped")
-
-        // If already frozen, unfreeze
-        if swingDetector.capturedAimDirection != nil {
-            dprint("⌚ [AimDirection] Unfreezing heading")
-            swingDetector.capturedAimDirection = nil
-            WKInterfaceDevice.current().play(.click)
-            isMainViewFocused = true
-            return
-        }
-
-        // Otherwise, capture current heading
-        dprint("⌚ [AimDirection] Current heading: \(locationManager.heading?.description ?? "nil")")
-
-        var heading: Double?
-
-        // Try to get real heading first
-        if let realHeading = locationManager.heading {
-            heading = realHeading
-        } else if let userLocation = locationManager.location,
-                  let hole = store.currentHole,
-                  let holeCoord = hole.coordinate {
-            // Fallback: Use bearing to hole + 45 degrees as simulated offset
-            // This allows testing in simulator
-            let bearingToHole = calculateBearing(from: userLocation.coordinate, to: holeCoord)
-            heading = (bearingToHole + 45).truncatingRemainder(dividingBy: 360)
-            dprint("⌚ [AimDirection] Using simulated heading (bearing + 45°)")
-        }
-
-        guard let finalHeading = heading else {
-            // No heading available, vibrate to indicate error
-            dprint("⌚ [AimDirection] ERROR: No heading or location available")
-            WKInterfaceDevice.current().play(.failure)
-            isMainViewFocused = true
-            return
-        }
-
-        // Capture the current heading in SwingDetectionManager so it persists with detected swings
-        swingDetector.capturedAimDirection = finalHeading
-        dprint("⌚ [AimDirection] Captured heading: \(finalHeading)")
-
-        // Haptic feedback
-        WKInterfaceDevice.current().play(.click)
-        isMainViewFocused = true
-    }
-
-    private func recordStroke() {
-        // If no aim direction was captured, default to bearing towards the flag (if hole exists)
-        var trajectoryHeading = swingDetector.capturedAimDirection
-        if trajectoryHeading == nil,
-           let userLocation = locationManager.location,
-           let hole = store.currentHole,
-           let holeCoord = hole.coordinate {
-            trajectoryHeading = calculateBearing(from: userLocation.coordinate, to: holeCoord)
-            dprint("⌚ [RecordStroke] No captured heading, using bearing to flag: \(trajectoryHeading!)")
-        }
-
-        // Pass the trajectory heading to the stroke
-        // This works even if there's no hole - addStroke will use the next hole number
-        guard let club = selectedClub else {
-            dprint("⌚ [RecordStroke] ERROR: No club selected")
-            return
-        }
-        store.addStroke(clubId: club.id, trajectoryHeading: trajectoryHeading)
-
-        // Reset manual club override and immediately re-predict based on current distance
-        manualClubOverride = false
-        applyClubPrediction()
-
-        // Reset aim direction after stroke is recorded
-        swingDetector.capturedAimDirection = nil
-
-        // Haptic feedback
-        WKInterfaceDevice.current().play(.success)
-        isMainViewFocused = true
-
-        // Visual feedback
-        withAnimation(.easeInOut(duration: 0.3)) {
-            showingRecordedFeedback = true
-        }
-
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-            withAnimation(.easeInOut(duration: 0.3)) {
-                showingRecordedFeedback = false
-            }
-        }
-    }
-
-    private func handleDoubleTapGesture() {
-        if swingDetector.lastDetectedSwing != nil && store.currentHole != nil {
-            if swingDetector.autoAdd {
-                undoAutoAddedStroke()
-            } else {
-                addStrokeFromLastSwing()
-            }
-        } else {
-            recordStroke()
-        }
-    }
-
-    private func addStrokeFromLastSwing() {
-        guard let swing = swingDetector.lastDetectedSwing else {
-            dprint("⌚ [AddLastSwing] No swing detected")
-            return
-        }
-
-        guard store.currentRound != nil, let hole = store.currentHole else {
-            dprint("⌚ [AddLastSwing] No active round or hole")
-            return
-        }
-
-        // Use aim direction captured at swing detection time, fall back to bearing towards flag
-        var trajectoryHeading = swing.trajectoryHeading
-        if trajectoryHeading == nil, let holeCoord = hole.coordinate {
-            trajectoryHeading = calculateBearing(from: swing.location, to: holeCoord)
-        }
-
-        guard let club = selectedClub else {
-            dprint("⌚ [RecordStrokeFromMotion] ERROR: No club selected")
-            return
-        }
-
-        let strokeId = store.addStroke(
-            clubId: club.id,
-            trajectoryHeading: trajectoryHeading,
-            coordinate: swing.location
-        )
-
-        if let strokeId = strokeId, let meta = swingDetector.lastDetectionMetadata {
-            swingDetector.cacheDetectionMetadata(strokeId: strokeId, metadata: meta)
-        }
-
-        manualClubOverride = false
-        applyClubPrediction()
-        swingDetector.capturedAimDirection = nil
-        swingDetector.clearLastSwing()
-
-        WKInterfaceDevice.current().play(.success)
-        isMainViewFocused = true
-
-        dprint("⌚ [AddLastSwing] Added stroke from detected swing at \(swing.location) with \(swing.peakAcceleration)G")
-    }
-
-    /// Auto-add a stroke from the detected swing without clearing the overlay.
-    /// Called by onChange when autoAdd is enabled.
-    /// When ignorePractice is ON and the swing type is not putt, replaces the previous
-    /// auto-added stroke if the user hasn't moved (within ignorePracticeRadius yards).
-    private func autoAddStrokeFromSwing() {
-        guard let swing = swingDetector.lastDetectedSwing else { return }
-        guard store.currentRound != nil, let hole = store.currentHole else { return }
-        guard !store.isHoleCompleted(hole.number) else { return }
-
-        // Commit the overlay club from any previous auto-added stroke before processing this new one
-        commitOverlayClub()
-
-        var trajectoryHeading = swing.trajectoryHeading
-        if trajectoryHeading == nil, let holeCoord = hole.coordinate {
-            trajectoryHeading = calculateBearing(from: swing.location, to: holeCoord)
-        }
-
-        guard let club = selectedClub else { return }
-
-        // Practice swing replacement: delete previous auto-added stroke if same location
-        if autoAddedStrokeId != nil,
-           let prevLoc = lastAutoAddedLocation,
-           swingDetector.shouldReplacePreviousStroke(
-               newLocation: swing.location,
-               previousLocation: prevLoc,
-               swingType: swing.swingType
-           ) {
-            store.deleteLastStroke()
-            dprint("⌚ [AutoAdd] Replaced previous stroke (practice swing, same location)")
-        }
-
-        let strokeId = store.addStroke(
-            clubId: club.id,
-            trajectoryHeading: trajectoryHeading,
-            coordinate: swing.location
-        )
-
-        if let strokeId = strokeId, let meta = swingDetector.lastDetectionMetadata {
-            swingDetector.cacheDetectionMetadata(strokeId: strokeId, metadata: meta)
-        }
-
-        manualClubOverride = false
-        swingDetector.capturedAimDirection = nil
-        autoAddedStrokeId = strokeId
-        lastAutoAddedLocation = swing.location
-        // Initialize overlay club to what was just saved — crown controls this while overlay is open
-        overlayClubIndex = selectedClubIndex
-
-        // Same feedback as normal add
-        WKInterfaceDevice.current().play(.success)
-
-        dprint("⌚ [AutoAdd] Auto-added stroke from detected swing at \(swing.location)")
-    }
-
-    /// Undo the most recently auto-added stroke and dismiss the overlay.
-    private func undoAutoAddedStroke() {
-        if let strokeId = autoAddedStrokeId {
-            swingDetector.logUndoEvent(strokeId: strokeId)
-            store.deleteLastStroke()
-            autoAddedStrokeId = nil
-            dprint("⌚ [AutoAdd] Undid auto-added stroke (false detection)")
-        }
-        swingDetector.clearLastSwing()
-        WKInterfaceDevice.current().play(.click)
-        isMainViewFocused = true
-        applyClubPrediction()
-    }
-
-    private func deleteLastStroke() {
-        store.deleteLastStroke()
-
-        // Haptic feedback
-        WKInterfaceDevice.current().play(.click)
-    }
-
-    private func confirmPenaltyPlacement() {
-        guard let penaltyCoord = temporaryPenaltyPosition,
-              store.currentRound != nil,
-              store.currentHole != nil else { return }
-
-        guard let club = selectedClub else {
-            dprint("⌚ [ConfirmPenalty] ERROR: No club selected")
-            return
-        }
-
-        store.addStroke(clubId: club.id, coordinate: penaltyCoord, isPenalty: true)
-
-        WKInterfaceDevice.current().play(.failure)
-
-        isPlacingPenalty = false
-        temporaryPenaltyPosition = nil
-    }
-
-    private func finishCurrentHole() {
-        // Check if this is the last hole before finishing
-        let isLastHole: Bool = {
-            guard let round = store.currentRound else { return false }
-            return store.currentHoleIndex >= round.holes.count - 1
-        }()
-
-        store.finishCurrentHole()
-
-        // Haptic feedback - directionUp for hole completion
-        WKInterfaceDevice.current().play(.directionUp)
-
-        // If this was the last hole, automatically add next hole (which will show flag placement)
-        if isLastHole {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                store.addNextHole()
-            }
-        }
-    }
-
-    private func toggleTargetPlacement() {
+    func toggleTargetPlacement() {
         isPlacingTarget.toggle()
         WKInterfaceDevice.current().play(.click)
 
@@ -1695,7 +1029,7 @@ struct ActiveRoundView: View {
         }
     }
 
-    private func restoreCalculatedMapPosition(force: Bool = false) {
+    func restoreCalculatedMapPosition(force: Bool = false) {
         if store.currentHole != nil {
             updateMapPosition(force: force)
         } else {
@@ -1703,7 +1037,7 @@ struct ActiveRoundView: View {
         }
     }
 
-    private func updateMapPosition(force: Bool = false) {
+    func updateMapPosition(force: Bool = false) {
         guard force || !isInteractiveMapMode else { return }
 
         guard let hole = store.currentHole,
@@ -1745,7 +1079,7 @@ struct ActiveRoundView: View {
         position = .camera(camera)
     }
 
-    private func updateNoHoleMapPosition() {
+    func updateNoHoleMapPosition() {
         guard let userLocation = locationManager.location else { return }
 
         // Show 500 yards (~457 meters) north and south from user
@@ -1760,7 +1094,7 @@ struct ActiveRoundView: View {
         position = .camera(camera)
     }
 
-    private func calculateBearing(from: CLLocationCoordinate2D, to: CLLocationCoordinate2D) -> CLLocationDirection {
+    func calculateBearing(from: CLLocationCoordinate2D, to: CLLocationCoordinate2D) -> CLLocationDirection {
         let lat1 = from.latitude * .pi / 180.0
         let lon1 = from.longitude * .pi / 180.0
         let lat2 = to.latitude * .pi / 180.0
@@ -1776,7 +1110,7 @@ struct ActiveRoundView: View {
         return (bearingDegrees + 360.0).truncatingRemainder(dividingBy: 360.0)
     }
 
-    private func calculateCrownOffset(screenHeight: CGFloat) {
+    func calculateCrownOffset(screenHeight: CGFloat) {
         crownOffset = screenHeight * 0.1
     }
 }
@@ -1786,12 +1120,12 @@ struct ActiveRoundView: View {
 struct ClubDistanceEditorView: View {
     @ObservedObject var store: WatchDataStore
     @Environment(\.dismiss) private var dismiss
-    @State private var selectedIndex: Int = 0
-    @State private var editingDistance: Double = 100
-    @FocusState private var isCrownFocused: Bool
+    @State var selectedIndex: Int = 0
+    @State var editingDistance: Double = 100
+    @FocusState var isCrownFocused: Bool
 
     // Get enabled clubs with their type names (excludes clubs not eligible for prediction)
-    private var enabledClubs: [(club: ClubData, typeName: String)] {
+    var enabledClubs: [(club: ClubData, typeName: String)] {
         store.availableClubs.compactMap { club in
             guard let clubType = store.clubTypes.first(where: { $0.id == club.clubTypeId }) else {
                 return nil
@@ -1803,16 +1137,16 @@ struct ClubDistanceEditorView: View {
         }
     }
 
-    private var currentClubName: String {
+    var currentClubName: String {
         guard selectedIndex < enabledClubs.count else { return "" }
         return enabledClubs[selectedIndex].typeName
     }
 
-    private var currentDistance: Int {
+    var currentDistance: Int {
         Int(editingDistance.rounded())
     }
 
-    private var isCurrentClubDisabled: Bool {
+    var isCurrentClubDisabled: Bool {
         guard selectedIndex < enabledClubs.count else { return false }
         return store.disabledPredictionClubs.contains(enabledClubs[selectedIndex].typeName)
     }
@@ -1890,7 +1224,7 @@ struct ClubDistanceEditorView: View {
         }
     }
 
-    private func loadCurrentClubDistance() {
+    func loadCurrentClubDistance() {
         guard selectedIndex < enabledClubs.count else { return }
         let club = enabledClubs[selectedIndex].club
         guard let clubType = store.clubTypes.first(where: { $0.id == club.clubTypeId }) else { return }
@@ -1902,7 +1236,7 @@ struct ClubDistanceEditorView: View {
         editingDistance = Double(average)
     }
 
-    private func saveCurrentDistance() {
+    func saveCurrentDistance() {
         guard selectedIndex < enabledClubs.count else { return }
         let typeName = enabledClubs[selectedIndex].typeName
         var averages = store.customClubAverages
@@ -1910,7 +1244,7 @@ struct ClubDistanceEditorView: View {
         store.customClubAverages = averages
     }
 
-    private func previousClub() {
+    func previousClub() {
         guard selectedIndex > 0 else { return }
         saveCurrentDistance()
         selectedIndex -= 1
@@ -1918,7 +1252,7 @@ struct ClubDistanceEditorView: View {
         WKInterfaceDevice.current().play(.click)
     }
 
-    private func nextClub() {
+    func nextClub() {
         guard selectedIndex < enabledClubs.count - 1 else { return }
         saveCurrentDistance()
         selectedIndex += 1
@@ -1926,7 +1260,7 @@ struct ClubDistanceEditorView: View {
         WKInterfaceDevice.current().play(.click)
     }
 
-    private func toggleClubDisabled() {
+    func toggleClubDisabled() {
         guard selectedIndex < enabledClubs.count else { return }
         let typeName = enabledClubs[selectedIndex].typeName
         if store.disabledPredictionClubs.contains(typeName) {

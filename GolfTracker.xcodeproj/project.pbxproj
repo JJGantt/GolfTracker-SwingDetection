@@ -69,6 +69,10 @@
 		DCD05079795E4F9EB659C7AF /* SwingDetectionManager+ContactGates.swift in Sources */ = {isa = PBXBuildFile; fileRef = 870F6DC4F3184CDF81331B32 /* SwingDetectionManager+ContactGates.swift */; };
 		0CDECE5DE9CC4C14A11A1FD1 /* SwingDetectionManager+DataCollection.swift in Sources */ = {isa = PBXBuildFile; fileRef = F25CB6D57A294246AD44AF60 /* SwingDetectionManager+DataCollection.swift */; };
 		9C0EB1FEC65B49BE83542622 /* SwingDetectionManager+MotionCapture.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEDFC0FA75D24B279C2593AC /* SwingDetectionManager+MotionCapture.swift */; };
+		25075A32729043CBA13B479B /* ActiveRoundView+StrokeRecording.swift in Sources */ = {isa = PBXBuildFile; fileRef = B395866142294534934CF914 /* ActiveRoundView+StrokeRecording.swift */; };
+		BF402ACBA5ED40FE92601108 /* ActiveRoundView+Scorecard.swift in Sources */ = {isa = PBXBuildFile; fileRef = A6E32218380E4C3C93B38A12 /* ActiveRoundView+Scorecard.swift */; };
+		BBA6A7885FDA496CBB0C574B /* ActiveRoundView+GPSIndicator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 16BCE78889CC4D2BA4EA325D /* ActiveRoundView+GPSIndicator.swift */; };
+		1FFC95E79D10456C80AF9B21 /* ActiveRoundView+ClubPrediction.swift in Sources */ = {isa = PBXBuildFile; fileRef = A027586C12704EBCAA1B1736 /* ActiveRoundView+ClubPrediction.swift */; };
 		E4F925C1F0D4499B99626884 /* CourseDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B06522DFDE374AFFB8DC4411 /* CourseDetailView.swift */; };
 		FAEE76F6916D6EF479166310 /* AccelTestView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0103B059B95381AAE6DFE359 /* AccelTestView.swift */; };
 /* End PBXBuildFile section */
@@ -161,6 +165,10 @@
 		870F6DC4F3184CDF81331B32 /* SwingDetectionManager+ContactGates.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "SwingDetectionManager+ContactGates.swift"; sourceTree = "<group>"; };
 		F25CB6D57A294246AD44AF60 /* SwingDetectionManager+DataCollection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "SwingDetectionManager+DataCollection.swift"; sourceTree = "<group>"; };
 		BEDFC0FA75D24B279C2593AC /* SwingDetectionManager+MotionCapture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "SwingDetectionManager+MotionCapture.swift"; sourceTree = "<group>"; };
+		B395866142294534934CF914 /* ActiveRoundView+StrokeRecording.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "ActiveRoundView+StrokeRecording.swift"; sourceTree = "<group>"; };
+		A6E32218380E4C3C93B38A12 /* ActiveRoundView+Scorecard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "ActiveRoundView+Scorecard.swift"; sourceTree = "<group>"; };
+		16BCE78889CC4D2BA4EA325D /* ActiveRoundView+GPSIndicator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "ActiveRoundView+GPSIndicator.swift"; sourceTree = "<group>"; };
+		A027586C12704EBCAA1B1736 /* ActiveRoundView+ClubPrediction.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "ActiveRoundView+ClubPrediction.swift"; sourceTree = "<group>"; };
 		B06522DFDE374AFFB8DC4411 /* CourseDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CourseDetailView.swift; sourceTree = "<group>"; };
 		ED2724CFBFA6421AA2088B76 /* InRoundScorecardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InRoundScorecardView.swift; sourceTree = "<group>"; };
 		EF978CD92BED4BEA9163F87B /* TestFilesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TestFilesView.swift; sourceTree = "<group>"; };
@@ -420,8 +428,20 @@
 				6AD5EAC62EE3B7EB00DDDCF0 /* ActiveRoundView.swift */,
 				0103B059B95381AAE6DFE359 /* AccelTestView.swift */,
 				6A9A2C572F7DED6B008ADD6B /* ActiveRoundConfiguredView.swift */,
+				60DBFB19282E4F25AC2B2C47 /* Components */,
 			);
 			path = Views;
+			sourceTree = "<group>";
+		};
+		60DBFB19282E4F25AC2B2C47 /* Components */ = {
+			isa = PBXGroup;
+			children = (
+				B395866142294534934CF914 /* ActiveRoundView+StrokeRecording.swift */,
+				A6E32218380E4C3C93B38A12 /* ActiveRoundView+Scorecard.swift */,
+				16BCE78889CC4D2BA4EA325D /* ActiveRoundView+GPSIndicator.swift */,
+				A027586C12704EBCAA1B1736 /* ActiveRoundView+ClubPrediction.swift */,
+			);
+			path = Components;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -592,6 +612,10 @@
 				DCD05079795E4F9EB659C7AF /* SwingDetectionManager+ContactGates.swift in Sources */,
 				0CDECE5DE9CC4C14A11A1FD1 /* SwingDetectionManager+DataCollection.swift in Sources */,
 				9C0EB1FEC65B49BE83542622 /* SwingDetectionManager+MotionCapture.swift in Sources */,
+				25075A32729043CBA13B479B /* ActiveRoundView+StrokeRecording.swift in Sources */,
+				BF402ACBA5ED40FE92601108 /* ActiveRoundView+Scorecard.swift in Sources */,
+				BBA6A7885FDA496CBB0C574B /* ActiveRoundView+GPSIndicator.swift in Sources */,
+				1FFC95E79D10456C80AF9B21 /* ActiveRoundView+ClubPrediction.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
