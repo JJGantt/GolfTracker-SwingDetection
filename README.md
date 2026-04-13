@@ -507,10 +507,6 @@ GolfWatch Watch App/                      # watchOS app target
 │   ├── WatchDataStore.swift              # Watch data persistence
 │   ├── SwingDetectionManager.swift       # Motion detection orchestrator
 │   ├── UnifiedDetector.swift             # Unified stroke detector
-│   ├── FullSwingDetector.swift           # Full swing detection
-│   ├── PuttDetector.swift                # Putt detection
-│   ├── PartialDetector.swift             # Partial swing detection
-│   ├── EventBasedDetector.swift          # Event-based detection
 │   ├── IncrementalPeakDetector.swift     # Streaming peak detection
 │   ├── RollingMotionBuffer.swift         # Motion data buffer
 │   ├── DetectionEvents.swift             # Event structs
