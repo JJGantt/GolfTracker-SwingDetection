@@ -142,6 +142,13 @@ struct Stroke: Identifiable, Codable, Hashable {
     }
 }
 
+extension Stroke {
+    /// Compute the next stroke number for a given hole within a round.
+    static func nextStrokeNumber(in round: Round, holeNumber: Int) -> Int {
+        round.strokes.filter { $0.holeNumber == holeNumber }.count + 1
+    }
+}
+
 struct Target: Identifiable, Codable, Hashable {
     var id = UUID()
     var holeNumber: Int

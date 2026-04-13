@@ -697,8 +697,7 @@ class DataStore: ObservableObject {
     func addStroke(to round: Round, holeNumber: Int, coordinate: CLLocationCoordinate2D, clubId: UUID, trajectoryHeading: Double? = nil) {
         guard let roundIndex = rounds.firstIndex(where: { $0.id == round.id }) else { return }
 
-        let strokesForHole = rounds[roundIndex].strokes.filter { $0.holeNumber == holeNumber }
-        let strokeNumber = strokesForHole.count + 1
+        let strokeNumber = Stroke.nextStrokeNumber(in: rounds[roundIndex], holeNumber: holeNumber)
 
         let stroke = Stroke(holeNumber: holeNumber, strokeNumber: strokeNumber, coordinate: coordinate, clubId: clubId, trajectoryHeading: trajectoryHeading)
         rounds[roundIndex].strokes.append(stroke)

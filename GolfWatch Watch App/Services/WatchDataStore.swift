@@ -96,8 +96,7 @@ class WatchDataStore: ObservableObject {
             holeNumber = round.holes.count + 1
         }
 
-        let strokesForHole = round.strokes.filter { $0.holeNumber == holeNumber }
-        let strokeNumber = strokesForHole.count + 1
+        let strokeNumber = Stroke.nextStrokeNumber(in: round, holeNumber: holeNumber)
 
         let stroke = Stroke(
             holeNumber: holeNumber,
