@@ -76,7 +76,7 @@ Both apps communicate via **WatchConnectivity** framework for real-time data syn
 - Penalty stroke placement
 - Undo last action functionality
 
-**Location**: `GolfTracker/Views/Play/HolePlayView.swift` (lines 1-776)
+**Location**: `GolfTracker/Views/Play/HolePlayView.swift`
 
 #### Club Types
 - Driver, Hybrid
@@ -101,7 +101,6 @@ Both apps communicate via **WatchConnectivity** framework for real-time data syn
   - Visual aim arrow showing offset from target line
   - Blue direction button to capture current heading
   - Automatic fallback to hole bearing if not set
-- **Landing Position**: Optional landing coordinate tracking
 - **Penalty Strokes**: Place penalty strokes anywhere on the course with visual marker
 - **Stroke Editing**: Move stroke positions, delete strokes, view stroke details
 
@@ -171,7 +170,7 @@ Both apps communicate via **WatchConnectivity** framework for real-time data syn
 - Full view mode toggle
 - Motion sensor testing
 
-**Location**: `GolfWatch Watch App/Views/ActiveRoundView.swift` (lines 1-1484)
+**Location**: `GolfWatch Watch App/Views/ActiveRoundView.swift`
 
 #### Watch UI Components
 - Distance to hole (large display)
@@ -197,50 +196,31 @@ Both apps communicate via **WatchConnectivity** framework for real-time data syn
 
 ### 7. Motion Detection & Swing Analysis
 
-#### Swing Detection System
-- CoreMotion integration at 50Hz sampling rate
-- User acceleration tracking (gravity removed)
-- Gyroscope rotation rate monitoring
-- Gravity vector analysis
-- Device attitude tracking (pitch, roll, yaw)
-- Real-time magnitude calculations
+#### Swing Detection System (`unifDetect`)
+- CoreMotion device motion at **100Hz** (primary) + CMBatchedSensorManager raw accel at **800Hz** (putt-only fallback)
+- Single `UnifiedDetector` with tri-state classification (putt / swing / ambig) and type-aware pairing — direct port of the Python source of truth in `swing_detection/unified_visualize.py`
+- Two-stage post-pairing contact gate: 100Hz device-motion `userAccel` primary, 800Hz raw-accel override when putter is selected
+- Dynamic 800Hz gating: only spins up at setup-start with putter selected, auto-stops 3s after setup-end if no pending shapes — preserves battery
+- Data Collection Mode for building labeled training corpus; false-positive logging when a detected stroke is undone
 
-**Location**: `GolfWatch Watch App/Services/SwingDetectionManager.swift` (lines 1-419)
-
-#### Swing Detection Parameters
-- Configurable acceleration threshold (default: 2.5G)
-- Configurable time above threshold (default: 0.1s)
-- Debounce period: 0.5s between swings
-- Peak acceleration capture
-- Location stamping at swing moment
-- Haptic and audio feedback on detection
-
-**Location**: `GolfWatch Watch App/Services/SwingDetectionManager.swift` (lines 65-68, 275-302)
+**Location**: `GolfWatch Watch App/Services/SwingDetectionManager.swift`, `UnifiedDetector.swift`. Full algorithm spec in `docs/SWING_DETECTION.md`.
 
 #### Motion Data Recording
 - Record full motion data sessions
-- Capture 14 data channels:
-  - User acceleration (X, Y, Z, magnitude)
-  - Rotation rate (X, Y, Z, magnitude)
-  - Gravity (X, Y, Z)
-  - Attitude (pitch, roll, yaw)
+- Capture 15 device-motion channels (userAccel X/Y/Z/Mag, rotation X/Y/Z/Mag, gravity X/Y/Z, pitch/roll/yaw) plus 4 raw-accel channels (X/Y/Z/Mag @ 800Hz)
 - CSV export format
 - Transfer recorded data to iPhone via WatchConnectivity
 - Min/max value tracking
 - Freeze/unfreeze tracking for analysis
 
-**Location**: `GolfWatch Watch App/Services/SwingDetectionManager.swift` (lines 70-89, 355-417)
-
 #### Motion Test View
-- Real-time acceleration display
-- Min/max value monitoring
-- Freeze/unfreeze controls
-- Start/stop recording
+- Real-time acceleration + rotation + attitude display
+- Min/max value monitoring with freeze/unfreeze
+- Start/stop full motion recording
 - Send data to iPhone
-- Swing detection toggle
-- Threshold configuration
-- Time requirement configuration
-- Last swing information display
+- `unifDetect` parameter tuning (presets + per-gate overrides)
+- Data Collection Mode entry point
+- Last-swing detail panel
 
 **Location**: `GolfWatch Watch App/Views/AccelTestView.swift`
 
@@ -314,10 +294,10 @@ Both apps communicate via **WatchConnectivity** framework for real-time data syn
 Comprehensive data structures for:
 - **Course**: ID, name, holes, rating, slope, city
 - **Hole**: ID, number, coordinates, par
-- **Stroke**: ID, hole number, stroke number, coordinates, club, timestamp, direction, landing position, penalty flag, trajectory heading, peak acceleration
+- **Stroke**: ID, hole number, stroke number, coordinates, club, timestamp, penalty flag, trajectory heading
 - **Target**: ID, hole number, coordinates
 - **Round**: ID, course ID, course name, date, strokes, holes, completed holes, current hole index, targets
-**Location**: `GolfTracker/Models/Models.swift` (lines 1-239)
+**Location**: `GolfTracker/Models/Models.swift`
 
 ### 11. Map Features
 
@@ -327,7 +307,6 @@ Comprehensive data structures for:
 - Stroke number markers (white circles)
 - Penalty stroke markers (orange circles)
 - Target markers (scope icons)
-- Landing position markers
 - Trajectory lines (when available)
 - Distance labels
 
@@ -342,7 +321,7 @@ Comprehensive data structures for:
 - Full hole view mode (shows all strokes)
 - User-to-hole view mode (default)
 
-**Location**: `GolfTracker/Views/Play/HolePlayView.swift` (lines 613-774)
+**Location**: `GolfTracker/Views/Play/HolePlayView.swift`
 
 ### 12. Edit Modes
 
@@ -397,7 +376,7 @@ Comprehensive data structures for:
 
 ### Frameworks & Technologies
 - **SwiftUI**: Modern declarative UI framework
-- **MapKit**: Maps, satellite imagery, and annotations
+- **MapKit**: Maps and annotations
 - **CoreLocation**: GPS tracking and distance calculations
 - **CoreMotion**: Accelerometer and gyroscope data (Watch)
 - **WatchConnectivity**: iPhone-Watch communication
@@ -411,12 +390,12 @@ Comprehensive data structures for:
 - **Publisher-Subscriber**: Combine for data observation
 
 ### Performance Optimizations
-- Satellite image caching to avoid repeated downloads
-- JPEG compression (85% quality)
-- Background queue for motion processing
-- Efficient coordinate-to-pixel calculations
-- Debounced swing detection
-- Lazy loading of round data
+- Background queue for motion processing (`motionQueue` + separate `rawAccelQueue`)
+- Sensor-time-based detection (avoids wall-clock drift during CMBatchedSensorManager bursts)
+- GPS power modes (full / moderate / off) driven by distance to hole and club selection
+- 800Hz raw accel only runs during putter setup + contact windows
+- `#if DEBUG`-gated logging via `dprint` helper (zero release-build cost)
+- Ring-buffered continuous + swing-data logs with capacity caps
 
 ### Cross-Platform Sync
 - Automatic round synchronization
