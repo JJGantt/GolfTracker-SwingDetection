@@ -543,9 +543,9 @@ struct HolePlayView: View {
         .onChange(of: currentCourse.holes.count) { oldCount, newCount in
             // If holes count increased, it came from watch - close add hole screen if open
             if newCount > oldCount {
-                print("📱 [HolePlayView] New hole detected from watch (count: \(oldCount) -> \(newCount))")
+                dprint("📱 [HolePlayView] New hole detected from watch (count: \(oldCount) -> \(newCount))")
                 if isAddingHole {
-                    print("📱 [HolePlayView] Closing add hole screen, navigating to new hole")
+                    dprint("📱 [HolePlayView] Closing add hole screen, navigating to new hole")
                     isAddingHole = false
                     // Update to the new hole index
                     currentHoleIndex = newCount - 1
@@ -556,7 +556,7 @@ struct HolePlayView: View {
             // If we're in add hole mode but now have a valid hole, close add hole screen
             // This handles watch navigation or watch creating a hole
             if isAddingHole && newHole != nil {
-                print("📱 [HolePlayView] Valid hole now exists, closing add hole screen")
+                dprint("📱 [HolePlayView] Valid hole now exists, closing add hole screen")
                 isAddingHole = false
             }
         }
@@ -590,7 +590,7 @@ struct HolePlayView: View {
         // --- End new onChange blocks for edit modes ---
         .onChange(of: currentRound?.currentHoleIndex) { _, newIndex in
             if let newIndex = newIndex, newIndex != currentHoleIndex {
-                print("📱 [HolePlayView] Syncing hole index from Watch: \(newIndex)")
+                dprint("📱 [HolePlayView] Syncing hole index from Watch: \(newIndex)")
                 currentHoleIndex = newIndex
             }
         }

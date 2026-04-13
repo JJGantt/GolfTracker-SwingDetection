@@ -2,6 +2,17 @@
 import SwiftUI
 import MapKit
 
+// MARK: - Debug logging
+
+/// Debug-only print. Stripped at compile time in release builds.
+@inlinable
+func dprint(_ items: Any..., separator: String = " ", terminator: String = "\n") {
+    #if DEBUG
+    let output = items.map { "\($0)" }.joined(separator: separator)
+    Swift.print(output, terminator: terminator)
+    #endif
+}
+
 // MARK: - watchOS 10 Compatibility Helpers
 
 /// Hides map controls on watchOS 11+, disables map on watchOS 10 when not interactive

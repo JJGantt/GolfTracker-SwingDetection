@@ -2,6 +2,15 @@ import Foundation
 import CoreLocation
 import MapKit
 
+/// Debug-only print. Stripped at compile time in release builds.
+@inlinable
+func dprint(_ items: Any..., separator: String = " ", terminator: String = "\n") {
+    #if DEBUG
+    let output = items.map { "\($0)" }.joined(separator: separator)
+    Swift.print(output, terminator: terminator)
+    #endif
+}
+
 struct MapCalculations {
     /// Calculate bearing from one coordinate to another in degrees (0-360)
     static func calculateBearing(from: CLLocationCoordinate2D, to: CLLocationCoordinate2D) -> CLLocationDirection {

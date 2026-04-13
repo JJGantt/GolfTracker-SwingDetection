@@ -29,7 +29,7 @@ class DataStore: ObservableObject {
     )
 
     init() {
-        print("🏌️ DataStore initialized!")
+        dprint("🏌️ DataStore initialized!")
         loadCourses()
         loadRounds()
         loadClubTypes()
@@ -37,13 +37,13 @@ class DataStore: ObservableObject {
         loadClubSets()
         loadHoleDetectionData()
         loadHoleFilterSettings()
-        print("🏌️ DataStore loaded \(courses.count) courses, \(rounds.count) rounds, \(clubTypes.count) club types, \(availableClubs.count) clubs, and \(clubSets.count) club sets")
+        dprint("🏌️ DataStore loaded \(courses.count) courses, \(rounds.count) rounds, \(clubTypes.count) club types, \(availableClubs.count) clubs, and \(clubSets.count) club sets")
 
         // Initialize with default club types if needed
         if clubTypes.isEmpty {
             clubTypes = ClubTypeData.defaultClubTypes()
             saveClubTypes()
-            print("🏌️ Initialized with \(clubTypes.count) default club types")
+            dprint("🏌️ Initialized with \(clubTypes.count) default club types")
         }
 
         // Initialize with default clubs if needed
@@ -54,7 +54,7 @@ class DataStore: ObservableObject {
                 availableClubs.append(club)
             }
             saveClubs()
-            print("🏌️ Initialized with \(availableClubs.count) default clubs")
+            dprint("🏌️ Initialized with \(availableClubs.count) default clubs")
         }
 
         // Create default club set if no sets exist
@@ -86,17 +86,17 @@ class DataStore: ObservableObject {
 
     private func setupWatchConnectivity() {
         WatchConnectivityManager.shared.onReceiveStrokes = { [weak self] strokes in
-            print("📱 [DataStore] Received \(strokes.count) strokes from Watch")
+            dprint("📱 [DataStore] Received \(strokes.count) strokes from Watch")
             self?.mergeStrokesFromWatch(strokes)
         }
 
         WatchConnectivityManager.shared.onReceiveRound = { [weak self] round in
-            print("📱 [DataStore] Received round update from Watch: \(round.courseName)")
+            dprint("📱 [DataStore] Received round update from Watch: \(round.courseName)")
             self?.updateRoundFromWatch(round)
         }
 
         WatchConnectivityManager.shared.onReceiveHoleFilterSettings = { [weak self] settings in
-            print("📱 [DataStore] Received hole filter settings from Watch")
+            dprint("📱 [DataStore] Received hole filter settings from Watch")
             DispatchQueue.main.async {
                 self?.holeFilterSettings = settings
                 self?.saveHoleFilterSettings()
@@ -107,9 +107,9 @@ class DataStore: ObservableObject {
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
             guard let self = self else { return }
             let activeClubs = self.getClubsInActiveSet()
-            print("📱 [DataStore] Sending \(activeClubs.count) active clubs to Watch on startup")
+            dprint("📱 [DataStore] Sending \(activeClubs.count) active clubs to Watch on startup")
             WatchConnectivityManager.shared.sendClubs(activeClubs)
-            print("📱 [DataStore] Sending \(self.clubTypes.count) club types to Watch on startup")
+            dprint("📱 [DataStore] Sending \(self.clubTypes.count) club types to Watch on startup")
             WatchConnectivityManager.shared.sendClubTypes(self.clubTypes)
         }
     }
@@ -120,31 +120,31 @@ class DataStore: ObservableObject {
             // The most recent round is likely the active one
             round.date == rounds.max(by: { $0.date < $1.date })?.date
         }) else {
-            print("📱 [DataStore] ERROR: No active round found to add strokes to")
+            dprint("📱 [DataStore] ERROR: No active round found to add strokes to")
             return
         }
 
-        print("📱 [DataStore] Adding strokes to round: \(rounds[activeRoundIndex].courseName)")
+        dprint("📱 [DataStore] Adding strokes to round: \(rounds[activeRoundIndex].courseName)")
 
         for stroke in strokes {
             // Check if stroke already exists (avoid duplicates)
             let strokeExists = rounds[activeRoundIndex].strokes.contains(where: { $0.id == stroke.id })
             if !strokeExists {
                 rounds[activeRoundIndex].strokes.append(stroke)
-                print("📱 [DataStore] Added stroke \(stroke.strokeNumber) on hole \(stroke.holeNumber)")
+                dprint("📱 [DataStore] Added stroke \(stroke.strokeNumber) on hole \(stroke.holeNumber)")
             } else {
-                print("📱 [DataStore] Stroke already exists, skipping")
+                dprint("📱 [DataStore] Stroke already exists, skipping")
             }
         }
 
         saveRounds()
-        print("📱 [DataStore] Saved round with \(rounds[activeRoundIndex].strokes.count) total strokes")
+        dprint("📱 [DataStore] Saved round with \(rounds[activeRoundIndex].strokes.count) total strokes")
     }
 
     private func updateRoundFromWatch(_ watchRound: Round) {
         // Find the round by ID
         guard let roundIndex = rounds.firstIndex(where: { $0.id == watchRound.id }) else {
-            print("📱 [DataStore] ERROR: Round not found for update")
+            dprint("📱 [DataStore] ERROR: Round not found for update")
             return
         }
 
@@ -170,7 +170,7 @@ class DataStore: ObservableObject {
         }
 
         saveRounds()
-        print("📱 [DataStore] Updated round from Watch: \(watchRound.strokes.count) strokes, \(watchRound.completedHoles.count) holes completed, current hole index: \(watchRound.currentHoleIndex)")
+        dprint("📱 [DataStore] Updated round from Watch: \(watchRound.strokes.count) strokes, \(watchRound.completedHoles.count) holes completed, current hole index: \(watchRound.currentHoleIndex)")
 
     }
 
@@ -261,7 +261,7 @@ class DataStore: ObservableObject {
             let data = try Data(contentsOf: playerStatsFileURL)
             playerStats = try JSONDecoder().decode(PlayerStats.self, from: data)
         } catch {
-            print("⚠️ Failed to load player stats: \(error.localizedDescription)")
+            dprint("⚠️ Failed to load player stats: \(error.localizedDescription)")
         }
     }
 
@@ -270,7 +270,7 @@ class DataStore: ObservableObject {
             let data = try JSONEncoder().encode(playerStats)
             try data.write(to: playerStatsFileURL)
         } catch {
-            print("⚠️ Failed to save player stats: \(error.localizedDescription)")
+            dprint("⚠️ Failed to save player stats: \(error.localizedDescription)")
         }
     }
 
@@ -283,7 +283,7 @@ class DataStore: ObservableObject {
             clubTypes: clubTypes
         )
         savePlayerStats()
-        print("📊 Player stats rebuilt: \(rounds.count) rounds, \(playerStats.perClubTypeStats.count) club types")
+        dprint("📊 Player stats rebuilt: \(rounds.count) rounds, \(playerStats.perClubTypeStats.count) club types")
     }
 
     func loadClubTypes() {
@@ -349,7 +349,7 @@ class DataStore: ObservableObject {
     /// Syncs only the clubs in the active set to the Watch
     func syncActiveClubsToWatch() {
         let activeClubs = getClubsInActiveSet()
-        print("📱 [DataStore] Syncing \(activeClubs.count) active clubs to Watch")
+        dprint("📱 [DataStore] Syncing \(activeClubs.count) active clubs to Watch")
         WatchConnectivityManager.shared.sendClubs(activeClubs)
         WatchConnectivityManager.shared.sendClubTypes(clubTypes)
     }
@@ -374,7 +374,7 @@ class DataStore: ObservableObject {
             let detections = try JSONDecoder().decode([CourseHoleDetectionData].self, from: data)
             holeDetectionDataByCourse = Dictionary(uniqueKeysWithValues: detections.map { ($0.courseId, $0) })
         } catch {
-            print("📱 [DataStore] Failed to load hole detection data: \(error.localizedDescription)")
+            dprint("📱 [DataStore] Failed to load hole detection data: \(error.localizedDescription)")
         }
     }
 
@@ -384,7 +384,7 @@ class DataStore: ObservableObject {
             let data = try JSONEncoder().encode(detections)
             try data.write(to: holeDetectionFileURL)
         } catch {
-            print("📱 [DataStore] Failed to save hole detection data: \(error.localizedDescription)")
+            dprint("📱 [DataStore] Failed to save hole detection data: \(error.localizedDescription)")
         }
     }
 
@@ -458,7 +458,7 @@ class DataStore: ObservableObject {
         courses[index].holes.append(hole)
         saveCourses()
 
-        print("📱 [DataStore] Added hole #\(holeNumber) to course \(course.name)")
+        dprint("📱 [DataStore] Added hole #\(holeNumber) to course \(course.name)")
 
         // Update city if this is the first hole or if city is not set
         if courses[index].city == nil {
@@ -483,13 +483,13 @@ class DataStore: ObservableObject {
             // If a new hole was added, update the current hole index to point to it
             if courses[courseIndex].holes.count > oldHoleCount {
                 rounds[roundIndex].currentHoleIndex = courses[courseIndex].holes.count - 1
-                print("📱 [DataStore] New hole added, updated currentHoleIndex to \(rounds[roundIndex].currentHoleIndex)")
+                dprint("📱 [DataStore] New hole added, updated currentHoleIndex to \(rounds[roundIndex].currentHoleIndex)")
             }
 
             saveRounds()
 
             // Resync to Watch
-            print("📱 [DataStore] Updated active round holes, resyncing to Watch")
+            dprint("📱 [DataStore] Updated active round holes, resyncing to Watch")
             WatchConnectivityManager.shared.sendRound(rounds[roundIndex])
         }
     }
@@ -548,7 +548,7 @@ class DataStore: ObservableObject {
         runHoleDetection: Bool = true,
         useHoleDetectionTestCoordinates: Bool = false
     ) -> Round {
-        print("📱 [DataStore] startRound called for course: \(course.name)")
+        dprint("📱 [DataStore] startRound called for course: \(course.name)")
         let round = Round(
             courseId: course.id,
             courseName: course.name,
@@ -559,7 +559,7 @@ class DataStore: ObservableObject {
         rounds.append(round)
         saveRounds()
 
-        print("📱 [DataStore] About to send round to Watch, holes: \(round.holes.count)")
+        dprint("📱 [DataStore] About to send round to Watch, holes: \(round.holes.count)")
         // Send active set clubs and club types first to ensure Watch has them before the round
         syncActiveClubsToWatch()
         // Send round to Watch
@@ -588,7 +588,7 @@ class DataStore: ObservableObject {
         }
 
         if allowCache, let cached = holeDetectionDataByCourse[course.id] {
-            print("📱 [DataStore] Using cached hole detection data (\(cached.blobs.count) blobs)")
+            dprint("📱 [DataStore] Using cached hole detection data (\(cached.blobs.count) blobs)")
             holeDetectionRunStateByCourse[course.id] = HoleDetectionRunState(
                 isRunning: false,
                 message: "Hole detection ready",
@@ -640,12 +640,12 @@ class DataStore: ObservableObject {
                     switch result {
                     case .success(let output):
                         let detectionData = output.data
-                        print("📱 [DataStore] Hole detection diagnostics: tiles=\(output.diagnostics.tileCount), greenPx=\(output.diagnostics.totalGreenPixels), greenishPx=\(output.diagnostics.totalGreenishPixels), swappedExactPx=\(output.diagnostics.totalSwappedChannelExactPixels), preMergeBlobs=\(output.diagnostics.preMergeBlobCount), mergedBlobs=\(output.diagnostics.mergedBlobCount)")
+                        dprint("📱 [DataStore] Hole detection diagnostics: tiles=\(output.diagnostics.tileCount), greenPx=\(output.diagnostics.totalGreenPixels), greenishPx=\(output.diagnostics.totalGreenishPixels), swappedExactPx=\(output.diagnostics.totalSwappedChannelExactPixels), preMergeBlobs=\(output.diagnostics.preMergeBlobCount), mergedBlobs=\(output.diagnostics.mergedBlobCount)")
                         if output.diagnostics.topGreenishColors.isEmpty {
-                            print("📱 [DataStore] Hole detection top green-ish RGBs: none above threshold")
+                            dprint("📱 [DataStore] Hole detection top green-ish RGBs: none above threshold")
                         } else {
                             let colors = output.diagnostics.topGreenishColors.map(\.formatted).joined(separator: " | ")
-                            print("📱 [DataStore] Hole detection top green-ish RGBs: \(colors)")
+                            dprint("📱 [DataStore] Hole detection top green-ish RGBs: \(colors)")
                         }
                         // Keep detection results in memory for current-round UI even when test runs are non-persistent.
                         self.holeDetectionDataByCourse[course.id] = detectionData
@@ -845,7 +845,7 @@ class DataStore: ObservableObject {
         let clubType = ClubTypeData(name: name, isDefault: false)
         clubTypes.append(clubType)
         saveClubTypes()
-        print("🏌️ Added club type: \(name), total types: \(clubTypes.count)")
+        dprint("🏌️ Added club type: \(name), total types: \(clubTypes.count)")
     }
 
     func deleteClubType(_ clubType: ClubTypeData) {

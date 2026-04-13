@@ -79,9 +79,9 @@ class LocationManager: NSObject, ObservableObject {
                 self.location = self.forcedTestLocation
                 self.heading = 0
                 self.errorMessage = nil
-                print("[LocationManager] Test mode ON: forcing location to \(self.forcedTestLocation.coordinate.latitude), \(self.forcedTestLocation.coordinate.longitude)")
+                dprint("[LocationManager] Test mode ON: forcing location to \(self.forcedTestLocation.coordinate.latitude), \(self.forcedTestLocation.coordinate.longitude)")
             } else {
-                print("[LocationManager] Test mode OFF: resuming live GPS")
+                dprint("[LocationManager] Test mode OFF: resuming live GPS")
                 self.startTracking()
             }
         }
@@ -107,15 +107,15 @@ class LocationManager: NSObject, ObservableObject {
         let isAuthorized = authorizationStatus == .authorizedAlways
         #endif
 
-        print("[LocationManager] startTracking called - isAuthorized: \(isAuthorized), status: \(authorizationStatus.rawValue)")
+        dprint("[LocationManager] startTracking called - isAuthorized: \(isAuthorized), status: \(authorizationStatus.rawValue)")
 
         guard isAuthorized else {
             errorMessage = "Location permission not granted"
-            print("[LocationManager] NOT authorized, skipping location updates")
+            dprint("[LocationManager] NOT authorized, skipping location updates")
             return
         }
 
-        print("[LocationManager] Starting location updates")
+        dprint("[LocationManager] Starting location updates")
         locationManager.startUpdatingLocation()
 
         #if os(iOS) || os(watchOS)
@@ -152,17 +152,17 @@ class LocationManager: NSObject, ObservableObject {
             locationManager.desiredAccuracy = kCLLocationAccuracyBest
             locationManager.distanceFilter = 1
             locationManager.startUpdatingLocation()
-            print("[LocationManager] GPS: full (best accuracy, 1m filter)")
+            dprint("[LocationManager] GPS: full (best accuracy, 1m filter)")
 
         case .moderate:
             locationManager.desiredAccuracy = kCLLocationAccuracyNearestTenMeters
             locationManager.distanceFilter = 10
             locationManager.startUpdatingLocation()
-            print("[LocationManager] GPS: moderate (10m accuracy, 10m filter)")
+            dprint("[LocationManager] GPS: moderate (10m accuracy, 10m filter)")
 
         case .off:
             locationManager.stopUpdatingLocation()
-            print("[LocationManager] GPS: off")
+            dprint("[LocationManager] GPS: off")
         }
     }
 
@@ -213,7 +213,7 @@ class LocationManager: NSObject, ObservableObject {
 extension LocationManager: CLLocationManagerDelegate {
     func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
         authorizationStatus = manager.authorizationStatus
-        print("[LocationManager] Authorization changed to: \(authorizationStatus.rawValue)")
+        dprint("[LocationManager] Authorization changed to: \(authorizationStatus.rawValue)")
 
         #if os(iOS) || os(watchOS)
         let authorized = authorizationStatus == .authorizedWhenInUse || authorizationStatus == .authorizedAlways
@@ -222,10 +222,10 @@ extension LocationManager: CLLocationManagerDelegate {
         #endif
 
         if authorized {
-            print("[LocationManager] Authorization granted, starting location tracking")
+            dprint("[LocationManager] Authorization granted, starting location tracking")
             startTracking()
         } else if authorizationStatus == .denied || authorizationStatus == .restricted {
-            print("[LocationManager] Authorization denied or restricted")
+            dprint("[LocationManager] Authorization denied or restricted")
             errorMessage = "Location access denied. Please enable in Settings."
         }
     }
@@ -238,7 +238,7 @@ extension LocationManager: CLLocationManagerDelegate {
         }
 
         guard let newLocation = locations.last else { return }
-        print("[LocationManager] Got location update: \(newLocation.coordinate.latitude), \(newLocation.coordinate.longitude)")
+        dprint("[LocationManager] Got location update: \(newLocation.coordinate.latitude), \(newLocation.coordinate.longitude)")
         location = newLocation
         errorMessage = nil
     }

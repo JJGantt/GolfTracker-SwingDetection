@@ -979,12 +979,12 @@ struct ActiveRoundView: View {
     }
 
     private func handleViewAppear() {
-        print("⌚ [ActiveRoundView] View appeared")
-        print("⌚ [ActiveRoundView] Current location: \(locationManager.location?.description ?? "nil")")
-        print("⌚ [ActiveRoundView] Authorization status: \(locationManager.authorizationStatus)")
+        dprint("⌚ [ActiveRoundView] View appeared")
+        dprint("⌚ [ActiveRoundView] Current location: \(locationManager.location?.description ?? "nil")")
+        dprint("⌚ [ActiveRoundView] Authorization status: \(locationManager.authorizationStatus)")
         locationManager.requestPermission()
         locationManager.startTracking()
-        print("⌚ [ActiveRoundView] Called requestPermission and startTracking")
+        dprint("⌚ [ActiveRoundView] Called requestPermission and startTracking")
         restoreCalculatedMapPosition(force: true)
         isMainViewFocused = true
         swingDetector.startMonitoring()
@@ -993,10 +993,10 @@ struct ActiveRoundView: View {
         guard store.currentRound != nil, !workoutManager.isWorkoutActive else { return }
         workoutManager.requestAuthorization { success, _ in
             if success {
-                print("⌚ [ActiveRoundView] HealthKit authorized, starting workout")
+                dprint("⌚ [ActiveRoundView] HealthKit authorized, starting workout")
                 workoutManager.startWorkout()
             } else {
-                print("⌚ [ActiveRoundView] HealthKit authorization failed")
+                dprint("⌚ [ActiveRoundView] HealthKit authorization failed")
             }
         }
     }
@@ -1420,11 +1420,11 @@ struct ActiveRoundView: View {
     }
 
     private func toggleAimDirection() {
-        print("⌚ [AimDirection] User icon tapped")
+        dprint("⌚ [AimDirection] User icon tapped")
 
         // If already frozen, unfreeze
         if swingDetector.capturedAimDirection != nil {
-            print("⌚ [AimDirection] Unfreezing heading")
+            dprint("⌚ [AimDirection] Unfreezing heading")
             swingDetector.capturedAimDirection = nil
             WKInterfaceDevice.current().play(.click)
             isMainViewFocused = true
@@ -1432,7 +1432,7 @@ struct ActiveRoundView: View {
         }
 
         // Otherwise, capture current heading
-        print("⌚ [AimDirection] Current heading: \(locationManager.heading?.description ?? "nil")")
+        dprint("⌚ [AimDirection] Current heading: \(locationManager.heading?.description ?? "nil")")
 
         var heading: Double?
 
@@ -1446,12 +1446,12 @@ struct ActiveRoundView: View {
             // This allows testing in simulator
             let bearingToHole = calculateBearing(from: userLocation.coordinate, to: holeCoord)
             heading = (bearingToHole + 45).truncatingRemainder(dividingBy: 360)
-            print("⌚ [AimDirection] Using simulated heading (bearing + 45°)")
+            dprint("⌚ [AimDirection] Using simulated heading (bearing + 45°)")
         }
 
         guard let finalHeading = heading else {
             // No heading available, vibrate to indicate error
-            print("⌚ [AimDirection] ERROR: No heading or location available")
+            dprint("⌚ [AimDirection] ERROR: No heading or location available")
             WKInterfaceDevice.current().play(.failure)
             isMainViewFocused = true
             return
@@ -1459,7 +1459,7 @@ struct ActiveRoundView: View {
 
         // Capture the current heading in SwingDetectionManager so it persists with detected swings
         swingDetector.capturedAimDirection = finalHeading
-        print("⌚ [AimDirection] Captured heading: \(finalHeading)")
+        dprint("⌚ [AimDirection] Captured heading: \(finalHeading)")
 
         // Haptic feedback
         WKInterfaceDevice.current().play(.click)
@@ -1474,13 +1474,13 @@ struct ActiveRoundView: View {
            let hole = store.currentHole,
            let holeCoord = hole.coordinate {
             trajectoryHeading = calculateBearing(from: userLocation.coordinate, to: holeCoord)
-            print("⌚ [RecordStroke] No captured heading, using bearing to flag: \(trajectoryHeading!)")
+            dprint("⌚ [RecordStroke] No captured heading, using bearing to flag: \(trajectoryHeading!)")
         }
 
         // Pass the trajectory heading to the stroke
         // This works even if there's no hole - addStroke will use the next hole number
         guard let club = selectedClub else {
-            print("⌚ [RecordStroke] ERROR: No club selected")
+            dprint("⌚ [RecordStroke] ERROR: No club selected")
             return
         }
         store.addStroke(clubId: club.id, trajectoryHeading: trajectoryHeading)
@@ -1522,12 +1522,12 @@ struct ActiveRoundView: View {
 
     private func addStrokeFromLastSwing() {
         guard let swing = swingDetector.lastDetectedSwing else {
-            print("⌚ [AddLastSwing] No swing detected")
+            dprint("⌚ [AddLastSwing] No swing detected")
             return
         }
 
         guard store.currentRound != nil, let hole = store.currentHole else {
-            print("⌚ [AddLastSwing] No active round or hole")
+            dprint("⌚ [AddLastSwing] No active round or hole")
             return
         }
 
@@ -1538,7 +1538,7 @@ struct ActiveRoundView: View {
         }
 
         guard let club = selectedClub else {
-            print("⌚ [RecordStrokeFromMotion] ERROR: No club selected")
+            dprint("⌚ [RecordStrokeFromMotion] ERROR: No club selected")
             return
         }
 
@@ -1561,7 +1561,7 @@ struct ActiveRoundView: View {
         WKInterfaceDevice.current().play(.success)
         isMainViewFocused = true
 
-        print("⌚ [AddLastSwing] Added stroke from detected swing at \(swing.location) with \(swing.peakAcceleration)G")
+        dprint("⌚ [AddLastSwing] Added stroke from detected swing at \(swing.location) with \(swing.peakAcceleration)G")
     }
 
     /// Auto-add a stroke from the detected swing without clearing the overlay.
@@ -1592,7 +1592,7 @@ struct ActiveRoundView: View {
                swingType: swing.swingType
            ) {
             store.deleteLastStroke()
-            print("⌚ [AutoAdd] Replaced previous stroke (practice swing, same location)")
+            dprint("⌚ [AutoAdd] Replaced previous stroke (practice swing, same location)")
         }
 
         let strokeId = store.addStroke(
@@ -1616,7 +1616,7 @@ struct ActiveRoundView: View {
         // Same feedback as normal add
         WKInterfaceDevice.current().play(.success)
 
-        print("⌚ [AutoAdd] Auto-added stroke from detected swing at \(swing.location)")
+        dprint("⌚ [AutoAdd] Auto-added stroke from detected swing at \(swing.location)")
     }
 
     /// Undo the most recently auto-added stroke and dismiss the overlay.
@@ -1625,7 +1625,7 @@ struct ActiveRoundView: View {
             swingDetector.logUndoEvent(strokeId: strokeId)
             store.deleteLastStroke()
             autoAddedStrokeId = nil
-            print("⌚ [AutoAdd] Undid auto-added stroke (false detection)")
+            dprint("⌚ [AutoAdd] Undid auto-added stroke (false detection)")
         }
         swingDetector.clearLastSwing()
         WKInterfaceDevice.current().play(.click)
@@ -1646,7 +1646,7 @@ struct ActiveRoundView: View {
               store.currentHole != nil else { return }
 
         guard let club = selectedClub else {
-            print("⌚ [ConfirmPenalty] ERROR: No club selected")
+            dprint("⌚ [ConfirmPenalty] ERROR: No club selected")
             return
         }
 

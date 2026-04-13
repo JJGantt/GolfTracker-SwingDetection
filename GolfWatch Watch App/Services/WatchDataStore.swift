@@ -170,7 +170,7 @@ class WatchDataStore: ObservableObject {
         // If current hole is finished, just reopen it (don't delete strokes or move back)
         if let hole = hole, round.isHoleCompleted(hole.number) {
             reopenHole(holeNumber: hole.number)
-            print("⌚ [WatchDataStore] Reopened finished hole \(hole.number)")
+            dprint("⌚ [WatchDataStore] Reopened finished hole \(hole.number)")
             return
         }
 
@@ -186,7 +186,7 @@ class WatchDataStore: ObservableObject {
 
             saveRound()
             savePendingStrokes()
-            print("⌚ [WatchDataStore] Deleted last stroke")
+            dprint("⌚ [WatchDataStore] Deleted last stroke")
 
             WatchConnectivityManager.shared.sendRound(round)
         } else if currentHoleIndex > 0 {
@@ -197,7 +197,7 @@ class WatchDataStore: ObservableObject {
             if round.isHoleCompleted(previousHoleNumber) {
                 reopenHole(holeNumber: previousHoleNumber)
                 updateCurrentHoleIndex(newIndex: previousHoleIdx)
-                print("⌚ [WatchDataStore] Undid hole completion, moved back to hole \(previousHoleNumber)")
+                dprint("⌚ [WatchDataStore] Undid hole completion, moved back to hole \(previousHoleNumber)")
             }
         }
     }
@@ -207,16 +207,16 @@ class WatchDataStore: ObservableObject {
     private func syncStrokes() {
         guard !pendingStrokes.isEmpty else { return }
 
-        print("⌚ [WatchDataStore] Syncing \(pendingStrokes.count) pending strokes to iPhone")
+        dprint("⌚ [WatchDataStore] Syncing \(pendingStrokes.count) pending strokes to iPhone")
         connectivity.sendStrokes(pendingStrokes) { [weak self] success in
             if success {
-                print("⌚ [WatchDataStore] Successfully synced strokes, clearing pending queue")
+                dprint("⌚ [WatchDataStore] Successfully synced strokes, clearing pending queue")
                 DispatchQueue.main.async {
                     self?.pendingStrokes.removeAll()
                     self?.savePendingStrokes()
                 }
             } else {
-                print("⌚ [WatchDataStore] Failed to sync strokes, will retry later")
+                dprint("⌚ [WatchDataStore] Failed to sync strokes, will retry later")
             }
         }
     }
@@ -225,35 +225,35 @@ class WatchDataStore: ObservableObject {
 
     private func setupConnectivity() {
         connectivity.onReceiveRound = { [weak self] round in
-            print("⌚ [WatchDataStore] Received round: \(round.courseName)")
-            print("⌚ [WatchDataStore] Round has \(round.holes.count) holes, current hole index: \(round.currentHoleIndex)")
+            dprint("⌚ [WatchDataStore] Received round: \(round.courseName)")
+            dprint("⌚ [WatchDataStore] Round has \(round.holes.count) holes, current hole index: \(round.currentHoleIndex)")
             DispatchQueue.main.async {
                 self?.currentRound = round
                 self?.saveToStorage()
-                print("⌚ [WatchDataStore] Current round set successfully, synced to hole \(round.currentHoleIndex)")
+                dprint("⌚ [WatchDataStore] Current round set successfully, synced to hole \(round.currentHoleIndex)")
             }
         }
 
         connectivity.onReceiveClubs = { [weak self] clubs in
-            print("⌚ [WatchDataStore] Received \(clubs.count) clubs from iPhone")
+            dprint("⌚ [WatchDataStore] Received \(clubs.count) clubs from iPhone")
             DispatchQueue.main.async {
                 self?.availableClubs = clubs
                 self?.saveToStorage()
-                print("⌚ [WatchDataStore] Clubs synced successfully")
+                dprint("⌚ [WatchDataStore] Clubs synced successfully")
             }
         }
 
         connectivity.onReceiveClubTypes = { [weak self] types in
-            print("⌚ [WatchDataStore] Received \(types.count) club types from iPhone")
+            dprint("⌚ [WatchDataStore] Received \(types.count) club types from iPhone")
             DispatchQueue.main.async {
                 self?.clubTypes = types
                 self?.saveToStorage()
-                print("⌚ [WatchDataStore] Club types synced successfully")
+                dprint("⌚ [WatchDataStore] Club types synced successfully")
             }
         }
 
         connectivity.onReceiveHoleDetectionData = { [weak self] detectionData in
-            print("⌚ [WatchDataStore] Received hole detection data for course \(detectionData.courseId), blobs: \(detectionData.blobs.count)")
+            dprint("⌚ [WatchDataStore] Received hole detection data for course \(detectionData.courseId), blobs: \(detectionData.blobs.count)")
             DispatchQueue.main.async {
                 self?.holeDetectionDataByCourse[detectionData.courseId] = detectionData
                 self?.saveToStorage()
@@ -315,23 +315,23 @@ class WatchDataStore: ObservableObject {
         if let data = UserDefaults.standard.data(forKey: clubsKey),
            let clubs = try? JSONDecoder().decode([ClubData].self, from: data) {
             availableClubs = clubs
-            print("⌚ [WatchDataStore] Loaded \(clubs.count) clubs from storage")
+            dprint("⌚ [WatchDataStore] Loaded \(clubs.count) clubs from storage")
         } else {
-            print("⌚ [WatchDataStore] No clubs in storage, waiting for sync from iPhone")
+            dprint("⌚ [WatchDataStore] No clubs in storage, waiting for sync from iPhone")
         }
 
         if let data = UserDefaults.standard.data(forKey: clubTypesKey),
            let types = try? JSONDecoder().decode([ClubTypeData].self, from: data) {
             clubTypes = types
-            print("⌚ [WatchDataStore] Loaded \(types.count) club types from storage")
+            dprint("⌚ [WatchDataStore] Loaded \(types.count) club types from storage")
         } else {
-            print("⌚ [WatchDataStore] No club types in storage, waiting for sync from iPhone")
+            dprint("⌚ [WatchDataStore] No club types in storage, waiting for sync from iPhone")
         }
 
         if let data = UserDefaults.standard.data(forKey: holeDetectionDataKey),
            let detectionDataArray = try? JSONDecoder().decode([CourseHoleDetectionData].self, from: data) {
             holeDetectionDataByCourse = Dictionary(uniqueKeysWithValues: detectionDataArray.map { ($0.courseId, $0) })
-            print("⌚ [WatchDataStore] Loaded hole detection data for \(holeDetectionDataByCourse.count) course(s)")
+            dprint("⌚ [WatchDataStore] Loaded hole detection data for \(holeDetectionDataByCourse.count) course(s)")
         }
 
         if let data = UserDefaults.standard.data(forKey: holeFilterSettingsKey),
@@ -388,7 +388,7 @@ class WatchDataStore: ObservableObject {
         saveRound()
         WatchConnectivityManager.shared.sendRound(round)
 
-        print("⌚ [WatchDataStore] Added hole \(nextHoleNumber) (awaiting flag placement)")
+        dprint("⌚ [WatchDataStore] Added hole \(nextHoleNumber) (awaiting flag placement)")
     }
 
     func addHole(coordinate: CLLocationCoordinate2D, par: Int? = nil) {
@@ -408,7 +408,7 @@ class WatchDataStore: ObservableObject {
         saveRound()
         WatchConnectivityManager.shared.sendRound(round)
 
-        print("⌚ [WatchDataStore] Added hole \(nextHoleNumber)\(par.map { " with par \($0)" } ?? "") and navigated to it")
+        dprint("⌚ [WatchDataStore] Added hole \(nextHoleNumber)\(par.map { " with par \($0)" } ?? "") and navigated to it")
     }
 
     func updateHole(holeNumber: Int, newCoordinate: CLLocationCoordinate2D, par: Int? = nil) {
@@ -428,7 +428,7 @@ class WatchDataStore: ObservableObject {
         saveRound()
         WatchConnectivityManager.shared.sendRound(round)
 
-        print("⌚ [WatchDataStore] Updated hole \(holeNumber) location\(par.map { " and par to \($0)" } ?? "")")
+        dprint("⌚ [WatchDataStore] Updated hole \(holeNumber) location\(par.map { " and par to \($0)" } ?? "")")
     }
 
     func navigateToNextHole() {
@@ -443,7 +443,7 @@ class WatchDataStore: ObservableObject {
         saveRound()
         WatchConnectivityManager.shared.sendRound(round)
 
-        print("⌚ [WatchDataStore] Navigated to hole \(nextIndex + 1)")
+        dprint("⌚ [WatchDataStore] Navigated to hole \(nextIndex + 1)")
     }
 
     func navigateToPreviousHole() {
@@ -458,7 +458,7 @@ class WatchDataStore: ObservableObject {
         saveRound()
         WatchConnectivityManager.shared.sendRound(round)
 
-        print("⌚ [WatchDataStore] Navigated to hole \(prevIndex + 1)")
+        dprint("⌚ [WatchDataStore] Navigated to hole \(prevIndex + 1)")
     }
 
     // MARK: - Quick Start Round
@@ -477,7 +477,7 @@ class WatchDataStore: ObservableObject {
         saveRound()
         WatchConnectivityManager.shared.sendRound(newRound)
 
-        print("⌚ [WatchDataStore] Started Quick Start round with hole 1 (awaiting flag placement)")
+        dprint("⌚ [WatchDataStore] Started Quick Start round with hole 1 (awaiting flag placement)")
     }
 
     // MARK: - Helpers

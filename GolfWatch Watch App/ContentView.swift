@@ -9,7 +9,7 @@ struct ContentView: View {
             .onChange(of: store.currentRound) { oldRound, newRound in
                 // If round is cleared, end the workout
                 if oldRound != nil && newRound == nil && workoutManager.isWorkoutActive {
-                    print("⌚ [ContentView] Round ended, stopping workout")
+                    dprint("⌚ [ContentView] Round ended, stopping workout")
                     workoutManager.endWorkout()
                 }
             }

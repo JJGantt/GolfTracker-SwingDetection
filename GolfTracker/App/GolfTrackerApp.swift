@@ -13,7 +13,7 @@ struct GolfTrackerApp: App {
     @StateObject private var motionDataHandler = MotionDataHandler()
 
     init() {
-        print("🚀🚀🚀 APP LAUNCHED - GolfTracker is starting! 🚀🚀🚀")
+        dprint("🚀🚀🚀 APP LAUNCHED - GolfTracker is starting! 🚀🚀🚀")
     }
 
     var body: some Scene {
@@ -74,22 +74,22 @@ class MotionDataHandler: ObservableObject {
 
     private func setupWatchConnectivity() {
         WatchConnectivityManager.shared.onReceiveMotionData = { [weak self] csv, sampleCount, threshold, timeAboveThreshold, rawAccelCsv, rawAccelSampleCount in
-            print("📱 [MotionDataHandler] Received DeviceMotion: \(sampleCount) samples, RawAccel: \(rawAccelSampleCount ?? 0) samples")
+            dprint("📱 [MotionDataHandler] Received DeviceMotion: \(sampleCount) samples, RawAccel: \(rawAccelSampleCount ?? 0) samples")
             self?.handleMotionData(csv: csv, sampleCount: sampleCount, threshold: threshold, timeAboveThreshold: timeAboveThreshold, rawAccelCsv: rawAccelCsv, rawAccelSampleCount: rawAccelSampleCount)
         }
 
         WatchConnectivityManager.shared.onReceivePuttEventData = { [weak self] csv, sampleCount, rawAccelCsv, rawAccelSampleCount, outcome in
-            print("📱 [MotionDataHandler] Received putt attempt (\(outcome)): \(sampleCount) DeviceMotion, \(rawAccelSampleCount ?? 0) RawAccel samples")
+            dprint("📱 [MotionDataHandler] Received putt attempt (\(outcome)): \(sampleCount) DeviceMotion, \(rawAccelSampleCount ?? 0) RawAccel samples")
             self?.handlePuttEventData(csv: csv, sampleCount: sampleCount, rawAccelCsv: rawAccelCsv, rawAccelSampleCount: rawAccelSampleCount, outcome: outcome)
         }
 
         WatchConnectivityManager.shared.onReceivePuttDiagnosticLog = { [weak self] log, outcome, finalState in
-            print("📱 [MotionDataHandler] Received putt diagnostic log: outcome=\(outcome)")
+            dprint("📱 [MotionDataHandler] Received putt diagnostic log: outcome=\(outcome)")
             self?.handlePuttDiagnosticLog(log: log, outcome: outcome, finalState: finalState)
         }
 
         WatchConnectivityManager.shared.onReceiveMotionFile = { [weak self] url, metadata in
-            print("📱 [MotionDataHandler] Received motion file transfer: \(url.lastPathComponent)")
+            dprint("📱 [MotionDataHandler] Received motion file transfer: \(url.lastPathComponent)")
             self?.handleMotionFile(url: url, metadata: metadata)
         }
     }
@@ -117,9 +117,9 @@ class MotionDataHandler: ObservableObject {
             )
 
             testFiles.append(testFile)
-            print("📱 [MotionDataHandler] Device Motion CSV saved to \(fileURL.path)")
+            dprint("📱 [MotionDataHandler] Device Motion CSV saved to \(fileURL.path)")
         } catch {
-            print("📱 [MotionDataHandler] Error saving Device Motion CSV: \(error)")
+            dprint("📱 [MotionDataHandler] Error saving Device Motion CSV: \(error)")
         }
 
         // Save raw accelerometer CSV (800Hz) if available
@@ -143,9 +143,9 @@ class MotionDataHandler: ObservableObject {
                 )
 
                 testFiles.append(rawTestFile)
-                print("📱 [MotionDataHandler] Raw Accelerometer CSV saved to \(rawFileURL.path)")
+                dprint("📱 [MotionDataHandler] Raw Accelerometer CSV saved to \(rawFileURL.path)")
             } catch {
-                print("📱 [MotionDataHandler] Error saving Raw Accelerometer CSV: \(error)")
+                dprint("📱 [MotionDataHandler] Error saving Raw Accelerometer CSV: \(error)")
             }
         }
 
@@ -169,9 +169,9 @@ class MotionDataHandler: ObservableObject {
             try fullCSV.write(to: fileURL, atomically: true, encoding: .utf8)
             let testFile = MotionTestFile(id: UUID(), date: Date(), sampleCount: sampleCount, fileName: fileName)
             testFiles.append(testFile)
-            print("📱 [MotionDataHandler] Putt \(outcome) Device Motion CSV saved to \(fileURL.path)")
+            dprint("📱 [MotionDataHandler] Putt \(outcome) Device Motion CSV saved to \(fileURL.path)")
         } catch {
-            print("📱 [MotionDataHandler] Error saving putt Device Motion CSV: \(error)")
+            dprint("📱 [MotionDataHandler] Error saving putt Device Motion CSV: \(error)")
         }
 
         // Save raw accelerometer CSV if available
@@ -188,9 +188,9 @@ class MotionDataHandler: ObservableObject {
                 try fullRawCSV.write(to: rawFileURL, atomically: true, encoding: .utf8)
                 let rawTestFile = MotionTestFile(id: UUID(), date: Date(), sampleCount: rawCount, fileName: rawFileName)
                 testFiles.append(rawTestFile)
-                print("📱 [MotionDataHandler] Putt \(outcome) Raw Accel CSV saved to \(rawFileURL.path)")
+                dprint("📱 [MotionDataHandler] Putt \(outcome) Raw Accel CSV saved to \(rawFileURL.path)")
             } catch {
-                print("📱 [MotionDataHandler] Error saving putt Raw Accel CSV: \(error)")
+                dprint("📱 [MotionDataHandler] Error saving putt Raw Accel CSV: \(error)")
             }
         }
 
@@ -223,9 +223,9 @@ class MotionDataHandler: ObservableObject {
 
             testFiles.append(testFile)
             saveTestFiles()
-            print("📱 [MotionDataHandler] Putt diagnostic log saved: \(fileName)")
+            dprint("📱 [MotionDataHandler] Putt diagnostic log saved: \(fileName)")
         } catch {
-            print("📱 [MotionDataHandler] Error saving putt diagnostic log: \(error)")
+            dprint("📱 [MotionDataHandler] Error saving putt diagnostic log: \(error)")
         }
     }
 
@@ -288,7 +288,7 @@ class MotionDataHandler: ObservableObject {
             prefix = "swing_data_log"
             header = ""
         default:
-            print("📱 [MotionDataHandler] Unknown file type '\(fileType)/\(dataType)', skipping")
+            dprint("📱 [MotionDataHandler] Unknown file type '\(fileType)/\(dataType)', skipping")
             return
         }
 
@@ -318,9 +318,9 @@ class MotionDataHandler: ObservableObject {
             let testFile = MotionTestFile(id: UUID(), date: Date(), sampleCount: sampleCount, fileName: fileName)
             testFiles.append(testFile)
             saveTestFiles()
-            print("📱 [MotionDataHandler] Saved \(fileName) (\(sampleCount) samples)")
+            dprint("📱 [MotionDataHandler] Saved \(fileName) (\(sampleCount) samples)")
         } catch {
-            print("📱 [MotionDataHandler] Error saving motion file \(fileName): \(error)")
+            dprint("📱 [MotionDataHandler] Error saving motion file \(fileName): \(error)")
         }
 
         // If a diagnostic log was bundled in the metadata, save it as a separate file

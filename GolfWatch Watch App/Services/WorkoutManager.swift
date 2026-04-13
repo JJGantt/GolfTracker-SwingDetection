@@ -21,7 +21,7 @@ class WorkoutManager: NSObject, ObservableObject {
     func requestAuthorization(completion: @escaping (Bool, Error?) -> Void) {
         // Check if HealthKit is available on this device
         guard HKHealthStore.isHealthDataAvailable() else {
-            print("⌚ [WorkoutManager] HealthKit is not available on this device")
+            dprint("⌚ [WorkoutManager] HealthKit is not available on this device")
             completion(false, nil)
             return
         }
@@ -35,7 +35,7 @@ class WorkoutManager: NSObject, ObservableObject {
 
         healthStore.requestAuthorization(toShare: typesToShare, read: typesToRead) { success, error in
             let errMsg = error?.localizedDescription ?? "none"
-            print("⌚ [WorkoutManager] requestAuthorization completed: success=\(success) error=\(errMsg)")
+            dprint("⌚ [WorkoutManager] requestAuthorization completed: success=\(success) error=\(errMsg)")
             completion(success, error)
         }
     }
@@ -55,19 +55,19 @@ class WorkoutManager: NSObject, ObservableObject {
             session?.delegate = self
             session?.startActivity(with: Date())
             isWorkoutActive = true
-            print("⌚ [WorkoutManager] Workout session started (no data collection)")
+            dprint("⌚ [WorkoutManager] Workout session started (no data collection)")
         } catch {
-            print("⌚ [WorkoutManager] Failed to start workout: \(error.localizedDescription)")
+            dprint("⌚ [WorkoutManager] Failed to start workout: \(error.localizedDescription)")
         }
     }
 
     func endWorkout() {
         guard let session = session else {
-            print("⌚ [WorkoutManager] No active workout session to end")
+            dprint("⌚ [WorkoutManager] No active workout session to end")
             return
         }
         session.end()
-        print("⌚ [WorkoutManager] Workout session ended")
+        dprint("⌚ [WorkoutManager] Workout session ended")
         DispatchQueue.main.async {
             self.isWorkoutActive = false
             self.session = nil
@@ -85,32 +85,32 @@ extension WorkoutManager: HKWorkoutSessionDelegate {
         DispatchQueue.main.async {
             switch toState {
             case .running:
-                print("⌚ [WorkoutManager] HKWorkoutSession → RUNNING (app should stay alive screen-off)")
+                dprint("⌚ [WorkoutManager] HKWorkoutSession → RUNNING (app should stay alive screen-off)")
                 self.onSessionRunning?()
                 self.onSessionRunning = nil
             case .ended:
-                print("⌚ [WorkoutManager] HKWorkoutSession → ended")
+                dprint("⌚ [WorkoutManager] HKWorkoutSession → ended")
                 self.isWorkoutActive = false
             case .paused:
-                print("⌚ [WorkoutManager] HKWorkoutSession → paused")
+                dprint("⌚ [WorkoutManager] HKWorkoutSession → paused")
             case .prepared:
-                print("⌚ [WorkoutManager] HKWorkoutSession → prepared")
+                dprint("⌚ [WorkoutManager] HKWorkoutSession → prepared")
             case .stopped:
-                print("⌚ [WorkoutManager] HKWorkoutSession → stopped")
+                dprint("⌚ [WorkoutManager] HKWorkoutSession → stopped")
                 self.isWorkoutActive = false
             case .notStarted:
-                print("⌚ [WorkoutManager] HKWorkoutSession → notStarted")
+                dprint("⌚ [WorkoutManager] HKWorkoutSession → notStarted")
                 self.isWorkoutActive = false
                 break
             @unknown default:
-                print("⌚ [WorkoutManager] HKWorkoutSession → unknown state")
+                dprint("⌚ [WorkoutManager] HKWorkoutSession → unknown state")
             }
         }
     }
 
     func workoutSession(_ workoutSession: HKWorkoutSession,
                        didFailWithError error: Error) {
-        print("⌚ [WorkoutManager] HKWorkoutSession FAILED: \(error.localizedDescription)")
+        dprint("⌚ [WorkoutManager] HKWorkoutSession FAILED: \(error.localizedDescription)")
         DispatchQueue.main.async {
             self.isWorkoutActive = false
         }
