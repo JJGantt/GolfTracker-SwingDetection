@@ -3,12 +3,8 @@ import Foundation
 /// Uploads swing detection events to Supabase for ML analysis.
 /// Manages the pending-event lifecycle: each detection is held until
 /// explicitly accepted/rejected or flushed by the next detection.
-class SupabaseUploader: ObservableObject {
+class SupabaseUploader {
     static let shared = SupabaseUploader()
-
-    // MARK: - Observable Upload Status (shown in AccelTestView)
-    @Published var uploadCount: Int = 0
-    @Published var lastUploadStatus: String = ""
 
     // MARK: - Configuration
 
@@ -172,23 +168,17 @@ class SupabaseUploader: ObservableObject {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = body
 
-        URLSession.shared.dataTask(with: request) { [weak self] data, response, error in
+        URLSession.shared.dataTask(with: request) { data, response, error in
             if let error = error {
                 dprint("⌚ [SupabaseUploader] Metadata upload failed: \(error.localizedDescription)")
-                DispatchQueue.main.async { self?.lastUploadStatus = "✗ meta: \(error.localizedDescription)" }
                 return
             }
             let status = (response as? HTTPURLResponse)?.statusCode ?? 0
             if status >= 200 && status < 300 {
                 dprint("⌚ [SupabaseUploader] Metadata uploaded (\(event.label)/\(event.confidence))")
-                DispatchQueue.main.async {
-                    self?.uploadCount += 1
-                    self?.lastUploadStatus = "✓ meta (\(event.label)/\(event.confidence))"
-                }
             } else {
                 let body = data.flatMap { String(data: $0, encoding: .utf8) } ?? "no body"
                 dprint("⌚ [SupabaseUploader] Metadata upload HTTP \(status): \(body)")
-                DispatchQueue.main.async { self?.lastUploadStatus = "✗ meta HTTP \(status)" }
             }
         }.resume()
     }
@@ -196,7 +186,6 @@ class SupabaseUploader: ObservableObject {
     private func uploadMotionCSV(event: PendingEvent) {
         guard !event.motionSlice.isEmpty else {
             dprint("⌚ [SupabaseUploader] No motion data to upload")
-            DispatchQueue.main.async { self.lastUploadStatus += " | ✗ csv: empty" }
             return
         }
 
@@ -222,20 +211,17 @@ class SupabaseUploader: ObservableObject {
         request.setValue("text/csv", forHTTPHeaderField: "Content-Type")
         request.httpBody = csvData
 
-        URLSession.shared.dataTask(with: request) { [weak self] data, response, error in
+        URLSession.shared.dataTask(with: request) { data, response, error in
             if let error = error {
                 dprint("⌚ [SupabaseUploader] CSV upload failed: \(error.localizedDescription)")
-                DispatchQueue.main.async { self?.lastUploadStatus += " | ✗ csv: \(error.localizedDescription)" }
                 return
             }
             let status = (response as? HTTPURLResponse)?.statusCode ?? 0
             if status >= 200 && status < 300 {
                 dprint("⌚ [SupabaseUploader] CSV uploaded (\(event.motionSlice.count) samples)")
-                DispatchQueue.main.async { self?.lastUploadStatus += " | ✓ csv (\(event.motionSlice.count))" }
             } else {
                 let body = data.flatMap { String(data: $0, encoding: .utf8) } ?? "no body"
                 dprint("⌚ [SupabaseUploader] CSV upload HTTP \(status): \(body)")
-                DispatchQueue.main.async { self?.lastUploadStatus += " | ✗ csv HTTP \(status)" }
             }
         }.resume()
     }
