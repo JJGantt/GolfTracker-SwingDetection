@@ -35,6 +35,7 @@ class SupabaseUploader {
         let id: UUID
         let metadata: SwingDetectionManager.DetectionMetadata
         let motionSlice: [SwingDetectionManager.RecordedDataPoint]
+        let rawAccelSlice: [SwingDetectionManager.RawAccelDataPoint]
         let clubType: String?
         var label: String       // "positive" or "false_positive"
         var confidence: String  // "high" or "low"
@@ -58,6 +59,7 @@ class SupabaseUploader {
     func onSwingDetected(
         metadata: SwingDetectionManager.DetectionMetadata,
         motionSlice: [SwingDetectionManager.RecordedDataPoint],
+        rawAccelSlice: [SwingDetectionManager.RawAccelDataPoint] = [],
         clubType: String?,
         autoAdd: Bool
     ) {
@@ -72,6 +74,7 @@ class SupabaseUploader {
                 id: UUID(),
                 metadata: metadata,
                 motionSlice: motionSlice,
+                rawAccelSlice: rawAccelSlice,
                 clubType: clubType,
                 label: "false_positive",
                 confidence: "high"
@@ -86,6 +89,7 @@ class SupabaseUploader {
             id: UUID(),
             metadata: metadata,
             motionSlice: motionSlice,
+            rawAccelSlice: rawAccelSlice,
             clubType: clubType,
             label: autoAdd ? "positive" : "false_positive",
             confidence: "low"
@@ -124,6 +128,7 @@ class SupabaseUploader {
             guard let self = self else { return }
             self.uploadMetadata(event: eventCopy)
             self.uploadMotionCSV(event: eventCopy)
+            self.uploadRawAccelCSV(event: eventCopy)
         }
     }
 
@@ -222,6 +227,44 @@ class SupabaseUploader {
             } else {
                 let body = data.flatMap { String(data: $0, encoding: .utf8) } ?? "no body"
                 dprint("⌚ [SupabaseUploader] CSV upload HTTP \(status): \(body)")
+            }
+        }.resume()
+    }
+
+    private func uploadRawAccelCSV(event: PendingEvent) {
+        guard !event.rawAccelSlice.isEmpty else { return }
+
+        let storagePath = "\(deviceId.uuidString)/\(event.id.uuidString)_raw.csv"
+
+        var csv = "SensorTime,RawAccelX,RawAccelY,RawAccelZ,RawAccelMag\n"
+        let f = { (v: Double) -> String in String(format: "%.4f", v) }
+        for dp in event.rawAccelSlice {
+            csv += "\(f(dp.sensorTime)),\(f(dp.rawAccelX)),\(f(dp.rawAccelY)),\(f(dp.rawAccelZ)),\(f(dp.rawAccelMag))\n"
+        }
+
+        guard let csvData = csv.data(using: .utf8),
+              let url = URL(string: "\(projectURL)/storage/v1/object/\(storageBucket)/\(storagePath)") else {
+            return
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue(apiKey, forHTTPHeaderField: "apikey")
+        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        request.setValue("text/csv", forHTTPHeaderField: "Content-Type")
+        request.httpBody = csvData
+
+        URLSession.shared.dataTask(with: request) { data, response, error in
+            if let error = error {
+                dprint("⌚ [SupabaseUploader] Raw accel upload failed: \(error.localizedDescription)")
+                return
+            }
+            let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+            if status >= 200 && status < 300 {
+                dprint("⌚ [SupabaseUploader] Raw accel uploaded (\(event.rawAccelSlice.count) samples)")
+            } else {
+                let body = data.flatMap { String(data: $0, encoding: .utf8) } ?? "no body"
+                dprint("⌚ [SupabaseUploader] Raw accel upload HTTP \(status): \(body)")
             }
         }.resume()
     }
