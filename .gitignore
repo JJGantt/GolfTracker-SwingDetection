@@ -62,3 +62,4 @@ unified_detection/
 
 # Cache
 .cache/
+supabase/.temp/
