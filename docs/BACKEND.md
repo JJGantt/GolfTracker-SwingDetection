@@ -56,6 +56,7 @@ One row per detected swing. Stores classification metadata; actual motion CSV li
 | `classification` | text | `putt`, `swing`, `ambig` |
 | `swing_type` | text | `putt`, `partial`, `full` (post-classification) |
 | `label` | text | `positive`, `false_positive` (default: `positive`) |
+| `confidence` | text | `high` (explicit user action) or `low` (implicit flush). Default: `low`. |
 | `fs_peak_rot_mag` | double | Forward-stroke peak rotation magnitude |
 | `bs_peak_rot_mag` | double | Backstroke peak rotation magnitude |
 | `fs_bs_ratio` | double | FS/BS ratio |
@@ -183,6 +184,50 @@ Schema changes are managed as sequential SQL files in `supabase/migrations/`:
 | `00004_debug_rls.sql` | Disabled RLS for development. |
 
 To recreate the database from scratch: `supabase db push` applies all migrations in order.
+
+---
+
+## Upload Flow
+
+Every detected swing eventually uploads to Supabase — the label and confidence depend on the mode and user action.
+
+### Pending Event Lifecycle
+
+Each detection creates a **pending event** (metadata + motion slice). The event stays pending until one of these triggers flushes it:
+
+| Trigger | Label | Confidence |
+|---|---|---|
+| User explicitly undoes the stroke (auto-add mode) | `false_positive` | `high` |
+| User explicitly taps to add the stroke (manual-add mode) | `positive` | `high` |
+| Next detection fires without user action (auto-add: no undo) | `positive` | `low` |
+| Next detection fires without user action (manual-add: no tap) | `false_positive` | `low` |
+| Round ends / detection stops | Inherits current tentative label | `low` |
+| Farming mode (reject-all toggle) | `false_positive` | `high` |
+
+### Mode Logic
+
+**Auto-add mode** (`autoAdd = true`):
+- Detection → stroke auto-added → pending event with tentative label `positive`
+- Undo → immediately flush as `false_positive` / `high`, upload to Supabase
+- Next detection without undo → flush previous as `positive` / `low`, hold new as pending
+
+**Manual-add mode** (`autoAdd = false`):
+- Detection → cyan icon shown, stroke NOT added → pending event with tentative label `false_positive`
+- User taps icon → flip label to `positive` / `high`
+- Next detection without tap → flush previous as `false_positive` / `low`, hold new as pending
+
+**Farming mode** (new `rejectAll` toggle):
+- Detection → immediately upload as `false_positive` / `high`
+- No pending state — flush on every detection
+- Purpose: collect false-positive corpus during casual wear (walking, daily activity)
+
+### Upload Payload
+
+Each flush sends two things to Supabase:
+1. **Metadata row** → `POST /rest/v1/swing_events` (JSON with classification, gate values, label, confidence, etc.)
+2. **Motion CSV** → upload to `swing-motion` bucket at `{device_id}/{event_id}.csv`
+
+The `storage_path` column in the metadata row points at the CSV.
 
 ---
 
