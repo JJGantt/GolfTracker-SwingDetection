@@ -69,6 +69,7 @@
 		DCD05079795E4F9EB659C7AF /* SwingDetectionManager+ContactGates.swift in Sources */ = {isa = PBXBuildFile; fileRef = 870F6DC4F3184CDF81331B32 /* SwingDetectionManager+ContactGates.swift */; };
 		0CDECE5DE9CC4C14A11A1FD1 /* SwingDetectionManager+DataCollection.swift in Sources */ = {isa = PBXBuildFile; fileRef = F25CB6D57A294246AD44AF60 /* SwingDetectionManager+DataCollection.swift */; };
 		9C0EB1FEC65B49BE83542622 /* SwingDetectionManager+MotionCapture.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEDFC0FA75D24B279C2593AC /* SwingDetectionManager+MotionCapture.swift */; };
+		DDF199415BA84CF9BD09D35D /* SupabaseUploader.swift in Sources */ = {isa = PBXBuildFile; fileRef = E0D8E00B351E4F0D84DB3187 /* SupabaseUploader.swift */; };
 		25075A32729043CBA13B479B /* ActiveRoundView+StrokeRecording.swift in Sources */ = {isa = PBXBuildFile; fileRef = B395866142294534934CF914 /* ActiveRoundView+StrokeRecording.swift */; };
 		BF402ACBA5ED40FE92601108 /* ActiveRoundView+Scorecard.swift in Sources */ = {isa = PBXBuildFile; fileRef = A6E32218380E4C3C93B38A12 /* ActiveRoundView+Scorecard.swift */; };
 		BBA6A7885FDA496CBB0C574B /* ActiveRoundView+GPSIndicator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 16BCE78889CC4D2BA4EA325D /* ActiveRoundView+GPSIndicator.swift */; };
@@ -169,6 +170,7 @@
 		870F6DC4F3184CDF81331B32 /* SwingDetectionManager+ContactGates.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "SwingDetectionManager+ContactGates.swift"; sourceTree = "<group>"; };
 		F25CB6D57A294246AD44AF60 /* SwingDetectionManager+DataCollection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "SwingDetectionManager+DataCollection.swift"; sourceTree = "<group>"; };
 		BEDFC0FA75D24B279C2593AC /* SwingDetectionManager+MotionCapture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "SwingDetectionManager+MotionCapture.swift"; sourceTree = "<group>"; };
+		E0D8E00B351E4F0D84DB3187 /* SupabaseUploader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SupabaseUploader.swift; sourceTree = "<group>"; };
 		B395866142294534934CF914 /* ActiveRoundView+StrokeRecording.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "ActiveRoundView+StrokeRecording.swift"; sourceTree = "<group>"; };
 		A6E32218380E4C3C93B38A12 /* ActiveRoundView+Scorecard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "ActiveRoundView+Scorecard.swift"; sourceTree = "<group>"; };
 		16BCE78889CC4D2BA4EA325D /* ActiveRoundView+GPSIndicator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "ActiveRoundView+GPSIndicator.swift"; sourceTree = "<group>"; };
@@ -431,6 +433,7 @@
 				870F6DC4F3184CDF81331B32 /* SwingDetectionManager+ContactGates.swift */,
 				F25CB6D57A294246AD44AF60 /* SwingDetectionManager+DataCollection.swift */,
 				BEDFC0FA75D24B279C2593AC /* SwingDetectionManager+MotionCapture.swift */,
+				E0D8E00B351E4F0D84DB3187 /* SupabaseUploader.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -636,6 +639,7 @@
 				DCD05079795E4F9EB659C7AF /* SwingDetectionManager+ContactGates.swift in Sources */,
 				0CDECE5DE9CC4C14A11A1FD1 /* SwingDetectionManager+DataCollection.swift in Sources */,
 				9C0EB1FEC65B49BE83542622 /* SwingDetectionManager+MotionCapture.swift in Sources */,
+				DDF199415BA84CF9BD09D35D /* SupabaseUploader.swift in Sources */,
 				25075A32729043CBA13B479B /* ActiveRoundView+StrokeRecording.swift in Sources */,
 				BF402ACBA5ED40FE92601108 /* ActiveRoundView+Scorecard.swift in Sources */,
 				BBA6A7885FDA496CBB0C574B /* ActiveRoundView+GPSIndicator.swift in Sources */,
