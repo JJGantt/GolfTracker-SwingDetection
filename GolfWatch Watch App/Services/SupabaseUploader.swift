@@ -138,8 +138,8 @@ class SupabaseUploader {
 
         let payload: [String: Any?] = [
             "device_id": deviceId.uuidString,
-            "classification": meta.classification.rawValue,
-            "swing_type": meta.swingType.rawValue,
+            "classification": event.clubType ?? "unknown",
+            "swing_type": event.clubType ?? "unknown",
             "label": event.label,
             "confidence": event.confidence,
             "fs_peak_rot_mag": meta.fsPeakRotMag,
