@@ -158,6 +158,25 @@ request.httpBody = try JSONEncoder().encode(swingEventPayload)
 URLSession.shared.dataTask(with: request) { data, response, error in ... }.resume()
 ```
 
+### Python visualizer (direct from Supabase)
+```bash
+# All events — full multi-subplot breakdown (Rotation, Raw 800Hz, DM UserAccel, Orientation)
+python3 swing_detection/unified_visualize.py --supabase
+
+# Last N events
+python3 swing_detection/unified_visualize.py --supabase 10
+
+# Only false positives
+python3 swing_detection/unified_visualize.py --supabase --label-filter false_positive
+
+# Last 20 positives
+python3 swing_detection/unified_visualize.py --supabase 20 --label-filter positive
+
+# Custom output dir
+python3 swing_detection/unified_visualize.py --supabase -o /tmp
+```
+Downloads DM CSVs + 800Hz raw accel CSVs (when available) directly from Supabase storage, names them for the visualizer's `find_raw_accel_path` convention, and runs `plot_stitched`. Output is an interactive HTML file.
+
 ### Supabase CLI
 ```bash
 # Link to project (one-time)
