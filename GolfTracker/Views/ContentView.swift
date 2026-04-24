@@ -10,8 +10,26 @@ import SwiftUI
 struct ContentView: View {
     @EnvironmentObject var store: DataStore
     @EnvironmentObject var motionDataHandler: MotionDataHandler
+    @ObservedObject private var auth = AuthManager.shared
+    @AppStorage("hasSeenOnboarding") private var hasSeenOnboarding = false
 
     var body: some View {
+        Group {
+            if !auth.isSignedIn {
+                LoginView(onSignedIn: {})
+            } else {
+                mainTabs
+                    .fullScreenCover(isPresented: Binding(
+                        get: { !hasSeenOnboarding },
+                        set: { if !$0 { hasSeenOnboarding = true } }
+                    )) {
+                        OnboardingView(hasSeenOnboarding: $hasSeenOnboarding)
+                    }
+            }
+        }
+    }
+
+    private var mainTabs: some View {
         TabView {
             StatsView()
                 .tabItem {

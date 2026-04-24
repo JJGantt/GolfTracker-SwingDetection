@@ -13,6 +13,8 @@ struct WatchHomeView: View {
                     .font(.system(size: 40))
                     .foregroundColor(.green)
 
+                HealthKitBanner()
+
                 Spacer()
 
                 // Main action button

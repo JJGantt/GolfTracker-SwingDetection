@@ -7,11 +7,14 @@ struct GolfTrackerWatchApp: App {
     @ObservedObject private var connectivity = WatchConnectivityManager.shared
     @ObservedObject private var locationManager = LocationManager.shared
     @ObservedObject private var swingDetector = SwingDetectionManager.shared
+    @AppStorage("hasSeenWatchOnboarding") private var hasSeenWatchOnboarding = false
     @Environment(\.scenePhase) private var scenePhase
 
     var body: some Scene {
         WindowGroup {
-            if swingDetector.motionAuthStatus == .denied || swingDetector.motionAuthStatus == .restricted {
+            if !hasSeenWatchOnboarding {
+                WatchOnboardingView(hasSeenWatchOnboarding: $hasSeenWatchOnboarding)
+            } else if swingDetector.motionAuthStatus == .denied || swingDetector.motionAuthStatus == .restricted {
                 MotionAuthDeniedView()
             } else {
                 ContentView()

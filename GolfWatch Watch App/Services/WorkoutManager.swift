@@ -8,12 +8,23 @@ class WorkoutManager: NSObject, ObservableObject {
     var session: HKWorkoutSession?
 
     @Published var isWorkoutActive = false
+    @Published var healthKitAuthorizationStatus: HKAuthorizationStatus = .notDetermined
+
+    private let workoutType: HKSampleType = HKQuantityType.workoutType()
 
     /// Called once when the HKWorkoutSession first reaches `.running`. Cleared after firing.
     var onSessionRunning: (() -> Void)?
 
     private override init() {
         super.init()
+        refreshAuthorizationStatus()
+    }
+
+    func refreshAuthorizationStatus() {
+        let status = healthStore.authorizationStatus(for: workoutType)
+        DispatchQueue.main.async {
+            self.healthKitAuthorizationStatus = status
+        }
     }
 
     // MARK: - Authorization
@@ -33,9 +44,10 @@ class WorkoutManager: NSObject, ObservableObject {
 
         let typesToRead: Set<HKObjectType> = []
 
-        healthStore.requestAuthorization(toShare: typesToShare, read: typesToRead) { success, error in
+        healthStore.requestAuthorization(toShare: typesToShare, read: typesToRead) { [weak self] success, error in
             let errMsg = error?.localizedDescription ?? "none"
             dprint("⌚ [WorkoutManager] requestAuthorization completed: success=\(success) error=\(errMsg)")
+            self?.refreshAuthorizationStatus()
             completion(success, error)
         }
     }

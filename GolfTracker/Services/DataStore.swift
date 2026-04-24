@@ -241,6 +241,9 @@ class DataStore: ObservableObject {
         } catch {
             errorMessage = "Failed to save courses: \(error.localizedDescription)"
         }
+        for course in courses {
+            SupabaseSync.shared.upsertCourse(course)
+        }
     }
 
     func saveRounds() {
@@ -250,6 +253,15 @@ class DataStore: ObservableObject {
             errorMessage = nil
         } catch {
             errorMessage = "Failed to save rounds: \(error.localizedDescription)"
+        }
+        for round in rounds {
+            SupabaseSync.shared.upsertRound(round)
+            for stroke in round.strokes {
+                SupabaseSync.shared.upsertStroke(stroke, roundId: round.id)
+            }
+            for target in round.targets {
+                SupabaseSync.shared.upsertTarget(target, roundId: round.id)
+            }
         }
     }
 
@@ -305,6 +317,7 @@ class DataStore: ObservableObject {
             errorMessage = nil
             // Sync club types to Watch
             WatchConnectivityManager.shared.sendClubTypes(clubTypes)
+            for t in clubTypes { SupabaseSync.shared.upsertClubType(t) }
         } catch {
             errorMessage = "Failed to save club types: \(error.localizedDescription)"
         }
@@ -341,6 +354,7 @@ class DataStore: ObservableObject {
             errorMessage = nil
             // Sync active set clubs to Watch
             syncActiveClubsToWatch()
+            for c in availableClubs { SupabaseSync.shared.upsertClub(c) }
         } catch {
             errorMessage = "Failed to save clubs: \(error.localizedDescription)"
         }
@@ -361,6 +375,7 @@ class DataStore: ObservableObject {
             errorMessage = nil
             // Sync active set clubs to Watch when club sets change
             syncActiveClubsToWatch()
+            for s in clubSets { SupabaseSync.shared.upsertClubSet(s) }
         } catch {
             errorMessage = "Failed to save club sets: \(error.localizedDescription)"
         }
@@ -420,6 +435,7 @@ class DataStore: ObservableObject {
     func deleteCourse(_ course: Course) {
         courses.removeAll { $0.id == course.id }
         saveCourses()
+        SupabaseSync.shared.deleteCourse(id: course.id)
     }
 
     func updateCourseInfo(_ course: Course, name: String, rating: Double?, slope: Int?) {
@@ -502,6 +518,7 @@ class DataStore: ObservableObject {
             courses[courseIndex].holes[i].number = i + 1
         }
         saveCourses()
+        SupabaseSync.shared.deleteHole(id: hole.id)
         updateActiveRoundHoles(for: course)
     }
 
@@ -715,11 +732,43 @@ class DataStore: ObservableObject {
     func deleteRound(_ round: Round) {
         rounds.removeAll { $0.id == round.id }
         saveRounds()
+        SupabaseSync.shared.deleteRound(id: round.id)
         rebuildPlayerStats()
     }
 
     func hasRounds(for course: Course) -> Bool {
         return rounds.contains { $0.courseId == course.id }
+    }
+
+    // MARK: - Demo Data
+
+    /// Adds a fixed set of fake courses + rounds so visualizations have
+    /// something to render. Idempotent — running twice replaces prior demo data.
+    func seedDemoData() {
+        clearDemoData()
+        let generated = DemoDataSeeder.generate(
+            clubTypes: clubTypes,
+            availableClubs: availableClubs
+        )
+        courses.append(contentsOf: generated.courses)
+        rounds.append(contentsOf: generated.rounds)
+        saveCourses()
+        saveRounds()
+        rebuildPlayerStats()
+    }
+
+    /// Removes any course whose name starts with the demo prefix, along with
+    /// all rounds tied to those courses. Leaves real data alone.
+    func clearDemoData() {
+        let demoCourseIds = Set(
+            courses.filter { $0.name.hasPrefix(DemoDataSeeder.demoPrefix) }.map { $0.id }
+        )
+        guard !demoCourseIds.isEmpty else { return }
+        rounds.removeAll { demoCourseIds.contains($0.courseId) }
+        courses.removeAll { demoCourseIds.contains($0.id) }
+        saveCourses()
+        saveRounds()
+        rebuildPlayerStats()
     }
 
     func updateStrokePosition(in round: Round, stroke: Stroke, newCoordinate: CLLocationCoordinate2D) {
@@ -751,6 +800,7 @@ class DataStore: ObservableObject {
         }
 
         saveRounds()
+        SupabaseSync.shared.deleteStroke(id: stroke.id)
 
         // Send updated round to Watch
         WatchConnectivityManager.shared.sendRound(rounds[roundIndex])
@@ -851,6 +901,7 @@ class DataStore: ObservableObject {
         // Don't allow deleting default types
         guard !clubType.isDefault else { return }
 
+        let removedClubIds = availableClubs.filter { $0.clubTypeId == clubType.id }.map { $0.id }
         clubTypes.removeAll { $0.id == clubType.id }
 
         // Remove all clubs that use this type
@@ -858,6 +909,8 @@ class DataStore: ObservableObject {
 
         saveClubTypes()
         saveClubs()
+        SupabaseSync.shared.deleteClubType(id: clubType.id)
+        for id in removedClubIds { SupabaseSync.shared.deleteClub(id: id) }
     }
 
     func getClubType(byId id: UUID) -> ClubTypeData? {
@@ -919,6 +972,7 @@ class DataStore: ObservableObject {
 
         saveClubs()
         saveClubSets()
+        SupabaseSync.shared.deleteClub(id: club.id)
     }
 
     func getClub(byId id: UUID) -> ClubData? {
@@ -958,6 +1012,7 @@ class DataStore: ObservableObject {
     func deleteClubSet(_ clubSet: ClubSet) {
         clubSets.removeAll { $0.id == clubSet.id }
         saveClubSets()
+        SupabaseSync.shared.deleteClubSet(id: clubSet.id)
     }
 
     func setActiveClubSet(_ clubSet: ClubSet) {
