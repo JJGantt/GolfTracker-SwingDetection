@@ -38,7 +38,6 @@ struct PlayerStats: Codable {
     var avgPuttsPerRound: Double? = nil
     var avgPuttsPerHole: Double? = nil
     var girPercent: Double? = nil           // Greens in regulation %
-    var fairwayHitPercent: Double? = nil    // Par 4/5 tee shots within threshold
     var avgDeviationDegrees: Double? = nil  // Mean absolute deviation from ideal line
 
     // Per club type — keyed by ClubTypeData.id.uuidString

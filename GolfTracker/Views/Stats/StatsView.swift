@@ -22,10 +22,25 @@ struct StatsView: View {
                     }
                 }
                 ToolbarItem(placement: .navigationBarLeading) {
-                    Button {
-                        store.rebuildPlayerStats()
+                    Menu {
+                        Button {
+                            store.rebuildPlayerStats()
+                        } label: {
+                            Label("Rebuild Stats", systemImage: "arrow.clockwise")
+                        }
+                        Divider()
+                        Button {
+                            store.seedDemoData()
+                        } label: {
+                            Label("Seed Demo Data", systemImage: "wand.and.stars")
+                        }
+                        Button(role: .destructive) {
+                            store.clearDemoData()
+                        } label: {
+                            Label("Clear Demo Data", systemImage: "trash")
+                        }
                     } label: {
-                        Image(systemName: "arrow.clockwise")
+                        Image(systemName: "ellipsis.circle")
                     }
                 }
             }
@@ -98,9 +113,6 @@ struct StatsView: View {
             }
             if let gir = stats.girPercent {
                 StatRow(label: "Greens in Regulation", value: String(format: "%.0f%%", gir))
-            }
-            if let fwy = stats.fairwayHitPercent {
-                StatRow(label: "Fairways Hit", value: String(format: "%.0f%%", fwy))
             }
             if let dev = stats.avgDeviationDegrees {
                 StatRow(label: "Avg Shot Deviation", value: String(format: "%.0f°", dev))

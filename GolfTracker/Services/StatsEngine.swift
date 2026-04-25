@@ -7,9 +7,6 @@ struct StatsEngine {
     private static let minShotYards: Double = 5
     private static let maxShotYards: Double = 350
 
-    // Deviation within this angle from ideal bearing = fairway hit
-    private static let fairwayThresholdDegrees: Double = 15.0
-
     // MARK: - Main entry point
 
     static func compute(
@@ -40,7 +37,6 @@ struct StatsEngine {
         var puttCountsPerRound: [Int] = []
         var puttCountsPerHole: [Double] = []
         var girResults: [Bool] = []
-        var fairwayResults: [Bool] = []
         var deviations: [Double] = []
         var clubTypeSamples: [UUID: [Double]] = [:]  // typeId → [yards]
         var clubSamples: [UUID: [Double]] = [:]       // clubId → [yards]
@@ -82,14 +78,13 @@ struct StatsEngine {
                     girResults.append(firstPutt.strokeNumber <= par - 1)
                 }
 
-                // Fairway hit: par 4/5, tee shot has heading, hole has a coordinate
+                // Tee-shot deviation: par 4/5, tee shot has heading, hole has a coordinate
                 if let par = hole.par, par >= 4,
                    let teeShot = nonPenalty.first,
                    let heading = teeShot.trajectoryHeading,
                    let holeCoord = hole.coordinate {
                     let idealBearing = MapCalculations.calculateBearing(from: teeShot.coordinate, to: holeCoord)
                     let deviation = angleDiff(heading, idealBearing)
-                    fairwayResults.append(abs(deviation) <= fairwayThresholdDegrees)
                     deviations.append(abs(deviation))
                 }
 
@@ -130,9 +125,6 @@ struct StatsEngine {
         }
         if !girResults.isEmpty {
             stats.girPercent = Double(girResults.filter { $0 }.count) / Double(girResults.count) * 100
-        }
-        if !fairwayResults.isEmpty {
-            stats.fairwayHitPercent = Double(fairwayResults.filter { $0 }.count) / Double(fairwayResults.count) * 100
         }
         if !deviations.isEmpty {
             stats.avgDeviationDegrees = deviations.reduce(0, +) / Double(deviations.count)
