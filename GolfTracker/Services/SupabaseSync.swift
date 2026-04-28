@@ -1,13 +1,15 @@
 import Foundation
 import CoreLocation
+import Supabase
 
-/// Mirrors every local mutation to Supabase. Fire-and-forget from the caller's
-/// perspective; failed requests are queued on disk and retried on launch
-/// and via a periodic timer.
+/// Mirrors every local mutation to Supabase via the supabase-swift SDK.
+/// Fire-and-forget from the caller's perspective; failed requests are queued
+/// on disk and retried on launch and via a periodic timer (the SDK doesn't
+/// provide offline queueing, so we still own that piece).
 final class SupabaseSync {
     static let shared = SupabaseSync()
 
-    private let client = SupabaseClient.shared
+    private let supabase = SupabaseManager.shared
     private let auth = AuthManager.shared
     private let queueURL: URL
     private let queueLock = NSLock()
@@ -24,68 +26,67 @@ final class SupabaseSync {
 
     func upsertClubType(_ t: ClubTypeData) {
         guard let uid = auth.currentUserId else { return }
-        let body: [String: Any] = [
-            "id": t.id.uuidString,
-            "user_id": uid,
-            "name": t.name,
-            "is_default": t.isDefault,
-            "average_distance": t.averageDistance as Any,
-            "updated_at": iso(Date())
+        let body: [String: AnyCodableValue] = [
+            "id": .string(t.id.uuidString),
+            "user_id": .string(uid),
+            "name": .string(t.name),
+            "is_default": .bool(t.isDefault),
+            "average_distance": t.averageDistance.map(AnyCodableValue.int) ?? .null,
+            "updated_at": .string(iso(Date()))
         ]
-        send(method: "POST", path: "/rest/v1/club_types", payload: body, prefer: "resolution=merge-duplicates")
+        upsert(table: "club_types", values: body, onConflict: "id")
     }
 
     func upsertClub(_ c: ClubData) {
         guard let uid = auth.currentUserId else { return }
-        let body: [String: Any] = [
-            "id": c.id.uuidString,
-            "user_id": uid,
-            "name": c.name,
-            "club_type_id": c.clubTypeId.uuidString,
-            "is_default": c.isDefault,
-            "updated_at": iso(Date())
+        let body: [String: AnyCodableValue] = [
+            "id": .string(c.id.uuidString),
+            "user_id": .string(uid),
+            "name": .string(c.name),
+            "club_type_id": .string(c.clubTypeId.uuidString),
+            "is_default": .bool(c.isDefault),
+            "updated_at": .string(iso(Date()))
         ]
-        send(method: "POST", path: "/rest/v1/clubs", payload: body, prefer: "resolution=merge-duplicates")
+        upsert(table: "clubs", values: body, onConflict: "id")
     }
 
     func upsertClubSet(_ s: ClubSet) {
         guard let uid = auth.currentUserId else { return }
-        let body: [String: Any] = [
-            "id": s.id.uuidString,
-            "user_id": uid,
-            "name": s.name,
-            "is_active": s.isActive,
-            "date_created": iso(s.dateCreated),
-            "date_modified": iso(s.dateModified),
-            "updated_at": iso(Date())
+        let body: [String: AnyCodableValue] = [
+            "id": .string(s.id.uuidString),
+            "user_id": .string(uid),
+            "name": .string(s.name),
+            "is_active": .bool(s.isActive),
+            "date_created": .string(iso(s.dateCreated)),
+            "date_modified": .string(iso(s.dateModified)),
+            "updated_at": .string(iso(Date()))
         ]
-        send(method: "POST", path: "/rest/v1/club_sets", payload: body, prefer: "resolution=merge-duplicates")
+        upsert(table: "club_sets", values: body, onConflict: "id")
 
-        // Replace all child type-selections for this set (simplest sync strategy —
-        // delete by club_set_id then re-insert). Small cardinality per set.
-        send(method: "DELETE", path: "/rest/v1/club_set_type_selections?club_set_id=eq.\(s.id.uuidString)", payload: nil)
+        // Replace all child type-selections for this set.
+        delete(table: "club_set_type_selections", filterColumn: "club_set_id", filterValue: s.id.uuidString)
         for sel in s.typeSelections {
-            let child: [String: Any] = [
-                "club_set_id": s.id.uuidString,
-                "type_id": sel.typeId.uuidString,
-                "active_club_id": sel.activeClubId?.uuidString as Any
+            let child: [String: AnyCodableValue] = [
+                "club_set_id": .string(s.id.uuidString),
+                "type_id": .string(sel.typeId.uuidString),
+                "active_club_id": sel.activeClubId.map { .string($0.uuidString) } ?? .null
             ]
-            send(method: "POST", path: "/rest/v1/club_set_type_selections", payload: child, prefer: "resolution=merge-duplicates")
+            upsert(table: "club_set_type_selections", values: child, onConflict: "club_set_id,type_id")
         }
     }
 
     func upsertCourse(_ course: Course) {
         guard let uid = auth.currentUserId else { return }
-        let body: [String: Any] = [
-            "id": course.id.uuidString,
-            "user_id": uid,
-            "name": course.name,
-            "rating": course.rating as Any,
-            "slope": course.slope as Any,
-            "city": course.city as Any,
-            "updated_at": iso(Date())
+        let body: [String: AnyCodableValue] = [
+            "id": .string(course.id.uuidString),
+            "user_id": .string(uid),
+            "name": .string(course.name),
+            "rating": course.rating.map(AnyCodableValue.double) ?? .null,
+            "slope": course.slope.map(AnyCodableValue.int) ?? .null,
+            "city": course.city.map(AnyCodableValue.string) ?? .null,
+            "updated_at": .string(iso(Date()))
         ]
-        send(method: "POST", path: "/rest/v1/courses", payload: body, prefer: "resolution=merge-duplicates")
+        upsert(table: "courses", values: body, onConflict: "id")
 
         for hole in course.holes {
             upsertHole(hole, courseId: course.id)
@@ -93,41 +94,41 @@ final class SupabaseSync {
     }
 
     func upsertHole(_ hole: Hole, courseId: UUID) {
-        let body: [String: Any] = [
-            "id": hole.id.uuidString,
-            "course_id": courseId.uuidString,
-            "number": hole.number,
-            "latitude": hole.latitude as Any,
-            "longitude": hole.longitude as Any,
-            "par": hole.par as Any,
-            "updated_at": iso(Date())
+        let body: [String: AnyCodableValue] = [
+            "id": .string(hole.id.uuidString),
+            "course_id": .string(courseId.uuidString),
+            "number": .int(hole.number),
+            "latitude": hole.latitude.map(AnyCodableValue.double) ?? .null,
+            "longitude": hole.longitude.map(AnyCodableValue.double) ?? .null,
+            "par": hole.par.map(AnyCodableValue.int) ?? .null,
+            "updated_at": .string(iso(Date()))
         ]
-        send(method: "POST", path: "/rest/v1/holes", payload: body, prefer: "resolution=merge-duplicates")
+        upsert(table: "holes", values: body, onConflict: "id")
     }
 
     func deleteHole(id: UUID) {
-        send(method: "DELETE", path: "/rest/v1/holes?id=eq.\(id.uuidString)", payload: nil)
+        delete(table: "holes", filterColumn: "id", filterValue: id.uuidString)
     }
 
     func deleteCourse(id: UUID) {
-        send(method: "DELETE", path: "/rest/v1/courses?id=eq.\(id.uuidString)", payload: nil)
+        delete(table: "courses", filterColumn: "id", filterValue: id.uuidString)
     }
 
     func upsertRound(_ round: Round) {
         guard let uid = auth.currentUserId else { return }
-        let body: [String: Any] = [
-            "id": round.id.uuidString,
-            "user_id": uid,
-            "course_id": round.courseId.uuidString,
-            "course_name": round.courseName,
-            "date": iso(round.date),
-            "current_hole_index": round.currentHoleIndex,
-            "completed_holes": Array(round.completedHoles),
-            "hole_detection_enabled": round.holeDetectionEnabled as Any,
-            "location_test_mode_enabled": round.locationTestModeEnabled as Any,
-            "updated_at": iso(Date())
+        let body: [String: AnyCodableValue] = [
+            "id": .string(round.id.uuidString),
+            "user_id": .string(uid),
+            "course_id": .string(round.courseId.uuidString),
+            "course_name": .string(round.courseName),
+            "date": .string(iso(round.date)),
+            "current_hole_index": .int(round.currentHoleIndex),
+            "completed_holes": .intArray(Array(round.completedHoles)),
+            "hole_detection_enabled": round.holeDetectionEnabled.map(AnyCodableValue.bool) ?? .null,
+            "location_test_mode_enabled": round.locationTestModeEnabled.map(AnyCodableValue.bool) ?? .null,
+            "updated_at": .string(iso(Date()))
         ]
-        send(method: "POST", path: "/rest/v1/rounds", payload: body, prefer: "resolution=merge-duplicates")
+        upsert(table: "rounds", values: body, onConflict: "id")
 
         for hole in round.holes {
             upsertRoundHole(hole, roundId: round.id)
@@ -135,173 +136,177 @@ final class SupabaseSync {
     }
 
     func upsertRoundHole(_ hole: Hole, roundId: UUID) {
-        let body: [String: Any] = [
-            "id": hole.id.uuidString,
-            "round_id": roundId.uuidString,
-            "number": hole.number,
-            "latitude": hole.latitude as Any,
-            "longitude": hole.longitude as Any,
-            "par": hole.par as Any
+        let body: [String: AnyCodableValue] = [
+            "id": .string(hole.id.uuidString),
+            "round_id": .string(roundId.uuidString),
+            "number": .int(hole.number),
+            "latitude": hole.latitude.map(AnyCodableValue.double) ?? .null,
+            "longitude": hole.longitude.map(AnyCodableValue.double) ?? .null,
+            "par": hole.par.map(AnyCodableValue.int) ?? .null
         ]
-        send(method: "POST", path: "/rest/v1/round_holes", payload: body, prefer: "resolution=merge-duplicates")
+        upsert(table: "round_holes", values: body, onConflict: "id")
     }
 
     func upsertStroke(_ stroke: Stroke, roundId: UUID) {
-        let body: [String: Any] = [
-            "id": stroke.id.uuidString,
-            "round_id": roundId.uuidString,
-            "hole_number": stroke.holeNumber,
-            "stroke_number": stroke.strokeNumber,
-            "latitude": stroke.latitude,
-            "longitude": stroke.longitude,
-            "club_id": stroke.clubId.uuidString,
-            "timestamp": iso(stroke.timestamp),
-            "is_penalty": stroke.isPenalty,
-            "trajectory_heading": stroke.trajectoryHeading as Any,
-            "updated_at": iso(Date())
+        let body: [String: AnyCodableValue] = [
+            "id": .string(stroke.id.uuidString),
+            "round_id": .string(roundId.uuidString),
+            "hole_number": .int(stroke.holeNumber),
+            "stroke_number": .int(stroke.strokeNumber),
+            "latitude": .double(stroke.latitude),
+            "longitude": .double(stroke.longitude),
+            "club_id": .string(stroke.clubId.uuidString),
+            "timestamp": .string(iso(stroke.timestamp)),
+            "is_penalty": .bool(stroke.isPenalty),
+            "trajectory_heading": stroke.trajectoryHeading.map(AnyCodableValue.double) ?? .null,
+            "updated_at": .string(iso(Date()))
         ]
-        send(method: "POST", path: "/rest/v1/strokes", payload: body, prefer: "resolution=merge-duplicates")
+        upsert(table: "strokes", values: body, onConflict: "id")
     }
 
     func deleteStroke(id: UUID) {
-        send(method: "DELETE", path: "/rest/v1/strokes?id=eq.\(id.uuidString)", payload: nil)
+        delete(table: "strokes", filterColumn: "id", filterValue: id.uuidString)
     }
 
     func upsertTarget(_ target: Target, roundId: UUID) {
-        let body: [String: Any] = [
-            "id": target.id.uuidString,
-            "round_id": roundId.uuidString,
-            "hole_number": target.holeNumber,
-            "latitude": target.latitude,
-            "longitude": target.longitude,
-            "updated_at": iso(Date())
+        let body: [String: AnyCodableValue] = [
+            "id": .string(target.id.uuidString),
+            "round_id": .string(roundId.uuidString),
+            "hole_number": .int(target.holeNumber),
+            "latitude": .double(target.latitude),
+            "longitude": .double(target.longitude),
+            "updated_at": .string(iso(Date()))
         ]
-        send(method: "POST", path: "/rest/v1/targets", payload: body, prefer: "resolution=merge-duplicates")
+        upsert(table: "targets", values: body, onConflict: "id")
     }
 
     func deleteTarget(id: UUID) {
-        send(method: "DELETE", path: "/rest/v1/targets?id=eq.\(id.uuidString)", payload: nil)
+        delete(table: "targets", filterColumn: "id", filterValue: id.uuidString)
     }
 
     func deleteRound(id: UUID) {
-        send(method: "DELETE", path: "/rest/v1/rounds?id=eq.\(id.uuidString)", payload: nil)
+        delete(table: "rounds", filterColumn: "id", filterValue: id.uuidString)
     }
 
     func deleteClubType(id: UUID) {
-        send(method: "DELETE", path: "/rest/v1/club_types?id=eq.\(id.uuidString)", payload: nil)
+        delete(table: "club_types", filterColumn: "id", filterValue: id.uuidString)
     }
 
     func deleteClub(id: UUID) {
-        send(method: "DELETE", path: "/rest/v1/clubs?id=eq.\(id.uuidString)", payload: nil)
+        delete(table: "clubs", filterColumn: "id", filterValue: id.uuidString)
     }
 
     func deleteClubSet(id: UUID) {
-        send(method: "DELETE", path: "/rest/v1/club_sets?id=eq.\(id.uuidString)", payload: nil)
+        delete(table: "club_sets", filterColumn: "id", filterValue: id.uuidString)
     }
 
-    /// Wipe every user-keyed row for the current user. Delete-my-data primitive.
-    /// Server-side CASCADE handles children once parents are deleted.
+    /// Wipe every user-keyed row for the current user. Server-side CASCADE
+    /// handles children once parents are deleted.
     func deleteAllUserData(completion: @escaping (Bool) -> Void) {
         guard let uid = auth.currentUserId else { completion(false); return }
-        let paths = [
-            "/rest/v1/rounds?user_id=eq.\(uid)",
-            "/rest/v1/courses?user_id=eq.\(uid)",
-            "/rest/v1/club_sets?user_id=eq.\(uid)",
-            "/rest/v1/clubs?user_id=eq.\(uid)",
-            "/rest/v1/club_types?user_id=eq.\(uid)"
-        ]
-        let group = DispatchGroup()
-        var allOK = true
-        for path in paths {
-            group.enter()
-            sendNow(method: "DELETE", path: path, payload: nil) { ok in
-                if !ok { allOK = false }
-                group.leave()
+        Task {
+            var allOK = true
+            for table in ["rounds", "courses", "club_sets", "clubs", "club_types"] {
+                do {
+                    try await supabase.from(table).delete().eq("user_id", value: uid).execute()
+                } catch {
+                    dprint("[SupabaseSync] delete-all \(table) failed: \(error)")
+                    allOK = false
+                }
             }
+            await MainActor.run { completion(allOK) }
         }
-        group.notify(queue: .main) { completion(allOK) }
     }
 
     // MARK: - Queue + transport
 
-    private struct QueuedRequest: Codable {
-        let method: String
-        let path: String
-        let body: Data?
-        let prefer: String?
+    /// Queueable representation of a Postgrest mutation. Stored on disk between
+    /// app launches so writes survive offline → relaunch transitions.
+    private struct QueuedOperation: Codable {
+        enum Kind: String, Codable { case upsert, delete }
+        let kind: Kind
+        let table: String
+        // For upsert: JSON-encoded payload + onConflict column list
+        let payloadJSON: Data?
+        let onConflict: String?
+        // For delete: column + value
+        let filterColumn: String?
+        let filterValue: String?
     }
 
-    private func send(method: String, path: String, payload: [String: Any]?, prefer: String? = nil) {
-        let body: Data?
-        if let payload = payload {
-            let cleaned = stripNils(payload)
-            body = try? JSONSerialization.data(withJSONObject: cleaned)
-        } else {
-            body = nil
-        }
-        let req = QueuedRequest(method: method, path: path, body: body, prefer: prefer)
-        attempt(req) { [weak self] ok in
-            if !ok { self?.enqueue(req) }
+    private func upsert(table: String, values: [String: AnyCodableValue], onConflict: String) {
+        let body = encodeValues(values)
+        let op = QueuedOperation(
+            kind: .upsert,
+            table: table,
+            payloadJSON: body,
+            onConflict: onConflict,
+            filterColumn: nil,
+            filterValue: nil
+        )
+        attempt(op) { [weak self] ok in
+            if !ok { self?.enqueue(op) }
         }
     }
 
-    private func stripNils(_ dict: [String: Any]) -> [String: Any] {
-        var out: [String: Any] = [:]
-        for (k, v) in dict {
-            if let opt = v as? AnyOptional, opt.isNil { continue }
-            out[k] = v
+    private func delete(table: String, filterColumn: String, filterValue: String) {
+        let op = QueuedOperation(
+            kind: .delete,
+            table: table,
+            payloadJSON: nil,
+            onConflict: nil,
+            filterColumn: filterColumn,
+            filterValue: filterValue
+        )
+        attempt(op) { [weak self] ok in
+            if !ok { self?.enqueue(op) }
         }
-        return out
     }
 
-    private func sendNow(method: String, path: String, payload: [String: Any]?, completion: @escaping (Bool) -> Void) {
-        let body = payload.flatMap { try? JSONSerialization.data(withJSONObject: $0) }
-        attempt(QueuedRequest(method: method, path: path, body: body, prefer: nil), completion: completion)
-    }
-
-    private func attempt(_ req: QueuedRequest, completion: @escaping (Bool) -> Void) {
-        guard let token = auth.currentAccessToken,
-              var request = client.authedRequest(path: req.path, method: req.method, body: req.body, accessToken: token) else {
-            completion(false)
-            return
-        }
-        if let prefer = req.prefer {
-            request.setValue(prefer, forHTTPHeaderField: "Prefer")
-        }
-        URLSession.shared.dataTask(with: request) { data, response, error in
-            if let error = error {
-                dprint("[SupabaseSync] \(req.method) \(req.path) network error: \(error.localizedDescription)")
+    private func attempt(_ op: QueuedOperation, completion: @escaping (Bool) -> Void) {
+        guard auth.currentAccessToken != nil else { completion(false); return }
+        Task {
+            do {
+                switch op.kind {
+                case .upsert:
+                    guard let body = op.payloadJSON,
+                          let json = try? JSONDecoder().decode(AnyJSON.self, from: body),
+                          let onConflict = op.onConflict else {
+                        completion(false); return
+                    }
+                    let q = try supabase.from(op.table).upsert(json, onConflict: onConflict)
+                    try await q.execute()
+                    completion(true)
+                case .delete:
+                    guard let col = op.filterColumn, let val = op.filterValue else {
+                        completion(false); return
+                    }
+                    try await supabase.from(op.table).delete().eq(col, value: val).execute()
+                    completion(true)
+                }
+            } catch {
+                dprint("[SupabaseSync] \(op.kind.rawValue) \(op.table) failed: \(error)")
                 completion(false)
-                return
             }
-            let status = (response as? HTTPURLResponse)?.statusCode ?? 0
-            if status >= 200 && status < 300 {
-                completion(true)
-            } else {
-                let body = data.flatMap { String(data: $0, encoding: .utf8) } ?? ""
-                dprint("[SupabaseSync] \(req.method) \(req.path) HTTP \(status): \(body)")
-                // 4xx is a client/auth error — don't retry. 5xx / 0 retry.
-                completion(status >= 500 || status == 0)
-            }
-        }.resume()
+        }
     }
 
-    private func enqueue(_ req: QueuedRequest) {
+    private func enqueue(_ op: QueuedOperation) {
         queueLock.lock(); defer { queueLock.unlock() }
         var queue = loadQueue()
-        queue.append(req)
+        queue.append(op)
         saveQueue(queue)
     }
 
-    private func loadQueue() -> [QueuedRequest] {
+    private func loadQueue() -> [QueuedOperation] {
         guard let data = try? Data(contentsOf: queueURL),
-              let queue = try? JSONDecoder().decode([QueuedRequest].self, from: data) else {
+              let queue = try? JSONDecoder().decode([QueuedOperation].self, from: data) else {
             return []
         }
         return queue
     }
 
-    private func saveQueue(_ queue: [QueuedRequest]) {
+    private func saveQueue(_ queue: [QueuedOperation]) {
         guard let data = try? JSONEncoder().encode(queue) else { return }
         try? data.write(to: queueURL)
     }
@@ -320,10 +325,10 @@ final class SupabaseSync {
         saveQueue([])
         queueLock.unlock()
         guard !queue.isEmpty else { return }
-        dprint("[SupabaseSync] draining \(queue.count) queued requests")
-        for req in queue {
-            attempt(req) { [weak self] ok in
-                if !ok { self?.enqueue(req) }
+        dprint("[SupabaseSync] draining \(queue.count) queued operations")
+        for op in queue {
+            attempt(op) { [weak self] ok in
+                if !ok { self?.enqueue(op) }
             }
         }
     }
@@ -333,13 +338,42 @@ final class SupabaseSync {
         f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         return f.string(from: date)
     }
+
+    /// Encode a [String: AnyCodableValue] dict to JSON Data, dropping nulls.
+    private func encodeValues(_ values: [String: AnyCodableValue]) -> Data? {
+        var clean: [String: Any] = [:]
+        for (k, v) in values where !v.isNull {
+            clean[k] = v.jsonValue
+        }
+        return try? JSONSerialization.data(withJSONObject: clean)
+    }
 }
 
-private protocol AnyOptional {
-    var isNil: Bool { get }
-}
+// MARK: - AnyCodableValue
 
-extension Optional: AnyOptional {
-    var isNil: Bool { self == nil }
-}
+/// A small enum to express the value types we send over the wire. Replaces the
+/// previous untyped `[String: Any]` payloads with something we can reason about
+/// at compile time, while still serializing to plain JSON.
+private enum AnyCodableValue {
+    case string(String)
+    case int(Int)
+    case double(Double)
+    case bool(Bool)
+    case intArray([Int])
+    case null
 
+    var isNull: Bool {
+        if case .null = self { return true } else { return false }
+    }
+
+    var jsonValue: Any {
+        switch self {
+        case .string(let s): return s
+        case .int(let i): return i
+        case .double(let d): return d
+        case .bool(let b): return b
+        case .intArray(let a): return a
+        case .null: return NSNull()
+        }
+    }
+}
