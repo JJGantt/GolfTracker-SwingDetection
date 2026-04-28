@@ -26,3 +26,19 @@ final class SupabaseManager {
     /// Postgrest query builder for a table. e.g. `manager.from("rounds").select()`
     func from(_ table: String) -> PostgrestQueryBuilder { client.from(table) }
 }
+
+// MARK: - Bridge from SDK Session to our wire-format AuthSession
+
+extension AuthSession {
+    /// Build our wire-format session from the SDK's Session type. Used by both
+    /// AuthManager (iPhone) and WatchAuthSession to mirror the SDK's session
+    /// into a Codable struct that can travel over WatchConnectivity.
+    init(_ s: Supabase.Session) {
+        self.init(
+            accessToken: s.accessToken,
+            refreshToken: s.refreshToken,
+            expiresAt: Date(timeIntervalSince1970: s.expiresAt),
+            userId: s.user.id.uuidString
+        )
+    }
+}

@@ -155,21 +155,6 @@ final class AuthManager: NSObject, ObservableObject {
     }
 }
 
-// MARK: - AuthSession ↔ SDK Session bridge
-
-extension AuthSession {
-    /// Build our wire-format session from the SDK's Session type. This mirror
-    /// is what gets sent to the Watch via WatchConnectivity.
-    init(_ s: Supabase.Session) {
-        self.init(
-            accessToken: s.accessToken,
-            refreshToken: s.refreshToken,
-            expiresAt: Date(timeIntervalSince1970: s.expiresAt),
-            userId: s.user.id.uuidString
-        )
-    }
-}
-
 // MARK: - Sign in with Apple coordinator
 
 private final class SIWACoordinator: NSObject, ASAuthorizationControllerDelegate, ASAuthorizationControllerPresentationContextProviding {
