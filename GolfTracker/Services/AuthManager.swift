@@ -149,6 +149,11 @@ final class AuthManager: NSObject, ObservableObject {
                 await MainActor.run {
                     self.session = mirror
                     WatchConnectivityManager.shared.sendAuthSession(mirror)
+                    if let uid = mirror?.userId {
+                        RealtimeSync.shared.start(forUserId: uid)
+                    } else {
+                        RealtimeSync.shared.stop()
+                    }
                 }
             }
         }

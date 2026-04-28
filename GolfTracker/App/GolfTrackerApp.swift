@@ -39,6 +39,10 @@ struct GolfTrackerApp: App {
                 .environmentObject(motionDataHandler)
                 .onAppear {
                     store.configure(container: modelContainer)
+                    RealtimeSync.shared.configure(container: modelContainer)
+                    if let uid = AuthManager.shared.currentUserId {
+                        RealtimeSync.shared.start(forUserId: uid)
+                    }
                 }
         }
         .modelContainer(modelContainer)

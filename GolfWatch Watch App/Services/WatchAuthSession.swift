@@ -96,6 +96,11 @@ final class WatchAuthSession {
                 await MainActor.run {
                     self.session = mirror
                     self.onSessionChanged?(mirror)
+                    if let uid = mirror?.userId {
+                        RealtimeSync.shared.start(forUserId: uid)
+                    } else {
+                        RealtimeSync.shared.stop()
+                    }
                 }
             }
         }

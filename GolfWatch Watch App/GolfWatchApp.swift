@@ -26,10 +26,12 @@ struct GolfTrackerWatchApp: App {
     }()
 
     init() {
-        // configure() needs to happen before WatchDataStore.shared accesses
-        // the container. Static let above is set during App init, before any
-        // singletons can be touched here.
+        // configure() needs to happen before singletons access the container.
         WatchDataStore.shared.configure(container: modelContainer)
+        RealtimeSync.shared.configure(container: modelContainer)
+        if let uid = WatchAuthSession.shared.currentUserId {
+            RealtimeSync.shared.start(forUserId: uid)
+        }
     }
 
     var body: some Scene {
