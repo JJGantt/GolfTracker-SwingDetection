@@ -679,29 +679,30 @@ struct ActiveRoundView: View {
 
     func handleViewAppear() {
         dprint("⌚ [ActiveRoundView] View appeared")
-        dprint("⌚ [ActiveRoundView] Current location: \(locationManager.location?.description ?? "nil")")
-        dprint("⌚ [ActiveRoundView] Authorization status: \(locationManager.authorizationStatus)")
         locationManager.requestPermission()
         locationManager.startTracking()
-        dprint("⌚ [ActiveRoundView] Called requestPermission and startTracking")
         restoreCalculatedMapPosition(force: true)
         isMainViewFocused = true
         swingDetector.startMonitoring()
         updateSwingDetectorClub()
 
+        // Start Realtime ONLY while the active round screen is visible. Drops
+        // when the user backs out, so the WebSocket isn't open 24/7.
+        if let uid = WatchAuthSession.shared.currentUserId {
+            RealtimeSync.shared.start(forUserId: uid)
+        }
+
         guard store.currentRound != nil, !workoutManager.isWorkoutActive else { return }
         workoutManager.requestAuthorization { success, _ in
             if success {
-                dprint("⌚ [ActiveRoundView] HealthKit authorized, starting workout")
                 workoutManager.startWorkout()
-            } else {
-                dprint("⌚ [ActiveRoundView] HealthKit authorization failed")
             }
         }
     }
 
     func handleViewDisappear() {
         crownScrollTimer?.invalidate()
+        RealtimeSync.shared.stop()
     }
 
     func handleCurrentHoleIndexChange() {

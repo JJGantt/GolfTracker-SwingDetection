@@ -149,9 +149,10 @@ final class AuthManager: NSObject, ObservableObject {
                 await MainActor.run {
                     self.session = mirror
                     WatchConnectivityManager.shared.sendAuthSession(mirror)
-                    if let uid = mirror?.userId {
-                        RealtimeSync.shared.start(forUserId: uid)
-                    } else {
+                    // Realtime lifecycle is round-scoped (started by ActiveRound
+                    // view onAppear, not at sign-in time) — sign-out still
+                    // tears it down to be safe.
+                    if mirror == nil {
                         RealtimeSync.shared.stop()
                     }
                 }

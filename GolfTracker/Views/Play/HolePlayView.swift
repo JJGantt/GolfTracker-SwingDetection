@@ -409,6 +409,11 @@ struct HolePlayView: View {
             .onAppear {
                 locationManager.requestPermission()
 
+            // Realtime is round-scoped — start while the play view is visible.
+            if let uid = AuthManager.shared.currentUserId {
+                RealtimeSync.shared.start(forUserId: uid)
+            }
+
             // Start round automatically or resume existing round
             if activeRound == nil {
                 if let resumingRound = resumingRound {
@@ -435,6 +440,10 @@ struct HolePlayView: View {
             } else {
                 updateMapPosition()
             }
+        }
+        .onDisappear {
+            // Realtime is round-scoped — drop the WebSocket when leaving play.
+            RealtimeSync.shared.stop()
         }
         .onChange(of: currentHoleIndex) { _, _ in
             updateMapPosition()

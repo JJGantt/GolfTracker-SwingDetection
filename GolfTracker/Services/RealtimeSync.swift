@@ -41,6 +41,12 @@ final class RealtimeSync {
     /// Start (or restart) subscriptions for a signed-in user. Idempotent — if
     /// already running for this user, no-ops; if running for a different user,
     /// tears the old subscriptions down first.
+    ///
+    /// **Lifecycle model:** call from the active round view's `.onAppear` and
+    /// `stop()` from `.onDisappear`. Keeping the WebSocket open 24/7 burns
+    /// idle bandwidth (~8MB/month per device just heartbeats) and watch
+    /// battery for no benefit when no round is in flight. Cross-device sync
+    /// only matters during active play.
     func start(forUserId userId: String) {
         if activeUserId == userId, !subscriptions.isEmpty { return }
         Task { await self.restart(forUserId: userId) }

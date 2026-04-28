@@ -117,6 +117,19 @@ struct WatchHomeView: View {
                     store.pickPOICandidate(picked)
                 }
             }
+            .alert(
+                store.pendingExistingCoursePrompt.map { "Play \($0.courseName)?" } ?? "",
+                isPresented: Binding(
+                    get: { store.pendingExistingCoursePrompt != nil },
+                    set: { if !$0 { store.answerExistingCoursePrompt(confirmed: false) } }
+                ),
+                presenting: store.pendingExistingCoursePrompt
+            ) { _ in
+                Button("Play") { store.answerExistingCoursePrompt(confirmed: true) }
+                Button("Different course", role: .cancel) { store.answerExistingCoursePrompt(confirmed: false) }
+            } message: { match in
+                Text("\(Int(match.distanceMeters))m away")
+            }
         }
     }
 }

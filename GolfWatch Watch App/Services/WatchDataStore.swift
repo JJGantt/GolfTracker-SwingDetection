@@ -56,6 +56,11 @@ class WatchDataStore: ObservableObject {
     @Published var pendingPOIPicker: [RoundResolver.POICandidate]?
     private var pendingPOIPickerCompletion: ((RoundResolver.POICandidate?) -> Void)?
 
+    /// Set when the resolver finds exactly one nearby saved course and needs
+    /// the user to confirm "Play <name>?" or "Different course".
+    @Published var pendingExistingCoursePrompt: RoundResolver.ExistingCourseMatch?
+    private var pendingExistingCourseCompletion: ((Bool) -> Void)?
+
     @Published var clubPredictionMode: ClubPredictionMode = .manual {
         didSet { UserDefaults.standard.set(clubPredictionMode.rawValue, forKey: "clubPredictionMode") }
     }
@@ -355,6 +360,12 @@ class WatchDataStore: ObservableObject {
                     self?.pendingPOIPickerCompletion = choose
                 }
             },
+            existingCoursePrompt: { [weak self] match, choose in
+                DispatchQueue.main.async {
+                    self?.pendingExistingCoursePrompt = match
+                    self?.pendingExistingCourseCompletion = choose
+                }
+            },
             completion: { [weak self] resolution in
                 DispatchQueue.main.async {
                     guard let self = self else { return }
@@ -374,6 +385,16 @@ class WatchDataStore: ObservableObject {
         pendingPOIPicker = nil
         pendingPOIPickerCompletion = nil
         cb?(candidate)
+    }
+
+    /// Called by the home view's "Play <course>?" prompt. `confirmed=true`
+    /// → resolver fast-paths to the existing course; false → falls through
+    /// to OSM resolution.
+    func answerExistingCoursePrompt(confirmed: Bool) {
+        let cb = pendingExistingCourseCompletion
+        pendingExistingCoursePrompt = nil
+        pendingExistingCourseCompletion = nil
+        cb?(confirmed)
     }
 
     private func startRound(from resolution: RoundResolver.Resolution) {
@@ -434,6 +455,8 @@ class WatchDataStore: ObservableObject {
     private static func statusString(for step: RoundResolver.Step) -> String? {
         switch step {
         case .locating: return "Locating…"
+        case .checkingExisting: return "Checking saved courses…"
+        case .confirmingExisting(let match): return "Found \(match.courseName)"
         case .searchingPOIs: return "Searching nearby courses…"
         case .checkingDB: return "Checking saved courses…"
         case .picking: return "Pick a course"

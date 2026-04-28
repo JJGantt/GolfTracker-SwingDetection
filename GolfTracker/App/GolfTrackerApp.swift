@@ -40,9 +40,8 @@ struct GolfTrackerApp: App {
                 .onAppear {
                     store.configure(container: modelContainer)
                     RealtimeSync.shared.configure(container: modelContainer)
-                    if let uid = AuthManager.shared.currentUserId {
-                        RealtimeSync.shared.start(forUserId: uid)
-                    }
+                    // Realtime is round-scoped — started/stopped by the
+                    // active round view's lifecycle, not at app launch.
                 }
         }
         .modelContainer(modelContainer)

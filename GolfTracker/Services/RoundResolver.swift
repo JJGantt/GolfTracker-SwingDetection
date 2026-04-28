@@ -5,11 +5,15 @@ import Supabase
 
 /// Orchestrates the "start a round from here" flow for either device:
 ///
-/// 1. Use the user's GPS to search Apple Maps for nearby golf POIs
-/// 2. Check Supabase for existing courses near this location (proximity match)
-/// 3. Pick a course (auto when isolated, picker when ambiguous)
-/// 4. Resolve OSM geometry for the chosen course (cache hit fast path)
-/// 5. Return the round-ready Resolution with tier classification
+/// 1. **Existing-course-first**: query the user's saved courses for any
+///    within ~500m of GPS. If exactly one match, prompt "Play <name>?" — if
+///    yes, start the round on that course immediately (cached OSM data, no
+///    Overpass query). If "different course", fall through to step 2.
+/// 2. Use OSM Overpass to fetch nearby `leisure=golf_course` candidates
+///    (MapKit fallback if OSM has nothing).
+/// 3. Pick a course (auto when isolated, picker when ambiguous).
+/// 4. Resolve OSM geometry for the chosen course (cache hit fast path).
+/// 5. Return the round-ready Resolution with tier classification.
 ///
 /// Both the iPhone and the Apple Watch can drive this flow — it has no
 /// platform-specific dependencies beyond MapKit/CoreLocation/SDK, all of which
@@ -20,6 +24,10 @@ final class RoundResolver {
     private let supabase = SupabaseManager.shared
     private let osm = OSMCourseService.shared
 
+    /// How close (meters) a saved course's centroid needs to be for the
+    /// existing-course-first prompt to fire.
+    var existingCourseProximityMeters: Double = 500
+
     private init() {}
 
     // MARK: - Types
@@ -27,12 +35,29 @@ final class RoundResolver {
     /// Streamed status for a status string in the UI ("Locating course...", etc).
     enum Step {
         case locating
+        case checkingExisting
+        /// User must confirm whether to play an existing course found nearby
+        /// (or pick "Different course" to fall through to OSM resolution).
+        case confirmingExisting(ExistingCourseMatch)
         case searchingPOIs
         case checkingDB
         case picking([POICandidate])              // multiple options — user must choose
         case loadingCourseData(courseName: String)
         case ready(Resolution)
         case failed(String)
+    }
+
+    /// A saved-course match presented to the user as "Play <name>?"
+    struct ExistingCourseMatch: Hashable {
+        let courseId: UUID
+        let courseName: String
+        let centroid: CLLocationCoordinate2D
+        let distanceMeters: Double
+
+        static func == (lhs: ExistingCourseMatch, rhs: ExistingCourseMatch) -> Bool {
+            lhs.courseId == rhs.courseId
+        }
+        func hash(into hasher: inout Hasher) { hasher.combine(courseId) }
     }
 
     /// A golf course candidate. Backed by an OSM `leisure=golf_course` feature
@@ -80,6 +105,110 @@ final class RoundResolver {
     /// one — the picker callback receives the candidate list and a selection
     /// handler that takes the chosen candidate (or nil to cancel).
     func resolve(
+        at currentLocation: CLLocationCoordinate2D,
+        progress: @escaping (Step) -> Void,
+        coursePicker: @escaping ([POICandidate], @escaping (POICandidate?) -> Void) -> Void,
+        existingCoursePrompt: @escaping (ExistingCourseMatch, @escaping (Bool) -> Void) -> Void = { _, cb in cb(false) },
+        completion: @escaping (Resolution?) -> Void
+    ) {
+        // Step 1: existing-course-first proximity check. If we find exactly
+        // one saved course nearby, prompt the user to confirm before doing
+        // any OSM work.
+        progress(.checkingExisting)
+        findExistingCourseMatches(near: currentLocation) { [weak self] matches in
+            guard let self = self else { completion(nil); return }
+            if matches.count == 1, let match = matches.first {
+                progress(.confirmingExisting(match))
+                existingCoursePrompt(match) { confirmed in
+                    if confirmed {
+                        self.resolveExisting(match, progress: progress, completion: completion)
+                    } else {
+                        // User said "different course" — fall through to OSM.
+                        self.resolveViaOSM(at: currentLocation, progress: progress, coursePicker: coursePicker, completion: completion)
+                    }
+                }
+            } else {
+                // 0 matches → straight to OSM. >1 matches → also OSM (let
+                // the regular picker handle disambiguation; no good UX for
+                // "you have 3 courses near here, which one?" without one).
+                self.resolveViaOSM(at: currentLocation, progress: progress, coursePicker: coursePicker, completion: completion)
+            }
+        }
+    }
+
+    /// Fast path — saved course within proximity. Skip OSM entirely; reuse
+    /// whatever cached geometry the existing course has.
+    private func resolveExisting(_ match: ExistingCourseMatch,
+                                 progress: @escaping (Step) -> Void,
+                                 completion: @escaping (Resolution?) -> Void) {
+        progress(.loadingCourseData(courseName: match.courseName))
+        // Pull cached OSM data for the course (if any). If not cached, the
+        // round still starts; the picker UX falls back to manual hole entry.
+        osm.fetchFromCache(near: match.centroid) { osmData in
+            let tier = osmData?.tier ?? .none
+            let resolution = Resolution(
+                courseId: match.courseId,
+                courseName: match.courseName,
+                courseCoordinate: match.centroid,
+                osmData: osmData,
+                tier: tier,
+                isExistingCourse: true
+            )
+            progress(.ready(resolution))
+            completion(resolution)
+        }
+    }
+
+    /// Row shape for the proximity check — we need each course's hole coords
+    /// to compute a centroid for distance comparison.
+    private struct CourseProximityRow: Decodable {
+        let id: UUID
+        let name: String
+        let holes: [HoleCoord]
+        struct HoleCoord: Decodable {
+            let latitude: Double?
+            let longitude: Double?
+        }
+    }
+
+    /// Pull every saved course for the user, compute each one's centroid
+    /// from its holes, and return the ones within `existingCourseProximityMeters`.
+    private func findExistingCourseMatches(near coordinate: CLLocationCoordinate2D,
+                                           completion: @escaping ([ExistingCourseMatch]) -> Void) {
+        Task {
+            do {
+                let rows: [CourseProximityRow] = try await supabase.from("courses")
+                    .select("id,name,holes(latitude,longitude)")
+                    .execute()
+                    .value
+                let userLoc = CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude)
+                let matches: [ExistingCourseMatch] = rows.compactMap { row in
+                    let coords = row.holes.compactMap { hc -> CLLocationCoordinate2D? in
+                        guard let lat = hc.latitude, let lon = hc.longitude else { return nil }
+                        return CLLocationCoordinate2D(latitude: lat, longitude: lon)
+                    }
+                    guard !coords.isEmpty else { return nil }
+                    let centLat = coords.map(\.latitude).reduce(0, +) / Double(coords.count)
+                    let centLon = coords.map(\.longitude).reduce(0, +) / Double(coords.count)
+                    let centroid = CLLocationCoordinate2D(latitude: centLat, longitude: centLon)
+                    let dist = CLLocation(latitude: centLat, longitude: centLon).distance(from: userLoc)
+                    guard dist <= self.existingCourseProximityMeters else { return nil }
+                    return ExistingCourseMatch(
+                        courseId: row.id,
+                        courseName: row.name,
+                        centroid: centroid,
+                        distanceMeters: dist
+                    )
+                }
+                completion(matches.sorted { $0.distanceMeters < $1.distanceMeters })
+            } catch {
+                dprint("[RoundResolver] existing-course proximity check failed: \(error)")
+                completion([])
+            }
+        }
+    }
+
+    private func resolveViaOSM(
         at currentLocation: CLLocationCoordinate2D,
         progress: @escaping (Step) -> Void,
         coursePicker: @escaping ([POICandidate], @escaping (POICandidate?) -> Void) -> Void,

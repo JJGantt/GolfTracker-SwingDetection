@@ -29,9 +29,7 @@ struct GolfTrackerWatchApp: App {
         // configure() needs to happen before singletons access the container.
         WatchDataStore.shared.configure(container: modelContainer)
         RealtimeSync.shared.configure(container: modelContainer)
-        if let uid = WatchAuthSession.shared.currentUserId {
-            RealtimeSync.shared.start(forUserId: uid)
-        }
+        // Realtime is round-scoped — ActiveRoundView starts/stops it.
     }
 
     var body: some Scene {

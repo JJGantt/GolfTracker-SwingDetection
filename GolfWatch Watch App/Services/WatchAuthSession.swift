@@ -96,9 +96,10 @@ final class WatchAuthSession {
                 await MainActor.run {
                     self.session = mirror
                     self.onSessionChanged?(mirror)
-                    if let uid = mirror?.userId {
-                        RealtimeSync.shared.start(forUserId: uid)
-                    } else {
+                    // Realtime lifecycle is round-scoped (started by ActiveRound
+                    // view onAppear, not at sign-in time). Sign-out tears
+                    // it down regardless.
+                    if mirror == nil {
                         RealtimeSync.shared.stop()
                     }
                 }
