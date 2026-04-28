@@ -7,14 +7,20 @@ import WatchKit
 /// hole when they've genuinely walked off the green and toward the next tee.
 ///
 /// **Trigger requires the user to have actually visited the green first.**
-/// The "visited" gate is a point-in-polygon check against the OSM `golf=green`
-/// polygon for the current hole — not a fudge-factor radius around a marker.
+/// The "visited" gate is a point-in-polygon check against the established
+/// green polygon for the current hole — sourced from the same place the rest
+/// of the round-play UI gets it (`WatchDataStore.filteredGreenCandidates`,
+/// matched to the current hole by hole-marker containment). That polygon
+/// could come from OSM (Tier-1/2) or from blob detection (Tier-3 after the
+/// user has picked it). Once a hole has an established polygon, auto-advance
+/// works regardless of source.
+///
 /// Once visited, the monitor advances when EITHER:
 ///
 ///   1. user is within `tee_box_threshold_yards` (10) of the next hole's tee point
-///      (only when OSM provided tee data), OR
+///      (only when OSM provided tee data — bonus accelerator for Tier-1), OR
 ///   2. user is more than `green_left_threshold_yards` (40) from the current
-///      hole's green marker (overall fallback)
+///      hole's green marker (universal fallback that fires for any source)
 ///
 /// Single-shot per hole — once advanced, the monitor won't re-fire for the
 /// same hole until `resetForCurrentHole()` is called.
@@ -93,16 +99,18 @@ final class AutoAdvanceMonitor: ObservableObject {
         // Skip if we've already advanced from this hole.
         if advancedFromHoleNumber == currentHole.number { return }
 
-        // Pull OSM data for this round's course (cached in WatchDataStore).
-        // We need it for both the visited check (green polygon) and the
-        // next-tee trigger.
+        // OSM data (if any) — used for the bonus next-tee accelerator only.
         let osm = store.osmCourseData(forCourseId: round.courseId)
-        let currentOSMHole = osm?.holes.first { Int($0.ref ?? "") == currentHole.number }
         let nextOSMHole = osm?.holes.first { Int($0.ref ?? "") == nextHole.number }
-        let currentGreenPolygon = currentOSMHole.flatMap { osm?.greenPolygon(for: $0) }
+
+        // Source-agnostic green polygon for this hole — same lookup the rest of
+        // the round-play UI uses (filteredGreenCandidates picks OSM first then
+        // blob detection, matched by hole-marker containment).
+        let currentGreenBlob = store.filteredGreenCandidates(for: round.courseId)
+            .first { $0.contains(currentGreenMarker) }
 
         // === Visited gate: did the user's GPS land inside the green polygon? ===
-        if let polygon = currentGreenPolygon, polygon.contains(coordinate) {
+        if let blob = currentGreenBlob, blob.contains(coordinate) {
             visitedGreenHoles.insert(currentHole.number)
         }
         guard visitedGreenHoles.contains(currentHole.number) else {
