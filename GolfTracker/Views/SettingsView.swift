@@ -47,6 +47,17 @@ struct SettingsView: View {
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }
+
+                Section("Credits") {
+                    Link(destination: URL(string: "https://www.openstreetmap.org/copyright")!) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Map data © OpenStreetMap contributors")
+                            Text("Course geometry sourced from OpenStreetMap (ODbL)")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                    }
+                }
             }
             .navigationTitle("Settings")
             .navigationBarTitleDisplayMode(.inline)
