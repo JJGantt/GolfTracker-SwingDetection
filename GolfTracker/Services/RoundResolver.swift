@@ -35,14 +35,19 @@ final class RoundResolver {
         case failed(String)
     }
 
-    /// A golf POI from Apple Maps, scored by distance from the user.
+    /// A golf course candidate. Backed by an OSM `leisure=golf_course` feature
+    /// (preferred) or a MapKit POI (fallback when OSM has nothing). Carries a
+    /// polygon when OSM-sourced, used for the second-pass geometry query.
     struct POICandidate: Hashable {
         let name: String
         let coordinate: CLLocationCoordinate2D
         let distanceMeters: Double
-        /// If non-nil, this POI matched an existing Course in the user's DB and
-        /// we should reuse that course id instead of creating a new one.
+        /// If non-nil, this candidate matched an existing Course in the user's
+        /// DB and we should reuse that course id instead of creating a new one.
         let existingCourseId: UUID?
+        /// OSM source data when available — drives the second-pass geometry
+        /// query. nil when this candidate came from the MapKit fallback.
+        let osmCandidate: OSMCourseCandidate?
 
         static func == (lhs: POICandidate, rhs: POICandidate) -> Bool {
             lhs.name == rhs.name &&
@@ -81,26 +86,63 @@ final class RoundResolver {
         completion: @escaping (Resolution?) -> Void
     ) {
         progress(.searchingPOIs)
-        searchPOIs(near: currentLocation) { [weak self] pois in
+        // First pass: ask OSM for nearby named golf courses. Each result has a
+        // bounding polygon for the second-pass geometry query.
+        osm.fetchCandidates(near: currentLocation) { [weak self] result in
             guard let self = self else { completion(nil); return }
-            guard !pois.isEmpty else {
-                progress(.failed("No golf course found nearby"))
-                completion(nil)
-                return
-            }
 
-            progress(.checkingDB)
-            self.matchExistingCourses(for: pois) { matched in
-                let candidates = matched.sorted { $0.distanceMeters < $1.distanceMeters }
-                let isolated = self.isClearWinner(candidates)
-                if isolated, let only = candidates.first {
-                    self.continueWith(only, progress: progress, completion: completion)
-                } else {
-                    progress(.picking(candidates))
-                    coursePicker(candidates) { chosen in
-                        guard let chosen = chosen else { completion(nil); return }
-                        self.continueWith(chosen, progress: progress, completion: completion)
+            switch result {
+            case .failure(let err):
+                dprint("[RoundResolver] OSM candidate fetch failed (\(err)) — falling back to MapKit")
+                self.searchMapKitPOIs(near: currentLocation) { mapkitPOIs in
+                    self.continueAfterCandidates(mapkitPOIs, progress: progress, coursePicker: coursePicker, completion: completion)
+                }
+            case .success(let osmCandidates):
+                if osmCandidates.isEmpty {
+                    // OSM coverage gap. Use MapKit as the safety net.
+                    dprint("[RoundResolver] OSM had no candidates — falling back to MapKit")
+                    self.searchMapKitPOIs(near: currentLocation) { mapkitPOIs in
+                        self.continueAfterCandidates(mapkitPOIs, progress: progress, coursePicker: coursePicker, completion: completion)
                     }
+                } else {
+                    let userLoc = CLLocation(latitude: currentLocation.latitude, longitude: currentLocation.longitude)
+                    let pois = osmCandidates.map { c -> POICandidate in
+                        let cLoc = CLLocation(latitude: c.centroid.latitude, longitude: c.centroid.longitude)
+                        return POICandidate(
+                            name: c.name,
+                            coordinate: c.centroid.coordinate,
+                            distanceMeters: cLoc.distance(from: userLoc),
+                            existingCourseId: nil,
+                            osmCandidate: c
+                        )
+                    }
+                    self.continueAfterCandidates(pois, progress: progress, coursePicker: coursePicker, completion: completion)
+                }
+            }
+        }
+    }
+
+    private func continueAfterCandidates(_ pois: [POICandidate],
+                                         progress: @escaping (Step) -> Void,
+                                         coursePicker: @escaping ([POICandidate], @escaping (POICandidate?) -> Void) -> Void,
+                                         completion: @escaping (Resolution?) -> Void) {
+        guard !pois.isEmpty else {
+            progress(.failed("No golf course found nearby"))
+            completion(nil)
+            return
+        }
+        progress(.checkingDB)
+        matchExistingCourses(for: pois) { [weak self] matched in
+            guard let self = self else { completion(nil); return }
+            let candidates = matched.sorted { $0.distanceMeters < $1.distanceMeters }
+            let isolated = self.isClearWinner(candidates)
+            if isolated, let only = candidates.first {
+                self.continueWith(only, progress: progress, completion: completion)
+            } else {
+                progress(.picking(candidates))
+                coursePicker(candidates) { chosen in
+                    guard let chosen = chosen else { completion(nil); return }
+                    self.continueWith(chosen, progress: progress, completion: completion)
                 }
             }
         }
@@ -120,39 +162,52 @@ final class RoundResolver {
                               progress: @escaping (Step) -> Void,
                               completion: @escaping (Resolution?) -> Void) {
         progress(.loadingCourseData(courseName: candidate.name))
-        osm.resolve(near: candidate.coordinate, courseId: candidate.existingCourseId) { result in
+
+        // OSM-sourced candidates do the second-pass polygon-scoped geometry
+        // query. MapKit fallback candidates skip OSM geometry entirely (we
+        // have no polygon to scope to) and the round starts as Tier `none`.
+        guard let osmCandidate = candidate.osmCandidate else {
+            let resolution = Resolution(
+                courseId: candidate.existingCourseId ?? UUID(),
+                courseName: candidate.name,
+                courseCoordinate: candidate.coordinate,
+                osmData: nil,
+                tier: .none,
+                isExistingCourse: candidate.existingCourseId != nil
+            )
+            progress(.ready(resolution))
+            completion(resolution)
+            return
+        }
+        osm.fetchCourseGeometry(for: osmCandidate) { result in
+            let osmData: OSMCourseData?
+            let tier: OSMCourseData.Tier
             switch result {
-            case .success(let osm):
-                let resolution = Resolution(
-                    courseId: candidate.existingCourseId ?? UUID(),
-                    courseName: candidate.name,
-                    courseCoordinate: candidate.coordinate,
-                    osmData: osm,
-                    tier: osm.tier,
-                    isExistingCourse: candidate.existingCourseId != nil
-                )
-                progress(.ready(resolution))
-                completion(resolution)
+            case .success(let d):
+                osmData = d
+                tier = d.tier
             case .failure(let err):
-                dprint("[RoundResolver] OSM resolve failed: \(err) — falling back with no OSM data")
-                let resolution = Resolution(
-                    courseId: candidate.existingCourseId ?? UUID(),
-                    courseName: candidate.name,
-                    courseCoordinate: candidate.coordinate,
-                    osmData: nil,
-                    tier: .none,
-                    isExistingCourse: candidate.existingCourseId != nil
-                )
-                progress(.ready(resolution))
-                completion(resolution)
+                dprint("[RoundResolver] OSM geometry fetch failed: \(err) — round starts with no OSM data")
+                osmData = nil
+                tier = .none
             }
+            let resolution = Resolution(
+                courseId: candidate.existingCourseId ?? UUID(),
+                courseName: candidate.name,
+                courseCoordinate: candidate.coordinate,
+                osmData: osmData,
+                tier: tier,
+                isExistingCourse: candidate.existingCourseId != nil
+            )
+            progress(.ready(resolution))
+            completion(resolution)
         }
     }
 
-    // MARK: - POI search
+    // MARK: - MapKit fallback POI search (used only when OSM is empty)
 
-    private func searchPOIs(near coordinate: CLLocationCoordinate2D,
-                            completion: @escaping ([POICandidate]) -> Void) {
+    private func searchMapKitPOIs(near coordinate: CLLocationCoordinate2D,
+                                  completion: @escaping ([POICandidate]) -> Void) {
         let req = MKLocalSearch.Request()
         req.region = MKCoordinateRegion(
             center: coordinate,
@@ -177,7 +232,8 @@ final class RoundResolver {
                     name: item.name ?? "Unknown course",
                     coordinate: c,
                     distanceMeters: dist,
-                    existingCourseId: nil
+                    existingCourseId: nil,
+                    osmCandidate: nil
                 )
             } ?? []
             // Drop POIs further than 1500m — anything beyond that is a different facility.
@@ -217,7 +273,8 @@ final class RoundResolver {
                         name: poi.name,
                         coordinate: poi.coordinate,
                         distanceMeters: poi.distanceMeters,
-                        existingCourseId: existing?.id
+                        existingCourseId: existing?.id,
+                        osmCandidate: poi.osmCandidate
                     )
                 }
                 completion(matched)

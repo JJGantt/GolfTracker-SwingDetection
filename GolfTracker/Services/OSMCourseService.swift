@@ -42,16 +42,33 @@ struct OSMPolygon: Codable, Hashable, Identifiable {
     }
 }
 
-/// Bundled OSM data for a course area, tier-classified.
+/// A course candidate from the first-pass `leisure=golf_course` Overpass
+/// query. Used to populate the picker before we fetch detailed geometry for
+/// the course the user actually picked.
+struct OSMCourseCandidate: Hashable {
+    var osmType: String      // "way" or "relation"
+    var osmId: Int64
+    var name: String
+    var centroid: MapPoint
+    var polygon: [MapPoint]  // Course bounding polygon, used to scope the
+                             // second-pass holes/greens/tees query.
+}
+
+/// Bundled OSM data for a single course (after the user has picked which
+/// course to play). Tier classification reflects whether the hole numbering
+/// is clean enough to start the round on hole 1 with all holes pre-placed.
 struct OSMCourseData: Codable, Hashable {
     enum Tier: String, Codable {
-        /// All (or nearly all) holes have `ref` numbers AND green polygons —
-        /// round can start with full hole numbering and no manual labeling.
+        /// Hole refs are exactly {1, 2, ..., N} — pure integers, no duplicates,
+        /// contiguous, every hole accounted for. Round starts on hole 1 with
+        /// all N holes pre-placed.
         case full
-        /// Greens are present but holes aren't numbered — UI uses OSM polygons
-        /// instead of blob detection, but user still picks per-hole.
+        /// Greens are present but hole numbering isn't clean (duplicates,
+        /// gaps, non-integer refs, or umbrella mappings like Bethpage State
+        /// Park where 90 holes share one polygon). UI uses OSM polygons in
+        /// place of blob detection but user still picks per-hole as they go.
         case partial
-        /// Nothing usable — fall back to MapKit blob detection.
+        /// No green polygons usable — fall back to MapKit blob detection.
         case none
     }
 
@@ -65,20 +82,20 @@ struct OSMCourseData: Codable, Hashable {
     var bunkers: [OSMPolygon]
     var attribution: String
 
-    /// Computed tier classification. Considers a course "full" when at least 9
-    /// holes have ref numbers AND we have a green polygon for at least 75% of
-    /// numbered holes (point-in-polygon match against hole.greenPoint).
+    /// "Clean" iff every hole has a pure-integer ref, refs are unique, and they
+    /// form a contiguous 1..N sequence. Bethpage umbrellas fail (5x dups);
+    /// Pinehurst polygon-overlap cases fail (1 dup); Hyde Park passes.
     var tier: Tier {
         if greens.isEmpty { return .none }
-        let numbered = holes.filter { ($0.ref ?? "").isEmpty == false && Int($0.ref ?? "") != nil }
-        if numbered.count < 9 { return .partial }
-        var matched = 0
-        for hole in numbered {
-            let coord = hole.greenPoint.coordinate
-            if greens.contains(where: { $0.contains(coord) }) { matched += 1 }
+        let intRefs = holes.compactMap { h -> Int? in
+            guard let ref = h.ref, !ref.isEmpty, let n = Int(ref) else { return nil }
+            return n
         }
-        let coverage = Double(matched) / Double(numbered.count)
-        return coverage >= 0.75 ? .full : .partial
+        guard intRefs.count == holes.count, !intRefs.isEmpty else { return .partial }
+        let unique = Set(intRefs)
+        guard unique.count == intRefs.count else { return .partial }   // duplicates
+        let expected = Set(1...intRefs.count)
+        return unique == expected ? .full : .partial                   // contiguous?
     }
 
     /// For a given hole, find the green polygon whose interior contains the
@@ -123,54 +140,94 @@ final class OSMCourseService {
         #endif
     }
 
-    // MARK: - High-level resolve
-
-    /// Cache-first lookup. Hits Supabase cache for the GPS bucket; on miss,
-    /// fetches from Overpass and writes the result back to the cache.
-    func resolve(near coordinate: CLLocationCoordinate2D,
-                 courseId: UUID? = nil,
-                 radiusMeters: Double? = nil,
-                 completion: @escaping (Result<OSMCourseData, Error>) -> Void) {
-        let radius = radiusMeters ?? defaultRadiusMeters
-        fetchFromCache(near: coordinate) { [weak self] cached in
-            guard let self = self else { return }
-            if let cached = cached, !self.isExpired(cached) {
-                completion(.success(cached))
-                return
-            }
-            self.fetchFromOverpass(near: coordinate, radiusMeters: radius) { [weak self] result in
-                if case .success(let data) = result {
-                    self?.upsertCache(data, courseId: courseId) { _ in }
-                }
-                completion(result)
-            }
-        }
-    }
+    // MARK: - High-level resolve (two-pass: candidates → picked course geometry)
 
     private func isExpired(_ data: OSMCourseData) -> Bool {
         Date().timeIntervalSince(data.fetchedAt) > cacheTTL
     }
 
-    // MARK: - Overpass
-
-    func fetchFromOverpass(near coordinate: CLLocationCoordinate2D,
-                           radiusMeters: Double,
-                           completion: @escaping (Result<OSMCourseData, Error>) -> Void) {
+    /// First pass — fetch named `leisure=golf_course` features near the GPS
+    /// point. Returns a candidate list for the resolver/picker to choose from.
+    /// Each candidate carries its bounding polygon for the second-pass query.
+    func fetchCandidates(near coordinate: CLLocationCoordinate2D,
+                         radiusMeters: Double? = nil,
+                         completion: @escaping (Result<[OSMCourseCandidate], Error>) -> Void) {
+        let radius = radiusMeters ?? defaultRadiusMeters
         let lat = coordinate.latitude
         let lon = coordinate.longitude
-        let r = Int(radiusMeters)
+        let r = Int(radius)
         let query = """
         [out:json][timeout:25];
         (
-          way["golf"="green"](around:\(r),\(lat),\(lon));
-          way["golf"="tee"](around:\(r),\(lat),\(lon));
-          way["golf"="fairway"](around:\(r),\(lat),\(lon));
-          way["golf"="bunker"](around:\(r),\(lat),\(lon));
-          way["golf"="hole"](around:\(r),\(lat),\(lon));
+          way["leisure"="golf_course"]["name"](around:\(r),\(lat),\(lon));
+          relation["leisure"="golf_course"]["name"](around:\(r),\(lat),\(lon));
         );
         out tags geom;
         """
+        executeOverpass(query: query) { result in
+            switch result {
+            case .failure(let e): completion(.failure(e))
+            case .success(let data):
+                do {
+                    let candidates = try Self.parseCandidates(data: data)
+                    completion(.success(candidates))
+                } catch {
+                    completion(.failure(error))
+                }
+            }
+        }
+    }
 
+    /// Second pass — fetch holes/greens/tees/fairways/bunkers inside a course's
+    /// bounding polygon. Cache-first by the course's OSM id.
+    func fetchCourseGeometry(for candidate: OSMCourseCandidate,
+                             completion: @escaping (Result<OSMCourseData, Error>) -> Void) {
+        fetchFromCache(osmId: candidate.osmId) { [weak self] cached in
+            guard let self = self else { return }
+            if let cached = cached, !self.isExpired(cached) {
+                completion(.success(cached))
+                return
+            }
+            // Build a poly:"lat lon lat lon ..." filter from the candidate's
+            // bounding polygon. Overpass docs use whitespace-separated lat/lon.
+            let polyString = candidate.polygon
+                .map { "\($0.latitude) \($0.longitude)" }
+                .joined(separator: " ")
+            let query = """
+            [out:json][timeout:25];
+            (
+              way["golf"="hole"](poly:"\(polyString)");
+              way["golf"="green"](poly:"\(polyString)");
+              way["golf"="tee"](poly:"\(polyString)");
+              way["golf"="fairway"](poly:"\(polyString)");
+              way["golf"="bunker"](poly:"\(polyString)");
+            );
+            out tags geom;
+            """
+            self.executeOverpass(query: query) { [weak self] result in
+                switch result {
+                case .failure(let e): completion(.failure(e))
+                case .success(let data):
+                    do {
+                        let parsed = try Self.parseCourseGeometry(
+                            data: data,
+                            center: candidate.centroid.coordinate,
+                            radiusMeters: self?.defaultRadiusMeters ?? 1500
+                        )
+                        completion(.success(parsed))
+                        // Fire-and-forget cache write keyed by OSM id.
+                        self?.upsertCache(parsed, osmId: candidate.osmId) { _ in }
+                    } catch {
+                        completion(.failure(error))
+                    }
+                }
+            }
+        }
+    }
+
+    // MARK: - Overpass transport
+
+    private func executeOverpass(query: String, completion: @escaping (Result<Data, Error>) -> Void) {
         guard let url = URL(string: overpassEndpoint) else {
             completion(.failure(OSMError.badURL)); return
         }
@@ -179,33 +236,73 @@ final class OSMCourseService {
         req.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
         let body = "data=\(query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? "")"
         req.httpBody = body.data(using: .utf8)
-
-        session.dataTask(with: req) { [weak self] data, response, error in
+        session.dataTask(with: req) { data, response, error in
             if let error = error { completion(.failure(error)); return }
             guard let data = data else { completion(.failure(OSMError.emptyResponse)); return }
             let status = (response as? HTTPURLResponse)?.statusCode ?? 0
             guard status >= 200 && status < 300 else {
-                completion(.failure(OSMError.httpStatus(status)))
-                return
+                completion(.failure(OSMError.httpStatus(status))); return
             }
-            do {
-                let parsed = try self?.parseOverpassResponse(data: data,
-                                                             center: coordinate,
-                                                             radiusMeters: radiusMeters)
-                if let parsed = parsed {
-                    completion(.success(parsed))
-                } else {
-                    completion(.failure(OSMError.parseFailure))
-                }
-            } catch {
-                completion(.failure(error))
-            }
+            completion(.success(data))
         }.resume()
     }
 
-    private func parseOverpassResponse(data: Data,
-                                       center: CLLocationCoordinate2D,
-                                       radiusMeters: Double) throws -> OSMCourseData {
+    private static func parseCandidates(data: Data) throws -> [OSMCourseCandidate] {
+        guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let elements = json["elements"] as? [[String: Any]] else {
+            throw OSMError.parseFailure
+        }
+        var out: [OSMCourseCandidate] = []
+        for el in elements {
+            guard let type = el["type"] as? String,
+                  let osmId = (el["id"] as? Int64) ?? (el["id"] as? Int).map(Int64.init),
+                  let tags = el["tags"] as? [String: Any],
+                  let name = tags["name"] as? String else { continue }
+            // Way: geometry is an array of {lat,lon}.
+            // Relation: geometry comes from `out geom` as `bounds` or member geoms;
+            // for our purposes, use the relation's bounds OR fall back to the
+            // first member with geometry.
+            var polygon: [MapPoint] = []
+            if type == "way", let geom = el["geometry"] as? [[String: Any]] {
+                polygon = geom.compactMap {
+                    guard let lat = $0["lat"] as? Double, let lon = $0["lon"] as? Double else { return nil }
+                    return MapPoint(latitude: lat, longitude: lon)
+                }
+            } else if type == "relation" {
+                // Concatenate all member ways' geometry into a flat polygon.
+                // Imperfect for complex multi-polygon relations but sufficient
+                // for the second-pass `(poly:"")` query — Overpass picks up any
+                // feature inside the convex hull of the points.
+                if let members = el["members"] as? [[String: Any]] {
+                    for m in members {
+                        if let geom = m["geometry"] as? [[String: Any]] {
+                            polygon.append(contentsOf: geom.compactMap {
+                                guard let lat = $0["lat"] as? Double, let lon = $0["lon"] as? Double else { return nil }
+                                return MapPoint(latitude: lat, longitude: lon)
+                            })
+                        }
+                    }
+                }
+            }
+            guard polygon.count >= 3 else { continue }
+            // Centroid = simple average of polygon vertices. Good enough for
+            // the picker's "X meters away" sort.
+            let avgLat = polygon.map(\.latitude).reduce(0, +) / Double(polygon.count)
+            let avgLon = polygon.map(\.longitude).reduce(0, +) / Double(polygon.count)
+            out.append(OSMCourseCandidate(
+                osmType: type,
+                osmId: osmId,
+                name: name,
+                centroid: MapPoint(latitude: avgLat, longitude: avgLon),
+                polygon: polygon
+            ))
+        }
+        return out
+    }
+
+    private static func parseCourseGeometry(data: Data,
+                                            center: CLLocationCoordinate2D,
+                                            radiusMeters: Double) throws -> OSMCourseData {
         guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
               let elements = json["elements"] as? [[String: Any]] else {
             throw OSMError.parseFailure
@@ -269,10 +366,23 @@ final class OSMCourseService {
         )
     }
 
-    // MARK: - Supabase cache (hand-rolled REST; will move to SDK with the rest)
+    // MARK: - Supabase cache
+
+    /// Cache row by OSM course id. We embed osmId into gps_bucket_lat as a
+    /// negative-sentinel sigil so we don't need a new column on osm_course_data:
+    /// the schema's UNIQUE(gps_bucket_lat, gps_bucket_lon) suffices when we use
+    /// (osmId-derived) keys outside the real lat/lon range.
+    private func cacheKey(forOsmId id: Int64) -> (lat: Double, lon: Double) {
+        // OSM ids are always positive integers up to ~10^11. Stuff them into
+        // both columns: bucket_lat = -1 (sentinel for "OSM keyed"), bucket_lon = id.
+        // Real coordinates are always lat ∈ [-90,90], so -1 lat collides with
+        // nothing real, and lon = (e.g.) 286113630 is wildly outside [-180,180].
+        return (lat: -1.0, lon: Double(id))
+    }
 
     private func bucketKey(for coordinate: CLLocationCoordinate2D) -> (lat: Double, lon: Double) {
-        // Round to 0.01° (~1.1km) so users at the same course collide on the same row.
+        // Round to 0.01° (~1.1km) — used by the first-pass query when we don't
+        // yet know an OSM course id (vestigial; kept for back-compat).
         let lat = (coordinate.latitude * 100).rounded() / 100
         let lon = (coordinate.longitude * 100).rounded() / 100
         return (lat, lon)
@@ -287,12 +397,23 @@ final class OSMCourseService {
     func fetchFromCache(near coordinate: CLLocationCoordinate2D,
                         completion: @escaping (OSMCourseData?) -> Void) {
         let bucket = bucketKey(for: coordinate)
+        fetchFromCache(bucketLat: bucket.lat, bucketLon: bucket.lon, completion: completion)
+    }
+
+    func fetchFromCache(osmId: Int64,
+                        completion: @escaping (OSMCourseData?) -> Void) {
+        let key = cacheKey(forOsmId: osmId)
+        fetchFromCache(bucketLat: key.lat, bucketLon: key.lon, completion: completion)
+    }
+
+    private func fetchFromCache(bucketLat: Double, bucketLon: Double,
+                                completion: @escaping (OSMCourseData?) -> Void) {
         Task {
             do {
                 let rows: [CacheRow] = try await supabase.from("osm_course_data")
                     .select("data,fetched_at")
-                    .eq("gps_bucket_lat", value: bucket.lat)
-                    .eq("gps_bucket_lon", value: bucket.lon)
+                    .eq("gps_bucket_lat", value: bucketLat)
+                    .eq("gps_bucket_lon", value: bucketLon)
                     .limit(1)
                     .execute()
                     .value
@@ -319,12 +440,26 @@ final class OSMCourseService {
     }
 
     func upsertCache(_ data: OSMCourseData,
+                     osmId: Int64,
+                     completion: @escaping (Bool) -> Void) {
+        let key = cacheKey(forOsmId: osmId)
+        upsertRow(data, bucketLat: key.lat, bucketLon: key.lon, courseId: nil, completion: completion)
+    }
+
+    func upsertCache(_ data: OSMCourseData,
                      courseId: UUID?,
                      completion: @escaping (Bool) -> Void) {
         let bucket = bucketKey(for: data.center.coordinate)
+        upsertRow(data, bucketLat: bucket.lat, bucketLon: bucket.lon, courseId: courseId, completion: completion)
+    }
+
+    private func upsertRow(_ data: OSMCourseData,
+                           bucketLat: Double, bucketLon: Double,
+                           courseId: UUID?,
+                           completion: @escaping (Bool) -> Void) {
         let row = CacheUpsert(
-            gps_bucket_lat: bucket.lat,
-            gps_bucket_lon: bucket.lon,
+            gps_bucket_lat: bucketLat,
+            gps_bucket_lon: bucketLon,
             center_latitude: data.center.latitude,
             center_longitude: data.center.longitude,
             radius_meters: Int(data.radiusMeters),
