@@ -24,6 +24,11 @@ class WatchDataStore: ObservableObject {
     @Published var availableClubs: [ClubData] = []
     @Published var clubTypes: [ClubTypeData] = []
     @Published var holeDetectionDataByCourse: [UUID: CourseHoleDetectionData] = [:]
+    /// In-memory cache of OSM course data keyed by courseId. Populated when the
+    /// resolver completes; consumed by AutoAdvanceMonitor's visited-green check
+    /// and (eventually) by the round-play UI for green polygon overlays.
+    /// Not persisted — if app relaunches, the resolver re-fetches (cache-fast).
+    @Published var osmCourseDataByCourse: [UUID: OSMCourseData] = [:]
     @Published var holeFilterSettings: HoleDetectionFilterSettings = .default {
         didSet {
             if let data = try? JSONEncoder().encode(holeFilterSettings) {
@@ -538,7 +543,14 @@ class WatchDataStore: ObservableObject {
         cb?(candidate)
     }
 
+    func osmCourseData(forCourseId id: UUID) -> OSMCourseData? {
+        osmCourseDataByCourse[id]
+    }
+
     private func startRound(from resolution: RoundResolver.Resolution) {
+        if let osm = resolution.osmData {
+            osmCourseDataByCourse[resolution.courseId] = osm
+        }
         let holes: [Hole]
         if resolution.tier == .full, let osm = resolution.osmData {
             // Build all numbered holes up front from OSM data so the round

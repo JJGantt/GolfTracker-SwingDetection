@@ -4,18 +4,23 @@ import Combine
 import WatchKit
 
 /// Watches the user's GPS during an active round and auto-advances to the next
-/// hole when they've clearly walked off the previous green. Only active when
-/// the next hole's coordinate is known (Tier-1 OSM round, or any round in its
-/// second-and-later play where the user has previously placed every hole).
+/// hole when they've genuinely walked off the green and toward the next tee.
 ///
-/// Trigger requires ALL of:
-///   - Distance from previous-hole green > `advanceDistanceYards` (default 50yd)
-///   - Time since last stroke on previous hole > `minSecondsSinceLastStroke`
-///   - Distance to next anchor is closer than to previous anchor
-///   - We haven't already triggered for this hole transition
+/// **Trigger requires the user to have actually visited the green first.**
+/// The "visited" gate is a point-in-polygon check against the OSM `golf=green`
+/// polygon for the current hole — not a fudge-factor radius around a marker.
+/// Once visited, the monitor advances when EITHER:
+///
+///   1. user is within `tee_box_threshold_yards` (10) of the next hole's tee point
+///      (only when OSM provided tee data), OR
+///   2. user is more than `green_left_threshold_yards` (40) from the current
+///      hole's green marker (overall fallback)
 ///
 /// Single-shot per hole — once advanced, the monitor won't re-fire for the
-/// same hole until the user manually navigates back.
+/// same hole until `resetForCurrentHole()` is called.
+///
+/// All distances in yards (single unit throughout). Real-world thresholds
+/// chosen by Jared, not invented here.
 final class AutoAdvanceMonitor: ObservableObject {
     static let shared = AutoAdvanceMonitor()
 
@@ -24,12 +29,22 @@ final class AutoAdvanceMonitor: ObservableObject {
         didSet { UserDefaults.standard.set(enabled, forKey: "autoAdvanceEnabled") }
     }
 
-    /// Tunables
-    var advanceDistanceYards: Double = 50
-    var minSecondsSinceLastStroke: TimeInterval = 5
+    /// Yards from the current green marker that counts as "left" — overall
+    /// fallback trigger when the next-tee path isn't available or doesn't fire.
+    var greenLeftThresholdYards: Double = 40
+    /// Yards from the next hole's tee point that counts as "arriving at the
+    /// next hole." Only used when OSM provides tee data for the next hole.
+    var teeBoxThresholdYards: Double = 10
 
     private var cancellables = Set<AnyCancellable>()
+    /// Set of hole numbers we've already auto-advanced from. Cleared per-hole
+    /// by `resetForCurrentHole()` if user manually navigates back.
     private var advancedFromHoleNumber: Int?
+    /// Set of hole numbers the user's GPS has been geometrically inside the
+    /// green polygon for. Persists across the lifetime of this round; cleared
+    /// when the round changes.
+    private var visitedGreenHoles: Set<Int> = []
+    private var visitedRoundId: UUID?
 
     private init() {
         if UserDefaults.standard.object(forKey: "autoAdvanceEnabled") != nil {
@@ -60,44 +75,70 @@ final class AutoAdvanceMonitor: ObservableObject {
         guard enabled else { return }
         let store = WatchDataStore.shared
         guard let round = store.currentRound else { return }
+
+        // New round → wipe visited tracking.
+        if visitedRoundId != round.id {
+            visitedRoundId = round.id
+            visitedGreenHoles.removeAll()
+            advancedFromHoleNumber = nil
+        }
+
         let idx = round.currentHoleIndex
         guard idx >= 0, idx < round.holes.count else { return }
         let currentHole = round.holes[idx]
-        // Only proceed if both current and next holes have known coordinates.
-        guard let currentGreen = currentHole.coordinate else { return }
-        guard idx + 1 < round.holes.count else { return }  // last hole — nothing to advance to
+        // Last hole — nothing to advance to.
+        guard idx + 1 < round.holes.count else { return }
         let nextHole = round.holes[idx + 1]
-        guard let nextAnchor = nextHole.coordinate else { return }
-        // Skip if we've already advanced from this hole and the user hasn't reset.
+        guard let currentGreenMarker = currentHole.coordinate else { return }
+        // Skip if we've already advanced from this hole.
         if advancedFromHoleNumber == currentHole.number { return }
 
-        // Distance from previous green.
-        let userLoc = CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude)
-        let greenLoc = CLLocation(latitude: currentGreen.latitude, longitude: currentGreen.longitude)
-        let nextLoc = CLLocation(latitude: nextAnchor.latitude, longitude: nextAnchor.longitude)
-        let metersFromPrev = userLoc.distance(from: greenLoc)
-        let metersToNext = userLoc.distance(from: nextLoc)
-        let yardsFromPrev = metersFromPrev * 1.09361
-        guard yardsFromPrev > advanceDistanceYards else { return }
-        // Heading toward next hole?
-        guard metersToNext < metersFromPrev else { return }
-        // Time-since-last-stroke gate.
-        let lastStrokeT = round.strokes
-            .filter { $0.holeNumber == currentHole.number }
-            .map { $0.timestamp }
-            .max()
-        if let last = lastStrokeT, Date().timeIntervalSince(last) < minSecondsSinceLastStroke {
+        // Pull OSM data for this round's course (cached in WatchDataStore).
+        // We need it for both the visited check (green polygon) and the
+        // next-tee trigger.
+        let osm = store.osmCourseData(forCourseId: round.courseId)
+        let currentOSMHole = osm?.holes.first { Int($0.ref ?? "") == currentHole.number }
+        let nextOSMHole = osm?.holes.first { Int($0.ref ?? "") == nextHole.number }
+        let currentGreenPolygon = currentOSMHole.flatMap { osm?.greenPolygon(for: $0) }
+
+        // === Visited gate: did the user's GPS land inside the green polygon? ===
+        if let polygon = currentGreenPolygon, polygon.contains(coordinate) {
+            visitedGreenHoles.insert(currentHole.number)
+        }
+        guard visitedGreenHoles.contains(currentHole.number) else {
+            // Never visited the green for this hole — don't advance.
             return
         }
 
-        // All gates passed — advance.
+        // === Trigger A: within tee_box_threshold_yards of next hole's tee point ===
+        if let nextTee = nextOSMHole?.teePoint {
+            let teeLoc = CLLocation(latitude: nextTee.latitude, longitude: nextTee.longitude)
+            let userLoc = CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude)
+            let yardsToTee = userLoc.distance(from: teeLoc) * 1.09361
+            if yardsToTee <= teeBoxThresholdYards {
+                fire(from: currentHole, to: nextHole, reason: "near next tee (\(Int(yardsToTee))yd)")
+                return
+            }
+        }
+
+        // === Trigger B: more than green_left_threshold_yards from current green marker ===
+        let userLoc = CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude)
+        let greenLoc = CLLocation(latitude: currentGreenMarker.latitude, longitude: currentGreenMarker.longitude)
+        let yardsFromGreen = userLoc.distance(from: greenLoc) * 1.09361
+        if yardsFromGreen >= greenLeftThresholdYards {
+            fire(from: currentHole, to: nextHole, reason: "left green (\(Int(yardsFromGreen))yd)")
+            return
+        }
+    }
+
+    private func fire(from currentHole: Hole, to nextHole: Hole, reason: String) {
+        let store = WatchDataStore.shared
         advancedFromHoleNumber = currentHole.number
         WKInterfaceDevice.current().play(.success)
-        // Mark previous hole completed if it isn't already, then navigate.
-        if !round.isHoleCompleted(currentHole.number) {
+        if !(store.currentRound?.isHoleCompleted(currentHole.number) ?? true) {
             store.completeHole(holeNumber: currentHole.number)
         }
         store.navigateToNextHole()
-        dprint("⌚ [AutoAdvance] Advanced to hole \(nextHole.number) — \(Int(yardsFromPrev))yd from prev green")
+        dprint("⌚ [AutoAdvance] Hole \(currentHole.number) → \(nextHole.number) — \(reason)")
     }
 }
