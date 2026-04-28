@@ -1,13 +1,22 @@
 import Foundation
 import CoreLocation
+import SwiftData
 
 // MARK: - Club Models
 
-struct ClubTypeData: Identifiable, Codable, Hashable {
-    var id = UUID()
-    var name: String              // Display name (e.g., "Driver", "7-Iron", "Sand Wedge")
-    var isDefault: Bool           // Default types can't be deleted
-    var averageDistance: Int?     // Average distance in yards (for club prediction)
+@Model
+final class ClubTypeData {
+    @Attribute(.unique) var id: UUID
+    var name: String
+    var isDefault: Bool
+    var averageDistance: Int?
+
+    init(id: UUID = UUID(), name: String, isDefault: Bool, averageDistance: Int? = nil) {
+        self.id = id
+        self.name = name
+        self.isDefault = isDefault
+        self.averageDistance = averageDistance
+    }
 
     static func defaultClubTypes() -> [ClubTypeData] {
         return [
@@ -31,33 +40,50 @@ struct ClubTypeData: Identifiable, Codable, Hashable {
     }
 }
 
-struct ClubData: Identifiable, Codable, Hashable {
-    var id = UUID()
-    var name: String              // Display name (e.g., "3-Iron", "My TaylorMade 7-Iron")
-    var clubTypeId: UUID          // For stats grouping - references ClubTypeData
-    var isDefault: Bool           // Default clubs can't be deleted
+@Model
+final class ClubData {
+    @Attribute(.unique) var id: UUID
+    var name: String
+    var clubTypeId: UUID    // FK to ClubTypeData
+    var isDefault: Bool
 
+    init(id: UUID = UUID(), name: String, clubTypeId: UUID, isDefault: Bool = false) {
+        self.id = id
+        self.name = name
+        self.clubTypeId = clubTypeId
+        self.isDefault = isDefault
+    }
 }
 
+/// Embedded value type — owned by ClubSet, not its own table.
 struct TypeSelection: Codable, Hashable {
     var typeId: UUID
-    var activeClubId: UUID?       // Which club of this type is active (nil if none selected)
+    var activeClubId: UUID?
 }
 
-struct ClubSet: Identifiable, Codable, Hashable {
-    var id = UUID()
-    var name: String              // e.g., "My Main Bag"
-    var typeSelections: [TypeSelection]  // Types in this set with their active club
-    var isActive: Bool            // Currently selected set
+@Model
+final class ClubSet {
+    @Attribute(.unique) var id: UUID
+    var name: String
+    /// Stored as Codable JSON — TypeSelection is an embedded value type,
+    /// not a relational entity on its own.
+    var typeSelections: [TypeSelection]
+    var isActive: Bool
     var dateCreated: Date
     var dateModified: Date
 
-    init(name: String, typeSelections: [TypeSelection] = [], isActive: Bool = false) {
+    init(id: UUID = UUID(),
+         name: String,
+         typeSelections: [TypeSelection] = [],
+         isActive: Bool = false,
+         dateCreated: Date = Date(),
+         dateModified: Date = Date()) {
+        self.id = id
         self.name = name
         self.typeSelections = typeSelections
         self.isActive = isActive
-        self.dateCreated = Date()
-        self.dateModified = Date()
+        self.dateCreated = dateCreated
+        self.dateModified = dateModified
     }
 
     func getActiveClubId(for typeId: UUID) -> UUID? {
@@ -69,14 +95,32 @@ struct ClubSet: Identifiable, Codable, Hashable {
     }
 }
 
+// MARK: - Course / Hole / Round / Stroke / Target
 
-struct Course: Identifiable, Codable, Hashable {
-    var id = UUID()
+@Model
+final class Course {
+    @Attribute(.unique) var id: UUID
     var name: String
-    var holes: [Hole]
+    /// Course's authoritative hole list. Round snapshots this at start so that
+    /// edits to the course don't retroactively rewrite history.
+    @Relationship(deleteRule: .cascade, inverse: \Hole.course) var holes: [Hole]
     var rating: Double?
     var slope: Int?
     var city: String?
+
+    init(id: UUID = UUID(),
+         name: String,
+         holes: [Hole] = [],
+         rating: Double? = nil,
+         slope: Int? = nil,
+         city: String? = nil) {
+        self.id = id
+        self.name = name
+        self.holes = holes
+        self.rating = rating
+        self.slope = slope
+        self.city = city
+    }
 
     var coordinate: CLLocationCoordinate2D? {
         guard let firstHole = holes.first else { return nil }
@@ -84,61 +128,76 @@ struct Course: Identifiable, Codable, Hashable {
     }
 }
 
-struct Hole: Identifiable, Codable, Hashable {
-    var id = UUID()
+@Model
+final class Hole {
+    @Attribute(.unique) var id: UUID
     var number: Int
     var latitude: Double?
     var longitude: Double?
     var par: Int?
+    /// Inverse relationship: nil if this hole is owned by a Round (round-time
+    /// snapshot) rather than a course directly.
+    var course: Course?
+    var round: Round?
 
-    var coordinate: CLLocationCoordinate2D? {
-        guard let lat = latitude, let lon = longitude else { return nil }
-        return CLLocationCoordinate2D(latitude: lat, longitude: lon)
-    }
-
-    /// Whether this hole has a flag location set
-    var hasLocation: Bool {
-        latitude != nil && longitude != nil
-    }
-
-    init(number: Int, coordinate: CLLocationCoordinate2D? = nil, par: Int? = nil) {
+    init(id: UUID = UUID(),
+         number: Int,
+         coordinate: CLLocationCoordinate2D? = nil,
+         par: Int? = nil) {
+        self.id = id
         self.number = number
         self.latitude = coordinate?.latitude
         self.longitude = coordinate?.longitude
         self.par = par
     }
 
-    /// Update the hole's flag location
-    mutating func setCoordinate(_ coordinate: CLLocationCoordinate2D) {
+    var coordinate: CLLocationCoordinate2D? {
+        guard let lat = latitude, let lon = longitude else { return nil }
+        return CLLocationCoordinate2D(latitude: lat, longitude: lon)
+    }
+
+    var hasLocation: Bool { latitude != nil && longitude != nil }
+
+    func setCoordinate(_ coordinate: CLLocationCoordinate2D) {
         self.latitude = coordinate.latitude
         self.longitude = coordinate.longitude
     }
 }
 
-struct Stroke: Identifiable, Codable, Hashable {
-    var id = UUID()
+@Model
+final class Stroke {
+    @Attribute(.unique) var id: UUID
     var holeNumber: Int
     var strokeNumber: Int
     var latitude: Double
     var longitude: Double
-    var clubId: UUID              // References ClubData.id
+    var clubId: UUID    // FK to ClubData
     var timestamp: Date
     var isPenalty: Bool
-    var trajectoryHeading: Double? // Direction user was trying to hit (in degrees)
+    var trajectoryHeading: Double?
+    var round: Round?
 
-    var coordinate: CLLocationCoordinate2D {
-        CLLocationCoordinate2D(latitude: latitude, longitude: longitude)
-    }
-
-    init(holeNumber: Int, strokeNumber: Int, coordinate: CLLocationCoordinate2D, clubId: UUID, isPenalty: Bool = false, trajectoryHeading: Double? = nil) {
+    init(id: UUID = UUID(),
+         holeNumber: Int,
+         strokeNumber: Int,
+         coordinate: CLLocationCoordinate2D,
+         clubId: UUID,
+         isPenalty: Bool = false,
+         trajectoryHeading: Double? = nil,
+         timestamp: Date = Date()) {
+        self.id = id
         self.holeNumber = holeNumber
         self.strokeNumber = strokeNumber
         self.latitude = coordinate.latitude
         self.longitude = coordinate.longitude
         self.clubId = clubId
-        self.timestamp = Date()
+        self.timestamp = timestamp
         self.isPenalty = isPenalty
         self.trajectoryHeading = trajectoryHeading
+    }
+
+    var coordinate: CLLocationCoordinate2D {
+        CLLocationCoordinate2D(latitude: latitude, longitude: longitude)
     }
 }
 
@@ -149,61 +208,77 @@ extension Stroke {
     }
 }
 
-struct Target: Identifiable, Codable, Hashable {
-    var id = UUID()
+@Model
+final class Target {
+    @Attribute(.unique) var id: UUID
     var holeNumber: Int
     var latitude: Double
     var longitude: Double
+    var round: Round?
 
-    var coordinate: CLLocationCoordinate2D {
-        CLLocationCoordinate2D(latitude: latitude, longitude: longitude)
-    }
-
-    init(holeNumber: Int, coordinate: CLLocationCoordinate2D) {
+    init(id: UUID = UUID(),
+         holeNumber: Int,
+         coordinate: CLLocationCoordinate2D) {
+        self.id = id
         self.holeNumber = holeNumber
         self.latitude = coordinate.latitude
         self.longitude = coordinate.longitude
     }
+
+    var coordinate: CLLocationCoordinate2D {
+        CLLocationCoordinate2D(latitude: latitude, longitude: longitude)
+    }
 }
 
-struct Round: Identifiable, Codable, Hashable {
-    var id = UUID()
+@Model
+final class Round {
+    @Attribute(.unique) var id: UUID
     var courseId: UUID
     var courseName: String
     var date: Date
-    var strokes: [Stroke]
-    var holes: [Hole] // Course holes for Watch sync
-    var completedHoles: Set<Int> // Hole numbers that have been finished
-    var currentHoleIndex: Int // Current hole being played (synced between devices)
-    var targets: [Target] // Target markers placed on the map (synced between devices)
-    var holeDetectionEnabled: Bool? // Whether green suggestions are enabled for this round
-    var locationTestModeEnabled: Bool? // Whether GPS should be forced to fixed test coordinates
+    @Relationship(deleteRule: .cascade, inverse: \Stroke.round) var strokes: [Stroke]
+    /// Round-time snapshot of course holes — separate ownership from Course.holes
+    /// so edits to the parent course don't rewrite history.
+    @Relationship(deleteRule: .cascade, inverse: \Hole.round) var holes: [Hole]
+    /// Stored as [Int] (SwiftData support for Set<Int> is flaky); exposed as
+    /// Set<Int> via `completedHoles` computed property below.
+    var completedHolesArray: [Int]
+    var currentHoleIndex: Int
+    @Relationship(deleteRule: .cascade, inverse: \Target.round) var targets: [Target]
+    var holeDetectionEnabled: Bool?
+    var locationTestModeEnabled: Bool?
 
-    init(
-        courseId: UUID,
-        courseName: String,
-        holes: [Hole] = [],
-        holeDetectionEnabled: Bool = false,
-        locationTestModeEnabled: Bool = false
-    ) {
+    init(id: UUID = UUID(),
+         courseId: UUID,
+         courseName: String,
+         holes: [Hole] = [],
+         holeDetectionEnabled: Bool = false,
+         locationTestModeEnabled: Bool = false,
+         date: Date = Date()) {
+        self.id = id
         self.courseId = courseId
         self.courseName = courseName
-        self.date = Date()
+        self.date = date
         self.strokes = []
         self.holes = holes
-        self.completedHoles = []
+        self.completedHolesArray = []
         self.currentHoleIndex = 0
         self.targets = []
         self.holeDetectionEnabled = holeDetectionEnabled
         self.locationTestModeEnabled = locationTestModeEnabled
     }
 
+    var completedHoles: Set<Int> {
+        get { Set(completedHolesArray) }
+        set { completedHolesArray = Array(newValue) }
+    }
+
     func isHoleCompleted(_ holeNumber: Int) -> Bool {
-        return completedHoles.contains(holeNumber)
+        completedHolesArray.contains(holeNumber)
     }
 }
 
-// MARK: - Hole Detection Models
+// MARK: - Hole Detection Models (transient, JSON-only — not @Model)
 
 struct MapPoint: Codable, Hashable {
     var latitude: Double
@@ -300,15 +375,11 @@ struct HoleDetectionFilterSettings: Codable, Hashable {
     )
 }
 
-// MARK: - Auth
+// MARK: - Auth (transient, Keychain-only — not @Model)
 
-/// Supabase auth session. Lives on iPhone (source of truth) and is mirrored to
-/// Watch via WatchConnectivity application context so the Watch can authenticate
-/// its own Supabase requests as the same user.
 struct AuthSession: Codable, Equatable {
     let accessToken: String
     let refreshToken: String
     let expiresAt: Date
     let userId: String
 }
-

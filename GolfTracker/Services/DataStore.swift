@@ -1,6 +1,7 @@
 import Foundation
 import CoreLocation
 import MapKit
+import SwiftData
 
 class DataStore: ObservableObject {
     @Published var courses: [Course] = []
@@ -14,11 +15,13 @@ class DataStore: ObservableObject {
     @Published var holeFilterSettings: HoleDetectionFilterSettings = .default
     @Published var playerStats: PlayerStats = .empty
 
-    private let coursesFileName = "courses.json"
-    private let roundsFileName = "rounds.json"
-    private let clubTypesFileName = "clubTypes.json"
-    private let clubsFileName = "clubs.json"
-    private let clubSetsFileName = "clubSets.json"
+    /// Set at app startup via `configure(container:)`.
+    private(set) var modelContainer: ModelContainer?
+    private var context: ModelContext? {
+        guard let modelContainer = modelContainer else { return nil }
+        return ModelContext(modelContainer)
+    }
+
     private let holeDetectionFileName = "holeDetectionData.json"
     private let playerStatsFileName = "playerStats.json"
     private let holeFilterSettingsKey = "holeFilterSettings"
@@ -30,11 +33,9 @@ class DataStore: ObservableObject {
 
     init() {
         dprint("🏌️ DataStore initialized!")
-        loadCourses()
-        loadRounds()
-        loadClubTypes()
-        loadClubs()
-        loadClubSets()
+        // SwiftData fetches happen inside configure(container:) below — at init
+        // time the container isn't attached yet, so the @Published arrays start
+        // empty and get filled after configure runs.
         loadHoleDetectionData()
         loadHoleFilterSettings()
         dprint("🏌️ DataStore loaded \(courses.count) courses, \(rounds.count) rounds, \(clubTypes.count) club types, \(availableClubs.count) clubs, and \(clubSets.count) club sets")
@@ -85,16 +86,8 @@ class DataStore: ObservableObject {
     }
 
     private func setupWatchConnectivity() {
-        WatchConnectivityManager.shared.onReceiveStrokes = { [weak self] strokes in
-            dprint("📱 [DataStore] Received \(strokes.count) strokes from Watch")
-            self?.mergeStrokesFromWatch(strokes)
-        }
-
-        WatchConnectivityManager.shared.onReceiveRound = { [weak self] round in
-            dprint("📱 [DataStore] Received round update from Watch: \(round.courseName)")
-            self?.updateRoundFromWatch(round)
-        }
-
+        // Round/Stroke sync moved to DB (Realtime + SwiftData). WC only retains
+        // hole detection data + hole filter settings paths now.
         WatchConnectivityManager.shared.onReceiveHoleFilterSettings = { [weak self] settings in
             dprint("📱 [DataStore] Received hole filter settings from Watch")
             DispatchQueue.main.async {
@@ -103,15 +96,8 @@ class DataStore: ObservableObject {
             }
         }
 
-        // Send active set clubs and their types to Watch on startup
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
-            guard let self = self else { return }
-            let activeClubs = self.getClubsInActiveSet()
-            dprint("📱 [DataStore] Sending \(activeClubs.count) active clubs to Watch on startup")
-            WatchConnectivityManager.shared.sendClubs(activeClubs)
-            dprint("📱 [DataStore] Sending \(self.clubTypes.count) club types to Watch on startup")
-            WatchConnectivityManager.shared.sendClubTypes(self.clubTypes)
-        }
+        // Clubs/types now sync via DB — both devices read from SwiftData and
+        // observe Realtime changes; no WC push needed at startup.
     }
 
     private func mergeStrokesFromWatch(_ strokes: [Stroke]) {
@@ -174,31 +160,6 @@ class DataStore: ObservableObject {
 
     }
 
-    private var coursesFileURL: URL {
-        FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent(coursesFileName)
-    }
-
-    private var roundsFileURL: URL {
-        FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent(roundsFileName)
-    }
-
-    private var clubTypesFileURL: URL {
-        FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent(clubTypesFileName)
-    }
-
-    private var clubsFileURL: URL {
-        FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent(clubsFileName)
-    }
-
-    private var clubSetsFileURL: URL {
-        FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent(clubSetsFileName)
-    }
-
     private var holeDetectionFileURL: URL {
         FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
             .appendingPathComponent(holeDetectionFileName)
@@ -210,50 +171,34 @@ class DataStore: ObservableObject {
     }
     
     func loadCourses() {
-        guard FileManager.default.fileExists(atPath: coursesFileURL.path) else { return }
-
-        do {
-            let data = try Data(contentsOf: coursesFileURL)
-            courses = try JSONDecoder().decode([Course].self, from: data)
-            errorMessage = nil
-        } catch {
-            errorMessage = "Failed to load courses: \(error.localizedDescription)"
-        }
+        guard let context = context else { return }
+        courses = (try? context.fetch(FetchDescriptor<Course>())) ?? []
     }
 
     func loadRounds() {
-        guard FileManager.default.fileExists(atPath: roundsFileURL.path) else { return }
-
-        do {
-            let data = try Data(contentsOf: roundsFileURL)
-            rounds = try JSONDecoder().decode([Round].self, from: data)
-            errorMessage = nil
-        } catch {
-            errorMessage = "Failed to load rounds: \(error.localizedDescription)"
-        }
+        guard let context = context else { return }
+        rounds = (try? context.fetch(FetchDescriptor<Round>(sortBy: [SortDescriptor(\.date, order: .reverse)]))) ?? []
     }
 
     func saveCourses() {
-        do {
-            let data = try JSONEncoder().encode(courses)
-            try data.write(to: coursesFileURL)
-            errorMessage = nil
-        } catch {
-            errorMessage = "Failed to save courses: \(error.localizedDescription)"
+        guard let context = context else { return }
+        // SwiftData tracks changes on @Model objects — just commit. Any
+        // unattached new courses get inserted first.
+        for course in courses where course.modelContext == nil {
+            context.insert(course)
         }
+        try? context.save()
         for course in courses {
             SupabaseSync.shared.upsertCourse(course)
         }
     }
 
     func saveRounds() {
-        do {
-            let data = try JSONEncoder().encode(rounds)
-            try data.write(to: roundsFileURL)
-            errorMessage = nil
-        } catch {
-            errorMessage = "Failed to save rounds: \(error.localizedDescription)"
+        guard let context = context else { return }
+        for round in rounds where round.modelContext == nil {
+            context.insert(round)
         }
+        try? context.save()
         for round in rounds {
             SupabaseSync.shared.upsertRound(round)
             for stroke in round.strokes {
@@ -262,6 +207,42 @@ class DataStore: ObservableObject {
             for target in round.targets {
                 SupabaseSync.shared.upsertTarget(target, roundId: round.id)
             }
+        }
+    }
+
+    /// Called by GolfTrackerApp at startup to wire SwiftData persistence.
+    func configure(container: ModelContainer) {
+        self.modelContainer = container
+        loadCourses()
+        loadRounds()
+        loadClubTypes()
+        loadClubs()
+        loadClubSets()
+
+        // Initialize defaults if first run.
+        if clubTypes.isEmpty {
+            clubTypes = ClubTypeData.defaultClubTypes()
+            saveClubTypes()
+        }
+        if availableClubs.isEmpty && !clubTypes.isEmpty {
+            for clubType in clubTypes {
+                let club = ClubData(name: "Default", clubTypeId: clubType.id, isDefault: true)
+                availableClubs.append(club)
+            }
+            saveClubs()
+        }
+        if clubSets.isEmpty && !clubTypes.isEmpty {
+            let typeSelections = clubTypes.map { clubType -> TypeSelection in
+                let defaultClub = availableClubs.first(where: { $0.clubTypeId == clubType.id })
+                return TypeSelection(typeId: clubType.id, activeClubId: defaultClub?.id)
+            }
+            let defaultSet = ClubSet(name: "Default Set", typeSelections: typeSelections, isActive: true)
+            clubSets.append(defaultSet)
+            saveClubSets()
+        }
+        loadPlayerStats()
+        if playerStats.totalRounds != rounds.count {
+            rebuildPlayerStats()
         }
     }
 
@@ -299,86 +280,39 @@ class DataStore: ObservableObject {
     }
 
     func loadClubTypes() {
-        guard FileManager.default.fileExists(atPath: clubTypesFileURL.path) else { return }
-
-        do {
-            let data = try Data(contentsOf: clubTypesFileURL)
-            clubTypes = try JSONDecoder().decode([ClubTypeData].self, from: data)
-            errorMessage = nil
-        } catch {
-            errorMessage = "Failed to load club types: \(error.localizedDescription)"
-        }
+        guard let context = context else { return }
+        clubTypes = (try? context.fetch(FetchDescriptor<ClubTypeData>())) ?? []
     }
 
     func saveClubTypes() {
-        do {
-            let data = try JSONEncoder().encode(clubTypes)
-            try data.write(to: clubTypesFileURL)
-            errorMessage = nil
-            // Sync club types to Watch
-            WatchConnectivityManager.shared.sendClubTypes(clubTypes)
-            for t in clubTypes { SupabaseSync.shared.upsertClubType(t) }
-        } catch {
-            errorMessage = "Failed to save club types: \(error.localizedDescription)"
-        }
+        guard let context = context else { return }
+        for t in clubTypes where t.modelContext == nil { context.insert(t) }
+        try? context.save()
+        for t in clubTypes { SupabaseSync.shared.upsertClubType(t) }
     }
 
     func loadClubs() {
-        guard FileManager.default.fileExists(atPath: clubsFileURL.path) else { return }
-
-        do {
-            let data = try Data(contentsOf: clubsFileURL)
-            availableClubs = try JSONDecoder().decode([ClubData].self, from: data)
-            errorMessage = nil
-        } catch {
-            errorMessage = "Failed to load clubs: \(error.localizedDescription)"
-        }
+        guard let context = context else { return }
+        availableClubs = (try? context.fetch(FetchDescriptor<ClubData>())) ?? []
     }
 
     func loadClubSets() {
-        guard FileManager.default.fileExists(atPath: clubSetsFileURL.path) else { return }
-
-        do {
-            let data = try Data(contentsOf: clubSetsFileURL)
-            clubSets = try JSONDecoder().decode([ClubSet].self, from: data)
-            errorMessage = nil
-        } catch {
-            errorMessage = "Failed to load club sets: \(error.localizedDescription)"
-        }
+        guard let context = context else { return }
+        clubSets = (try? context.fetch(FetchDescriptor<ClubSet>())) ?? []
     }
 
     func saveClubs() {
-        do {
-            let data = try JSONEncoder().encode(availableClubs)
-            try data.write(to: clubsFileURL)
-            errorMessage = nil
-            // Sync active set clubs to Watch
-            syncActiveClubsToWatch()
-            for c in availableClubs { SupabaseSync.shared.upsertClub(c) }
-        } catch {
-            errorMessage = "Failed to save clubs: \(error.localizedDescription)"
-        }
-    }
-
-    /// Syncs only the clubs in the active set to the Watch
-    func syncActiveClubsToWatch() {
-        let activeClubs = getClubsInActiveSet()
-        dprint("📱 [DataStore] Syncing \(activeClubs.count) active clubs to Watch")
-        WatchConnectivityManager.shared.sendClubs(activeClubs)
-        WatchConnectivityManager.shared.sendClubTypes(clubTypes)
+        guard let context = context else { return }
+        for c in availableClubs where c.modelContext == nil { context.insert(c) }
+        try? context.save()
+        for c in availableClubs { SupabaseSync.shared.upsertClub(c) }
     }
 
     func saveClubSets() {
-        do {
-            let data = try JSONEncoder().encode(clubSets)
-            try data.write(to: clubSetsFileURL)
-            errorMessage = nil
-            // Sync active set clubs to Watch when club sets change
-            syncActiveClubsToWatch()
-            for s in clubSets { SupabaseSync.shared.upsertClubSet(s) }
-        } catch {
-            errorMessage = "Failed to save club sets: \(error.localizedDescription)"
-        }
+        guard let context = context else { return }
+        for s in clubSets where s.modelContext == nil { context.insert(s) }
+        try? context.save()
+        for s in clubSets { SupabaseSync.shared.upsertClubSet(s) }
     }
 
     func loadHoleDetectionData() {
@@ -504,9 +438,7 @@ class DataStore: ObservableObject {
 
             saveRounds()
 
-            // Resync to Watch
-            dprint("📱 [DataStore] Updated active round holes, resyncing to Watch")
-            WatchConnectivityManager.shared.sendRound(rounds[roundIndex])
+            SupabaseSync.shared.upsertRound(rounds[roundIndex])
         }
     }
 
@@ -576,11 +508,8 @@ class DataStore: ObservableObject {
         rounds.append(round)
         saveRounds()
 
-        dprint("📱 [DataStore] About to send round to Watch, holes: \(round.holes.count)")
-        // Send active set clubs and club types first to ensure Watch has them before the round
-        syncActiveClubsToWatch()
-        // Send round to Watch
-        WatchConnectivityManager.shared.sendRound(round)
+        // Round + clubs now sync via DB (Realtime + SwiftData) — no WC push needed.
+        SupabaseSync.shared.upsertRound(round)
 
         if runHoleDetection {
             startHoleDetection(
@@ -721,7 +650,7 @@ class DataStore: ObservableObject {
         saveRounds()
 
         // Send updated round to Watch
-        WatchConnectivityManager.shared.sendRound(rounds[roundIndex])
+        if let r = rounds.first(where: { $0.id == round.id }) ?? rounds.first { SupabaseSync.shared.upsertRound(r) }
     }
 
     func endRound(_ round: Round) {
@@ -803,7 +732,7 @@ class DataStore: ObservableObject {
         SupabaseSync.shared.deleteStroke(id: stroke.id)
 
         // Send updated round to Watch
-        WatchConnectivityManager.shared.sendRound(rounds[roundIndex])
+        if let r = rounds.first(where: { $0.id == round.id }) ?? rounds.first { SupabaseSync.shared.upsertRound(r) }
     }
 
     func addPenaltyStroke(to round: Round, holeNumber: Int, coordinate: CLLocationCoordinate2D, clubId: UUID) {
@@ -817,7 +746,7 @@ class DataStore: ObservableObject {
         saveRounds()
 
         // Send updated round to Watch
-        WatchConnectivityManager.shared.sendRound(rounds[roundIndex])
+        if let r = rounds.first(where: { $0.id == round.id }) ?? rounds.first { SupabaseSync.shared.upsertRound(r) }
     }
 
     func renumberStroke(in round: Round, stroke: Stroke, newNumber: Int) {
@@ -865,7 +794,7 @@ class DataStore: ObservableObject {
         saveRounds()
 
         // Sync to Watch
-        WatchConnectivityManager.shared.sendRound(rounds[roundIndex])
+        if let r = rounds.first(where: { $0.id == round.id }) ?? rounds.first { SupabaseSync.shared.upsertRound(r) }
     }
 
     func completeHole(in round: Round, holeNumber: Int) {
@@ -875,7 +804,7 @@ class DataStore: ObservableObject {
         saveRounds()
 
         // Sync to Watch
-        WatchConnectivityManager.shared.sendRound(rounds[roundIndex])
+        if let r = rounds.first(where: { $0.id == round.id }) ?? rounds.first { SupabaseSync.shared.upsertRound(r) }
     }
 
     func reopenHole(in round: Round, holeNumber: Int) {
@@ -885,7 +814,7 @@ class DataStore: ObservableObject {
         saveRounds()
 
         // Sync to Watch
-        WatchConnectivityManager.shared.sendRound(rounds[roundIndex])
+        if let r = rounds.first(where: { $0.id == round.id }) ?? rounds.first { SupabaseSync.shared.upsertRound(r) }
     }
 
     // MARK: - Club Type Management

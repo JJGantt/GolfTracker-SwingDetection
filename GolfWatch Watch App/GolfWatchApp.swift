@@ -1,4 +1,5 @@
 import SwiftUI
+import SwiftData
 import CoreMotion
 
 @main
@@ -10,6 +11,27 @@ struct GolfTrackerWatchApp: App {
     @AppStorage("hasSeenWatchOnboarding") private var hasSeenWatchOnboarding = false
     @Environment(\.scenePhase) private var scenePhase
 
+    /// Same SwiftData schema as the iOS app — Realtime sync from Supabase will
+    /// populate this container with the user's rounds/clubs/etc.
+    let modelContainer: ModelContainer = {
+        let schema = Schema([
+            Course.self, Hole.self, Round.self, Stroke.self, Target.self,
+            ClubData.self, ClubTypeData.self, ClubSet.self
+        ])
+        do {
+            return try ModelContainer(for: schema)
+        } catch {
+            fatalError("Failed to create ModelContainer: \(error)")
+        }
+    }()
+
+    init() {
+        // configure() needs to happen before WatchDataStore.shared accesses
+        // the container. Static let above is set during App init, before any
+        // singletons can be touched here.
+        WatchDataStore.shared.configure(container: modelContainer)
+    }
+
     var body: some Scene {
         WindowGroup {
             if !hasSeenWatchOnboarding {
@@ -20,10 +42,9 @@ struct GolfTrackerWatchApp: App {
                 ContentView()
             }
         }
+        .modelContainer(modelContainer)
         .onChange(of: scenePhase) { _, newPhase in
             if newPhase == .active {
-                // Re-check whenever app comes back to foreground (e.g. after user dismisses the
-                // system permission dialog or changes privacy settings).
                 swingDetector.checkAndRequestMotionAuthorization()
             }
         }

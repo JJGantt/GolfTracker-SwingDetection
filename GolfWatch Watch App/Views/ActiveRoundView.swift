@@ -97,22 +97,7 @@ struct ActiveRoundView: View {
                     .map { $0.coordinate }
             },
             set: { newCoordinates in
-                guard var round = self.store.currentRound,
-                      let hole = self.store.currentHole else { return }
-
-                // Remove old targets for this hole
-                round.targets.removeAll { $0.holeNumber == hole.number }
-
-                // Add new targets
-                let newTargets = newCoordinates.map { Target(holeNumber: hole.number, coordinate: $0) }
-                round.targets.append(contentsOf: newTargets)
-
-                // Update in store
-                self.store.currentRound = round
-                self.store.saveToStorage()
-
-                // Sync to iPhone
-                WatchConnectivityManager.shared.sendRound(round)
+                self.store.replaceTargets(forHoleNumber: self.store.currentHole?.number, with: newCoordinates)
             }
         )
     }

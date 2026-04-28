@@ -170,9 +170,7 @@ struct HolePlayView: View {
                 if let index = self.store.rounds.firstIndex(where: { $0.id == round.id }) {
                     self.store.rounds[index] = updatedRound
                     self.store.saveRounds()
-
-                    // Sync to Watch
-                    WatchConnectivityManager.shared.sendRound(updatedRound)
+                    // Round sync now flows via DB (Realtime) — no WC push needed.
                 }
             }
         )

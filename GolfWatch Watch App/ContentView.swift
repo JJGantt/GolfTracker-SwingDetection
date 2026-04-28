@@ -6,9 +6,9 @@ struct ContentView: View {
 
     var body: some View {
         WatchHomeView()
-            .onChange(of: store.currentRound) { oldRound, newRound in
+            .onChange(of: store.currentRoundId) { oldId, newId in
                 // If round is cleared, end the workout
-                if oldRound != nil && newRound == nil && workoutManager.isWorkoutActive {
+                if oldId != nil && newId == nil && workoutManager.isWorkoutActive {
                     dprint("⌚ [ContentView] Round ended, stopping workout")
                     workoutManager.endWorkout()
                 }

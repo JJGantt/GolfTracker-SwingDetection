@@ -6,11 +6,27 @@
 //
 
 import SwiftUI
+import SwiftData
 
 @main
 struct GolfTrackerApp: App {
     @StateObject private var store = DataStore()
     @StateObject private var motionDataHandler = MotionDataHandler()
+
+    /// SwiftData container is the persistence layer for all relational state
+    /// (Course/Round/Stroke/Target/ClubData/ClubTypeData/ClubSet). Both the
+    /// view layer (@Query) and the DataStore singleton read/write through it.
+    let modelContainer: ModelContainer = {
+        let schema = Schema([
+            Course.self, Hole.self, Round.self, Stroke.self, Target.self,
+            ClubData.self, ClubTypeData.self, ClubSet.self
+        ])
+        do {
+            return try ModelContainer(for: schema)
+        } catch {
+            fatalError("Failed to create ModelContainer: \(error)")
+        }
+    }()
 
     init() {
         dprint("🚀🚀🚀 APP LAUNCHED - GolfTracker is starting! 🚀🚀🚀")
@@ -21,7 +37,11 @@ struct GolfTrackerApp: App {
             ContentView()
                 .environmentObject(store)
                 .environmentObject(motionDataHandler)
+                .onAppear {
+                    store.configure(container: modelContainer)
+                }
         }
+        .modelContainer(modelContainer)
     }
 }
 

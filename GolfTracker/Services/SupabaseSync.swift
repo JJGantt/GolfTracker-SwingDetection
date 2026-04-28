@@ -10,7 +10,24 @@ final class SupabaseSync {
     static let shared = SupabaseSync()
 
     private let supabase = SupabaseManager.shared
-    private let auth = AuthManager.shared
+
+    /// Cross-platform user-id source. iOS uses AuthManager (which drives the
+    /// SIWA flow); watchOS uses WatchAuthSession (which mirrors the SDK
+    /// session forwarded from the iPhone).
+    private var currentUserId: String? {
+        #if os(watchOS)
+        return WatchAuthSession.shared.currentUserId
+        #else
+        return AuthManager.shared.currentUserId
+        #endif
+    }
+    private var currentAccessToken: String? {
+        #if os(watchOS)
+        return WatchAuthSession.shared.session?.accessToken
+        #else
+        return AuthManager.shared.currentAccessToken
+        #endif
+    }
     private let queueURL: URL
     private let queueLock = NSLock()
     private var retryTimer: Timer?
@@ -25,7 +42,7 @@ final class SupabaseSync {
     // MARK: - Public entrypoints
 
     func upsertClubType(_ t: ClubTypeData) {
-        guard let uid = auth.currentUserId else { return }
+        guard let uid = currentUserId else { return }
         let body: [String: AnyCodableValue] = [
             "id": .string(t.id.uuidString),
             "user_id": .string(uid),
@@ -38,7 +55,7 @@ final class SupabaseSync {
     }
 
     func upsertClub(_ c: ClubData) {
-        guard let uid = auth.currentUserId else { return }
+        guard let uid = currentUserId else { return }
         let body: [String: AnyCodableValue] = [
             "id": .string(c.id.uuidString),
             "user_id": .string(uid),
@@ -51,7 +68,7 @@ final class SupabaseSync {
     }
 
     func upsertClubSet(_ s: ClubSet) {
-        guard let uid = auth.currentUserId else { return }
+        guard let uid = currentUserId else { return }
         let body: [String: AnyCodableValue] = [
             "id": .string(s.id.uuidString),
             "user_id": .string(uid),
@@ -76,7 +93,7 @@ final class SupabaseSync {
     }
 
     func upsertCourse(_ course: Course) {
-        guard let uid = auth.currentUserId else { return }
+        guard let uid = currentUserId else { return }
         let body: [String: AnyCodableValue] = [
             "id": .string(course.id.uuidString),
             "user_id": .string(uid),
@@ -115,7 +132,7 @@ final class SupabaseSync {
     }
 
     func upsertRound(_ round: Round) {
-        guard let uid = auth.currentUserId else { return }
+        guard let uid = currentUserId else { return }
         let body: [String: AnyCodableValue] = [
             "id": .string(round.id.uuidString),
             "user_id": .string(uid),
@@ -203,7 +220,7 @@ final class SupabaseSync {
     /// Wipe every user-keyed row for the current user. Server-side CASCADE
     /// handles children once parents are deleted.
     func deleteAllUserData(completion: @escaping (Bool) -> Void) {
-        guard let uid = auth.currentUserId else { completion(false); return }
+        guard let uid = currentUserId else { completion(false); return }
         Task {
             var allOK = true
             for table in ["rounds", "courses", "club_sets", "clubs", "club_types"] {
@@ -264,7 +281,7 @@ final class SupabaseSync {
     }
 
     private func attempt(_ op: QueuedOperation, completion: @escaping (Bool) -> Void) {
-        guard auth.currentAccessToken != nil else { completion(false); return }
+        guard currentAccessToken != nil else { completion(false); return }
         Task {
             do {
                 switch op.kind {
