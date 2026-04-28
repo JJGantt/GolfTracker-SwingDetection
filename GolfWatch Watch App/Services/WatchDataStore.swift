@@ -78,6 +78,10 @@ class WatchDataStore: ObservableObject {
     private init() {
         loadFromStorage()
         setupConnectivity()
+        // Touch the auto-advance monitor so its location subscription wires up
+        // immediately at app launch (the monitor self-gates on `enabled`
+        // and on whether the active round has next-hole coords).
+        _ = AutoAdvanceMonitor.shared
     }
 
     // MARK: - Current Hole
@@ -465,6 +469,10 @@ class WatchDataStore: ObservableObject {
 
         saveRound()
         WatchConnectivityManager.shared.sendRound(round)
+
+        // Re-arm auto-advance — user manually went back, so re-leaving this
+        // hole should be allowed to fire again.
+        AutoAdvanceMonitor.shared.resetForCurrentHole()
 
         dprint("⌚ [WatchDataStore] Navigated to hole \(prevIndex + 1)")
     }
