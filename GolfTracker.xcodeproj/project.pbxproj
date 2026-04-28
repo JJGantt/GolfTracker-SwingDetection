@@ -28,6 +28,8 @@
 		6A6298212F0A0A3700303CB6 /* FloatingButtonsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6A62981E2F0A0A3700303CB6 /* FloatingButtonsView.swift */; };
 		6A7A65102026042200000001 /* DemoDataSeeder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6A7A65102026042200000002 /* DemoDataSeeder.swift */; };
 		6A7A65B12F147F4E00A58C9D /* WatchHomeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6A7A65B02F147F4E00A58C9D /* WatchHomeView.swift */; };
+		6A8668D22FA13A5200C9A535 /* Supabase in Frameworks */ = {isa = PBXBuildFile; productRef = 6A8668D12FA13A5200C9A535 /* Supabase */; };
+		6A8668D52FA13AC900C9A535 /* Supabase in Frameworks */ = {isa = PBXBuildFile; productRef = 6A8668D42FA13AC900C9A535 /* Supabase */; };
 		6A9A2C582F7DED6B008ADD6B /* ActiveRoundConfiguredView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6A9A2C572F7DED6B008ADD6B /* ActiveRoundConfiguredView.swift */; };
 		6AACTIONS2F16000000000001 /* OptionsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6AACTIONS2F16000000000002 /* OptionsView.swift */; };
 		6AB09FE92F15D47F0087C4ED /* ClubSetEditorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6AB09FE62F15D47F0087C4ED /* ClubSetEditorView.swift */; };
@@ -67,6 +69,8 @@
 		6AHKBANNR000000000000002 /* HealthKitBanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6AHKBANNR000000000000001 /* HealthKitBanner.swift */; };
 		6AONBOARD000000000000002 /* OnboardingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6AONBOARD000000000000001 /* OnboardingView.swift */; };
 		6AONBOARD000000000000004 /* WatchOnboardingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6AONBOARD000000000000003 /* WatchOnboardingView.swift */; };
+		6AOSMSVC00000000000000A1 /* OSMCourseService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6AOSMSVC00000000000000A0 /* OSMCourseService.swift */; };
+		6AOSMSVC00000000000000A2 /* OSMCourseService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6AOSMSVC00000000000000A0 /* OSMCourseService.swift */; };
 		6APERMBAN000000000000002 /* PermissionBanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6APERMBAN000000000000001 /* PermissionBanner.swift */; };
 		6ASETTC2F17000000000001 /* ClubRecommendSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6ASETTC2F17000000000002 /* ClubRecommendSettingsView.swift */; };
 		6ASETTINGS00000000000002 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6ASETTINGS00000000000001 /* SettingsView.swift */; };
@@ -76,8 +80,6 @@
 		6ASUPAAUTH00000000000004 /* AuthManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6ASUPAAUTH00000000000003 /* AuthManager.swift */; };
 		6ASUPAAUTH00000000000006 /* LoginView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6ASUPAAUTH00000000000005 /* LoginView.swift */; };
 		6ASUPASYNC00000000000002 /* SupabaseSync.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6ASUPASYNC00000000000001 /* SupabaseSync.swift */; };
-		6AOSMSVC00000000000000A1 /* OSMCourseService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6AOSMSVC00000000000000A0 /* OSMCourseService.swift */; };
-		6AOSMSVC00000000000000A2 /* OSMCourseService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6AOSMSVC00000000000000A0 /* OSMCourseService.swift */; };
 		6C8B4EAC38754620BA3C4CB0 /* RoundDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 70A60D673360436FB2457C24 /* RoundDetailView.swift */; };
 		7E4B930B6ED84C57A8AB3034 /* StatsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 65E4113738034AF2B535116F /* StatsView.swift */; };
 		95313A5608784DC394BA3EAC /* HolePlayView+MoveHoleMode.swift in Sources */ = {isa = PBXBuildFile; fileRef = 93374566285C433CB8F2AD38 /* HolePlayView+MoveHoleMode.swift */; };
@@ -180,6 +182,7 @@
 		6AHKBANNR000000000000001 /* HealthKitBanner.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = HealthKitBanner.swift; sourceTree = "<group>"; };
 		6AONBOARD000000000000001 /* OnboardingView.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = OnboardingView.swift; sourceTree = "<group>"; };
 		6AONBOARD000000000000003 /* WatchOnboardingView.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = WatchOnboardingView.swift; sourceTree = "<group>"; };
+		6AOSMSVC00000000000000A0 /* OSMCourseService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OSMCourseService.swift; sourceTree = "<group>"; };
 		6APERMBAN000000000000001 /* PermissionBanner.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = PermissionBanner.swift; sourceTree = "<group>"; };
 		6ASETTC2F17000000000002 /* ClubRecommendSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClubRecommendSettingsView.swift; sourceTree = "<group>"; };
 		6ASETTINGS00000000000001 /* SettingsView.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
@@ -189,7 +192,6 @@
 		6ASUPAAUTH00000000000003 /* AuthManager.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = AuthManager.swift; sourceTree = "<group>"; };
 		6ASUPAAUTH00000000000005 /* LoginView.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = LoginView.swift; sourceTree = "<group>"; };
 		6ASUPASYNC00000000000001 /* SupabaseSync.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = SupabaseSync.swift; sourceTree = "<group>"; };
-		6AOSMSVC00000000000000A0 /* OSMCourseService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OSMCourseService.swift; sourceTree = "<group>"; };
 		6CD8A1F4907C44A4BB2CA042 /* HolePlayView+AddPenaltyMode.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "HolePlayView+AddPenaltyMode.swift"; sourceTree = "<group>"; };
 		70A60D673360436FB2457C24 /* RoundDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RoundDetailView.swift; sourceTree = "<group>"; };
 		870F6DC4F3184CDF81331B32 /* SwingDetectionManager+ContactGates.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "SwingDetectionManager+ContactGates.swift"; sourceTree = "<group>"; };
@@ -218,6 +220,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				6A8668D22FA13A5200C9A535 /* Supabase in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -225,6 +228,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				6A8668D52FA13AC900C9A535 /* Supabase in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -286,6 +290,13 @@
 			path = Helpers;
 			sourceTree = "<group>";
 		};
+		6A8668D32FA13AC900C9A535 /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+			);
+			name = Frameworks;
+			sourceTree = "<group>";
+		};
 		6AB09FE82F15D47F0087C4ED /* Home */ = {
 			isa = PBXGroup;
 			children = (
@@ -303,6 +314,7 @@
 			children = (
 				6AB83CD02EDFADD200CE341C /* GolfTracker */,
 				6AD5EAB42EE3B79B00DDDCF0 /* GolfWatch Watch App */,
+				6A8668D32FA13AC900C9A535 /* Frameworks */,
 				6AB83CCF2EDFADD200CE341C /* Products */,
 			);
 			sourceTree = "<group>";
@@ -576,6 +588,9 @@
 				Base,
 			);
 			mainGroup = 6AB83CC52EDFADD200CE341C;
+			packageReferences = (
+				6A8668D02FA13A5200C9A535 /* XCRemoteSwiftPackageReference "supabase-swift" */,
+			);
 			productRefGroup = 6AB83CCF2EDFADD200CE341C /* Products */;
 			projectDirPath = "";
 			projectRoot = "";
@@ -1002,6 +1017,30 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		6A8668D02FA13A5200C9A535 /* XCRemoteSwiftPackageReference "supabase-swift" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/supabase/supabase-swift";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 2.5.1;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		6A8668D12FA13A5200C9A535 /* Supabase */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 6A8668D02FA13A5200C9A535 /* XCRemoteSwiftPackageReference "supabase-swift" */;
+			productName = Supabase;
+		};
+		6A8668D42FA13AC900C9A535 /* Supabase */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 6A8668D02FA13A5200C9A535 /* XCRemoteSwiftPackageReference "supabase-swift" */;
+			productName = Supabase;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = 6AB83CC62EDFADD200CE341C /* Project object */;
 }
