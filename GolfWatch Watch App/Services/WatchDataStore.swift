@@ -33,6 +33,16 @@ class WatchDataStore: ObservableObject {
         }
     }
 
+    /// Status string streamed during round start ("Locating course...",
+    /// "Pebble Beach — loading data...", "Scanning greens 3/8…"). nil when
+    /// no round-start flow is in progress.
+    @Published var roundStartStatus: String?
+    /// Set when the resolver returns multiple POI candidates within a tight
+    /// radius and needs the user to pick. UI presents these and calls
+    /// `pickPOICandidate(_:)` with the user's choice (or nil to cancel).
+    @Published var pendingPOIPicker: [RoundResolver.POICandidate]?
+    private var pendingPOIPickerCompletion: ((RoundResolver.POICandidate?) -> Void)?
+
     @Published var clubPredictionMode: ClubPredictionMode = .manual {
         didSet {
             UserDefaults.standard.set(clubPredictionMode.rawValue, forKey: "clubPredictionMode")
@@ -459,9 +469,102 @@ class WatchDataStore: ObservableObject {
         dprint("⌚ [WatchDataStore] Navigated to hole \(prevIndex + 1)")
     }
 
-    // MARK: - Quick Start Round
+    // MARK: - Start Round (resolver-backed)
 
-    func startQuickRound() {
+    /// Kick off a new round at the user's current GPS. The resolver handles:
+    ///   - MapKit POI search for nearby golf courses
+    ///   - Existing-course proximity match against the user's Supabase rounds
+    ///   - OSM geometry resolve (cache hit fast path; Overpass fetch on miss)
+    ///   - Tier classification — full / partial / none
+    ///
+    /// Behavior by tier:
+    ///   - **full**: round opens with all 18 holes pre-placed from OSM data,
+    ///     no manual hole prompts.
+    ///   - **partial**: round opens with one empty hole; user picks greens
+    ///     from the OSM polygon set as they advance.
+    ///   - **none** (or no GPS / no POIs): falls back to the legacy
+    ///     "Quick Start" behavior — one empty hole, user places everything.
+    func startRoundAtCurrentLocation() {
+        let coordinate: CLLocationCoordinate2D
+        if let loc = LocationManager.shared.location?.coordinate {
+            coordinate = loc
+        } else {
+            dprint("⌚ [WatchDataStore] No GPS — falling back to manual quick-start")
+            startManualQuickRound()
+            return
+        }
+        roundStartStatus = "Locating course…"
+        RoundResolver.shared.resolve(
+            at: coordinate,
+            progress: { [weak self] step in
+                DispatchQueue.main.async {
+                    self?.roundStartStatus = WatchDataStore.statusString(for: step)
+                }
+            },
+            coursePicker: { [weak self] candidates, choose in
+                DispatchQueue.main.async {
+                    self?.pendingPOIPicker = candidates
+                    self?.pendingPOIPickerCompletion = choose
+                }
+            },
+            completion: { [weak self] resolution in
+                DispatchQueue.main.async {
+                    guard let self = self else { return }
+                    self.roundStartStatus = nil
+                    if let resolution = resolution {
+                        self.startRound(from: resolution)
+                    } else {
+                        self.startManualQuickRound()
+                    }
+                }
+            }
+        )
+    }
+
+    /// Caller (the picker UI) hands back the user's pick. Resumes the resolver
+    /// chain that's blocked on `pendingPOIPicker`.
+    func pickPOICandidate(_ candidate: RoundResolver.POICandidate?) {
+        let cb = pendingPOIPickerCompletion
+        pendingPOIPicker = nil
+        pendingPOIPickerCompletion = nil
+        cb?(candidate)
+    }
+
+    private func startRound(from resolution: RoundResolver.Resolution) {
+        let holes: [Hole]
+        if resolution.tier == .full, let osm = resolution.osmData {
+            // Build all numbered holes up front from OSM data so the round
+            // opens on hole 1 with no manual prompts.
+            holes = osm.holes
+                .compactMap { h -> (Int, Hole)? in
+                    guard let ref = h.ref, let n = Int(ref) else { return nil }
+                    let coord = CLLocationCoordinate2D(
+                        latitude: h.greenPoint.latitude,
+                        longitude: h.greenPoint.longitude
+                    )
+                    return (n, Hole(number: n, coordinate: coord, par: h.par))
+                }
+                .sorted { $0.0 < $1.0 }
+                .map { $0.1 }
+        } else {
+            // Partial / none: start with one empty hole, user advances manually
+            holes = [Hole(number: 1)]
+        }
+
+        let newRound = Round(
+            courseId: resolution.courseId,
+            courseName: resolution.courseName,
+            holes: holes
+        )
+        currentRound = newRound
+        saveRound()
+        WatchConnectivityManager.shared.sendRound(newRound)
+        dprint("⌚ [WatchDataStore] Started round at \(resolution.courseName) (tier=\(resolution.tier), \(holes.count) holes)")
+    }
+
+    /// Legacy quick-start path — used when GPS is unavailable, no POIs found,
+    /// or user cancels the picker. Identical to the old startQuickRound.
+    func startManualQuickRound() {
         let quickStartCourseId = UUID()
         let firstHole = Hole(number: 1)
         let newRound = Round(
@@ -469,13 +572,26 @@ class WatchDataStore: ObservableObject {
             courseName: "Quick Start",
             holes: [firstHole]
         )
-
         currentRound = newRound
-
         saveRound()
         WatchConnectivityManager.shared.sendRound(newRound)
+        dprint("⌚ [WatchDataStore] Started manual Quick Start round with hole 1")
+    }
 
-        dprint("⌚ [WatchDataStore] Started Quick Start round with hole 1 (awaiting flag placement)")
+    /// Kept for source compatibility with any callers still referencing it.
+    func startQuickRound() { startRoundAtCurrentLocation() }
+
+    /// Maps a resolver step to a short user-facing string for the watch UI.
+    private static func statusString(for step: RoundResolver.Step) -> String? {
+        switch step {
+        case .locating: return "Locating…"
+        case .searchingPOIs: return "Searching nearby courses…"
+        case .checkingDB: return "Checking saved courses…"
+        case .picking: return "Pick a course"
+        case .loadingCourseData(let name): return "\(name) — loading…"
+        case .ready: return nil
+        case .failed(let msg): return msg
+        }
     }
 
     // MARK: - Helpers
