@@ -312,6 +312,21 @@ class WatchConnectivityManager: NSObject, ObservableObject {
     private func updateHoleFilterSettingsContext(_ data: Data) {
         mergeIntoApplicationContext(["holeFilterSettings": data])
     }
+
+    // MARK: - Auth Session (iPhone → Watch)
+
+    /// Mirrors the Supabase auth session to the Watch via application context.
+    /// Pass nil to signal sign-out (Watch clears its stored session).
+    /// Application context is the right primitive here: latest-wins, persistent,
+    /// delivered on next Watch wake even if not currently reachable.
+    func sendAuthSession(_ session: AuthSession?) {
+        if let session = session, let data = try? JSONEncoder().encode(session) {
+            mergeIntoApplicationContext(["authSession": data])
+        } else {
+            // Sentinel for explicit sign-out. Empty Data distinguishes from "key absent".
+            mergeIntoApplicationContext(["authSession": Data()])
+        }
+    }
 }
 
 // MARK: - WCSessionDelegate
@@ -497,6 +512,22 @@ extension WatchConnectivityManager: WCSessionDelegate {
                 self.onReceiveHoleFilterSettings?(settings)
             }
         }
+
+        // Auth session mirrored from iPhone (Watch-only consumer).
+        // Empty Data == explicit sign-out sentinel; absent key == no change.
+        #if os(watchOS)
+        if let data = applicationContext["authSession"] as? Data {
+            if data.isEmpty {
+                dprint("⌚ [Watch] Received sign-out sentinel from iPhone")
+                WatchAuthSession.shared.apply(nil)
+            } else if let session = try? JSONDecoder().decode(AuthSession.self, from: data) {
+                dprint("⌚ [Watch] Received auth session from iPhone (user \(session.userId))")
+                WatchAuthSession.shared.apply(session)
+            } else {
+                dprint("⌚ [Watch] Received malformed authSession payload")
+            }
+        }
+        #endif
     }
 
     // MARK: - Receiving File Transfers

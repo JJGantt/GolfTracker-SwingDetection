@@ -2,13 +2,6 @@ import Foundation
 import AuthenticationServices
 import Combine
 
-struct AuthSession: Codable {
-    let accessToken: String
-    let refreshToken: String
-    let expiresAt: Date
-    let userId: String
-}
-
 enum AuthError: Error, LocalizedError {
     case noIdentityToken
     case supabaseRejected(String)
@@ -37,11 +30,85 @@ final class AuthManager: NSObject, ObservableObject {
     private override init() {
         super.init()
         self.session = keychain.readSession()
+        // Push current session to Watch on launch so a freshly-paired or
+        // freshly-relaunched Watch picks it up without needing a new sign-in.
+        if let session = self.session {
+            WatchConnectivityManager.shared.sendAuthSession(session)
+        }
     }
 
     var isSignedIn: Bool { session != nil }
     var currentUserId: String? { session?.userId }
     var currentAccessToken: String? { session?.accessToken }
+
+    /// Returns a non-expired access token, refreshing first if the current one is
+    /// within 5 minutes of expiry. Use this before every Supabase REST call instead
+    /// of reading `currentAccessToken` directly.
+    func validAccessToken(completion: @escaping (Result<String, AuthError>) -> Void) {
+        guard let session = session else {
+            completion(.failure(.supabaseRejected("not signed in")))
+            return
+        }
+        if session.expiresAt.timeIntervalSinceNow > 300 {
+            completion(.success(session.accessToken))
+            return
+        }
+        refreshSession { result in
+            switch result {
+            case .success(let s): completion(.success(s.accessToken))
+            case .failure(let e): completion(.failure(e))
+            }
+        }
+    }
+
+    /// Trades the refresh token for a fresh access token (and rotated refresh token).
+    /// Updates Keychain + propagates the new session to the Watch.
+    func refreshSession(completion: @escaping (Result<AuthSession, AuthError>) -> Void) {
+        guard let session = session else {
+            completion(.failure(.supabaseRejected("not signed in")))
+            return
+        }
+        let payload: [String: Any] = ["refresh_token": session.refreshToken]
+        guard let body = try? JSONSerialization.data(withJSONObject: payload),
+              let req = client.authedRequest(path: "/auth/v1/token?grant_type=refresh_token", method: "POST", body: body) else {
+            completion(.failure(.network(NSError(domain: "AuthManager", code: -1))))
+            return
+        }
+        URLSession.shared.dataTask(with: req) { [weak self] data, response, error in
+            guard let self = self else { return }
+            if let error = error { completion(.failure(.network(error))); return }
+            guard let data = data else { completion(.failure(.decode)); return }
+            let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+            guard status >= 200 && status < 300 else {
+                let msg = String(data: data, encoding: .utf8) ?? "HTTP \(status)"
+                // Refresh token rejected (revoked / expired) — force sign-out so UI prompts re-auth.
+                if status == 400 || status == 401 {
+                    DispatchQueue.main.async { self.signOut() }
+                }
+                completion(.failure(.supabaseRejected(msg)))
+                return
+            }
+            guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let access = json["access_token"] as? String,
+                  let refresh = json["refresh_token"] as? String,
+                  let expiresIn = json["expires_in"] as? Double else {
+                completion(.failure(.decode))
+                return
+            }
+            let newSession = AuthSession(
+                accessToken: access,
+                refreshToken: refresh,
+                expiresAt: Date().addingTimeInterval(expiresIn),
+                userId: session.userId
+            )
+            DispatchQueue.main.async {
+                self.session = newSession
+                self.keychain.writeSession(newSession)
+                WatchConnectivityManager.shared.sendAuthSession(newSession)
+                completion(.success(newSession))
+            }
+        }.resume()
+    }
 
     // MARK: - Sign In With Apple
 
@@ -63,6 +130,7 @@ final class AuthManager: NSObject, ObservableObject {
                         if case .success(let session) = exchangeResult {
                             self.session = session
                             self.keychain.writeSession(session)
+                            WatchConnectivityManager.shared.sendAuthSession(session)
                         }
                         completion(exchangeResult)
                     }
@@ -87,6 +155,7 @@ final class AuthManager: NSObject, ObservableObject {
     func signOut() {
         keychain.deleteSession()
         session = nil
+        WatchConnectivityManager.shared.sendAuthSession(nil)
     }
 
     // MARK: - Supabase token exchange

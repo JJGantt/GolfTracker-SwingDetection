@@ -8,11 +8,16 @@
 
 /* Begin PBXBuildFile section */
 		06FE06C8A5C9410FB47BCF49 /* RoundsHistoryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 41CE51AAB05945F5A4DE314E /* RoundsHistoryView.swift */; };
+		09919953FB6D4EFA93668784 /* HolePlayView+AddPenaltyMode.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6CD8A1F4907C44A4BB2CA042 /* HolePlayView+AddPenaltyMode.swift */; };
+		0CDECE5DE9CC4C14A11A1FD1 /* SwingDetectionManager+DataCollection.swift in Sources */ = {isa = PBXBuildFile; fileRef = F25CB6D57A294246AD44AF60 /* SwingDetectionManager+DataCollection.swift */; };
+		17FCA42178A14303B6F331C5 /* SwingDetectionManager+RawAccel.swift in Sources */ = {isa = PBXBuildFile; fileRef = FB7FE8DA8D214A009C45D055 /* SwingDetectionManager+RawAccel.swift */; };
 		19E70996A39C481D84518D00 /* TestFilesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = EF978CD92BED4BEA9163F87B /* TestFilesView.swift */; };
+		1FFC95E79D10456C80AF9B21 /* ActiveRoundView+ClubPrediction.swift in Sources */ = {isa = PBXBuildFile; fileRef = A027586C12704EBCAA1B1736 /* ActiveRoundView+ClubPrediction.swift */; };
+		213F987A236E419F88E9C4C2 /* HolePlayView+MoveStrokeMode.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0F575753710A466D92C391CB /* HolePlayView+MoveStrokeMode.swift */; };
+		25075A32729043CBA13B479B /* ActiveRoundView+StrokeRecording.swift in Sources */ = {isa = PBXBuildFile; fileRef = B395866142294534934CF914 /* ActiveRoundView+StrokeRecording.swift */; };
 		292FA1B1CDCE4D5D80F8A5D6 /* PlayerStats.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8713ACF846B0498E97AAC629 /* PlayerStats.swift */; };
 		42A2A63EE4BD4DACB2C9179E /* InRoundScorecardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = ED2724CFBFA6421AA2088B76 /* InRoundScorecardView.swift */; };
 		5143D17BE2F7418983D61086 /* StatsEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 01635C6BB56440EA8CF2FA63 /* StatsEngine.swift */; };
-		6A7A65102026042200000001 /* DemoDataSeeder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6A7A65102026042200000002 /* DemoDataSeeder.swift */; };
 		6A10COMPAT00000001 /* WatchOS10Compatibility.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6A10COMPAT00000002 /* WatchOS10Compatibility.swift */; };
 		6A27A5742EF7ABA000D64047 /* AddHoleNavigationView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6A27A5732EF7ABA000D64047 /* AddHoleNavigationView.swift */; };
 		6A27A5752F0C000000000001 /* SwingDetectionManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6A27A5762F0C000000000002 /* SwingDetectionManager.swift */; };
@@ -21,6 +26,7 @@
 		6A62981D2F0A09F900303CB6 /* MapCalculations.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6A62981B2F0A09F900303CB6 /* MapCalculations.swift */; };
 		6A6298202F0A0A3700303CB6 /* StrokeDetailsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6A62981F2F0A0A3700303CB6 /* StrokeDetailsView.swift */; };
 		6A6298212F0A0A3700303CB6 /* FloatingButtonsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6A62981E2F0A0A3700303CB6 /* FloatingButtonsView.swift */; };
+		6A7A65102026042200000001 /* DemoDataSeeder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6A7A65102026042200000002 /* DemoDataSeeder.swift */; };
 		6A7A65B12F147F4E00A58C9D /* WatchHomeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6A7A65B02F147F4E00A58C9D /* WatchHomeView.swift */; };
 		6A9A2C582F7DED6B008ADD6B /* ActiveRoundConfiguredView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6A9A2C572F7DED6B008ADD6B /* ActiveRoundConfiguredView.swift */; };
 		6AACTIONS2F16000000000001 /* OptionsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6AACTIONS2F16000000000002 /* OptionsView.swift */; };
@@ -33,8 +39,6 @@
 		6AB83CD22EDFADD200CE341C /* GolfTrackerApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6AB83CD12EDFADD200CE341C /* GolfTrackerApp.swift */; };
 		6AB83CD42EDFADD200CE341C /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6AB83CD32EDFADD200CE341C /* ContentView.swift */; };
 		6AB83CD62EDFADD400CE341C /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 6AB83CD52EDFADD400CE341C /* Assets.xcassets */; };
-		6AFACE000000000000000002 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 6AFACE000000000000000001 /* PrivacyInfo.xcprivacy */; };
-		6AFACE000000000000000004 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 6AFACE000000000000000003 /* PrivacyInfo.xcprivacy */; };
 		6AB83CD92EDFADD400CE341C /* Preview Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 6AB83CD82EDFADD400CE341C /* Preview Assets.xcassets */; };
 		6AB83CE52EDFB17500CE341C /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6AB83CE42EDFB17500CE341C /* Models.swift */; };
 		6AB83CE72EDFB19E00CE341C /* DataStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6AB83CE62EDFB19E00CE341C /* DataStore.swift */; };
@@ -45,15 +49,6 @@
 		6AD5EA7F2EE3A5F000DDDCF0 /* EditModeViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6AD5EA7A2EE3A5EF00DDDCF0 /* EditModeViews.swift */; };
 		6AD5EA802EE3A5F000DDDCF0 /* HolePlayModifiers.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6AD5EA7B2EE3A5EF00DDDCF0 /* HolePlayModifiers.swift */; };
 		6AD5EA812EE3A5F000DDDCF0 /* MapAnnotations.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6AD5EA7C2EE3A5EF00DDDCF0 /* MapAnnotations.swift */; };
-		6APERMBAN000000000000002 /* PermissionBanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6APERMBAN000000000000001 /* PermissionBanner.swift */; };
-		6AHKBANNR000000000000002 /* HealthKitBanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6AHKBANNR000000000000001 /* HealthKitBanner.swift */; };
-		6AONBOARD000000000000002 /* OnboardingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6AONBOARD000000000000001 /* OnboardingView.swift */; };
-		6AONBOARD000000000000004 /* WatchOnboardingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6AONBOARD000000000000003 /* WatchOnboardingView.swift */; };
-		6ASUPAAUTH00000000000002 /* SupabaseClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6ASUPAAUTH00000000000001 /* SupabaseClient.swift */; };
-		6ASUPAAUTH00000000000004 /* AuthManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6ASUPAAUTH00000000000003 /* AuthManager.swift */; };
-		6ASUPAAUTH00000000000006 /* LoginView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6ASUPAAUTH00000000000005 /* LoginView.swift */; };
-		6ASUPASYNC00000000000002 /* SupabaseSync.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6ASUPASYNC00000000000001 /* SupabaseSync.swift */; };
-		6ASETTINGS00000000000002 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6ASETTINGS00000000000001 /* SettingsView.swift */; };
 		6AD5EA822EE3A5F000DDDCF0 /* HoleOverlayControls.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6AD5EA7D2EE3A5EF00DDDCF0 /* HoleOverlayControls.swift */; };
 		6AD5EA832EE3A5F000DDDCF0 /* HoleMapView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6AD5EA7E2EE3A5EF00DDDCF0 /* HoleMapView.swift */; };
 		6AD5EAB62EE3B79B00DDDCF0 /* GolfWatchApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6AD5EAB52EE3B79B00DDDCF0 /* GolfWatchApp.swift */; };
@@ -67,30 +62,35 @@
 		6AD5EACC2EE3B83600DDDCF0 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6AB83CE42EDFB17500CE341C /* Models.swift */; };
 		6AD5EACE2EE47B0D00DDDCF0 /* WatchConnectivityManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6AD5EACD2EE47B0D00DDDCF0 /* WatchConnectivityManager.swift */; };
 		6AD5EACF2EE47B1500DDDCF0 /* WatchConnectivityManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6AD5EACD2EE47B0D00DDDCF0 /* WatchConnectivityManager.swift */; };
+		6AFACE000000000000000002 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 6AFACE000000000000000001 /* PrivacyInfo.xcprivacy */; };
+		6AFACE000000000000000004 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 6AFACE000000000000000003 /* PrivacyInfo.xcprivacy */; };
+		6AHKBANNR000000000000002 /* HealthKitBanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6AHKBANNR000000000000001 /* HealthKitBanner.swift */; };
+		6AONBOARD000000000000002 /* OnboardingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6AONBOARD000000000000001 /* OnboardingView.swift */; };
+		6AONBOARD000000000000004 /* WatchOnboardingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6AONBOARD000000000000003 /* WatchOnboardingView.swift */; };
+		6APERMBAN000000000000002 /* PermissionBanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6APERMBAN000000000000001 /* PermissionBanner.swift */; };
 		6ASETTC2F17000000000001 /* ClubRecommendSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6ASETTC2F17000000000002 /* ClubRecommendSettingsView.swift */; };
+		6ASETTINGS00000000000002 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6ASETTINGS00000000000001 /* SettingsView.swift */; };
 		6ASETTP2F17000000000001 /* PredictGreenSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6ASETTP2F17000000000002 /* PredictGreenSettingsView.swift */; };
 		6ASETTV2F17000000000001 /* ViewSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6ASETTV2F17000000000002 /* ViewSettingsView.swift */; };
+		6ASUPAAUTH00000000000002 /* SupabaseClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6ASUPAAUTH00000000000001 /* SupabaseClient.swift */; };
+		6ASUPAAUTH00000000000004 /* AuthManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6ASUPAAUTH00000000000003 /* AuthManager.swift */; };
+		6ASUPAAUTH00000000000006 /* LoginView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6ASUPAAUTH00000000000005 /* LoginView.swift */; };
+		6ASUPASYNC00000000000002 /* SupabaseSync.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6ASUPASYNC00000000000001 /* SupabaseSync.swift */; };
 		6C8B4EAC38754620BA3C4CB0 /* RoundDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 70A60D673360436FB2457C24 /* RoundDetailView.swift */; };
 		7E4B930B6ED84C57A8AB3034 /* StatsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 65E4113738034AF2B535116F /* StatsView.swift */; };
+		95313A5608784DC394BA3EAC /* HolePlayView+MoveHoleMode.swift in Sources */ = {isa = PBXBuildFile; fileRef = 93374566285C433CB8F2AD38 /* HolePlayView+MoveHoleMode.swift */; };
+		9C0EB1FEC65B49BE83542622 /* SwingDetectionManager+MotionCapture.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEDFC0FA75D24B279C2593AC /* SwingDetectionManager+MotionCapture.swift */; };
 		AA11BB22CC33DD44EE550001 /* SwingAlgorithmProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA11BB22CC33DD44EE550002 /* SwingAlgorithmProtocol.swift */; };
 		AA11BB22CC33DD44EE550010 /* DetectionEvents.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA11BB22CC33DD44EE550011 /* DetectionEvents.swift */; };
 		AA11BB22CC33DD44EE550012 /* IncrementalPeakDetector.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA11BB22CC33DD44EE550013 /* IncrementalPeakDetector.swift */; };
 		AA11BB22CC33DD44EE550014 /* RollingMotionBuffer.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA11BB22CC33DD44EE550015 /* RollingMotionBuffer.swift */; };
 		AA11BB22CC33DD44EE550018 /* UnifiedDetector.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA11BB22CC33DD44EE550019 /* UnifiedDetector.swift */; };
-		17FCA42178A14303B6F331C5 /* SwingDetectionManager+RawAccel.swift in Sources */ = {isa = PBXBuildFile; fileRef = FB7FE8DA8D214A009C45D055 /* SwingDetectionManager+RawAccel.swift */; };
-		DCD05079795E4F9EB659C7AF /* SwingDetectionManager+ContactGates.swift in Sources */ = {isa = PBXBuildFile; fileRef = 870F6DC4F3184CDF81331B32 /* SwingDetectionManager+ContactGates.swift */; };
-		0CDECE5DE9CC4C14A11A1FD1 /* SwingDetectionManager+DataCollection.swift in Sources */ = {isa = PBXBuildFile; fileRef = F25CB6D57A294246AD44AF60 /* SwingDetectionManager+DataCollection.swift */; };
-		9C0EB1FEC65B49BE83542622 /* SwingDetectionManager+MotionCapture.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEDFC0FA75D24B279C2593AC /* SwingDetectionManager+MotionCapture.swift */; };
-		DDF199415BA84CF9BD09D35D /* SupabaseUploader.swift in Sources */ = {isa = PBXBuildFile; fileRef = E0D8E00B351E4F0D84DB3187 /* SupabaseUploader.swift */; };
-		25075A32729043CBA13B479B /* ActiveRoundView+StrokeRecording.swift in Sources */ = {isa = PBXBuildFile; fileRef = B395866142294534934CF914 /* ActiveRoundView+StrokeRecording.swift */; };
-		BF402ACBA5ED40FE92601108 /* ActiveRoundView+Scorecard.swift in Sources */ = {isa = PBXBuildFile; fileRef = A6E32218380E4C3C93B38A12 /* ActiveRoundView+Scorecard.swift */; };
 		BBA6A7885FDA496CBB0C574B /* ActiveRoundView+GPSIndicator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 16BCE78889CC4D2BA4EA325D /* ActiveRoundView+GPSIndicator.swift */; };
-		1FFC95E79D10456C80AF9B21 /* ActiveRoundView+ClubPrediction.swift in Sources */ = {isa = PBXBuildFile; fileRef = A027586C12704EBCAA1B1736 /* ActiveRoundView+ClubPrediction.swift */; };
-		F991487AE5DE4291BE49B994 /* HolePlayView+AddHoleMode.swift in Sources */ = {isa = PBXBuildFile; fileRef = 25F78BF8E5A4453C91A41B84 /* HolePlayView+AddHoleMode.swift */; };
-		95313A5608784DC394BA3EAC /* HolePlayView+MoveHoleMode.swift in Sources */ = {isa = PBXBuildFile; fileRef = 93374566285C433CB8F2AD38 /* HolePlayView+MoveHoleMode.swift */; };
-		213F987A236E419F88E9C4C2 /* HolePlayView+MoveStrokeMode.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0F575753710A466D92C391CB /* HolePlayView+MoveStrokeMode.swift */; };
-		09919953FB6D4EFA93668784 /* HolePlayView+AddPenaltyMode.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6CD8A1F4907C44A4BB2CA042 /* HolePlayView+AddPenaltyMode.swift */; };
+		BF402ACBA5ED40FE92601108 /* ActiveRoundView+Scorecard.swift in Sources */ = {isa = PBXBuildFile; fileRef = A6E32218380E4C3C93B38A12 /* ActiveRoundView+Scorecard.swift */; };
+		DCD05079795E4F9EB659C7AF /* SwingDetectionManager+ContactGates.swift in Sources */ = {isa = PBXBuildFile; fileRef = 870F6DC4F3184CDF81331B32 /* SwingDetectionManager+ContactGates.swift */; };
+		DDF199415BA84CF9BD09D35D /* SupabaseUploader.swift in Sources */ = {isa = PBXBuildFile; fileRef = E0D8E00B351E4F0D84DB3187 /* SupabaseUploader.swift */; };
 		E4F925C1F0D4499B99626884 /* CourseDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B06522DFDE374AFFB8DC4411 /* CourseDetailView.swift */; };
+		F991487AE5DE4291BE49B994 /* HolePlayView+AddHoleMode.swift in Sources */ = {isa = PBXBuildFile; fileRef = 25F78BF8E5A4453C91A41B84 /* HolePlayView+AddHoleMode.swift */; };
 		FAEE76F6916D6EF479166310 /* AccelTestView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0103B059B95381AAE6DFE359 /* AccelTestView.swift */; };
 /* End PBXBuildFile section */
 
@@ -121,7 +121,9 @@
 /* Begin PBXFileReference section */
 		0103B059B95381AAE6DFE359 /* AccelTestView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccelTestView.swift; sourceTree = "<group>"; };
 		01635C6BB56440EA8CF2FA63 /* StatsEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatsEngine.swift; sourceTree = "<group>"; };
-		6A7A65102026042200000002 /* DemoDataSeeder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DemoDataSeeder.swift; sourceTree = "<group>"; };
+		0F575753710A466D92C391CB /* HolePlayView+MoveStrokeMode.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "HolePlayView+MoveStrokeMode.swift"; sourceTree = "<group>"; };
+		16BCE78889CC4D2BA4EA325D /* ActiveRoundView+GPSIndicator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "ActiveRoundView+GPSIndicator.swift"; sourceTree = "<group>"; };
+		25F78BF8E5A4453C91A41B84 /* HolePlayView+AddHoleMode.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "HolePlayView+AddHoleMode.swift"; sourceTree = "<group>"; };
 		41CE51AAB05945F5A4DE314E /* RoundsHistoryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RoundsHistoryView.swift; sourceTree = "<group>"; };
 		65E4113738034AF2B535116F /* StatsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatsView.swift; sourceTree = "<group>"; };
 		6A10COMPAT00000002 /* WatchOS10Compatibility.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchOS10Compatibility.swift; sourceTree = "<group>"; };
@@ -132,6 +134,7 @@
 		6A62981B2F0A09F900303CB6 /* MapCalculations.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MapCalculations.swift; sourceTree = "<group>"; };
 		6A62981E2F0A0A3700303CB6 /* FloatingButtonsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FloatingButtonsView.swift; sourceTree = "<group>"; };
 		6A62981F2F0A0A3700303CB6 /* StrokeDetailsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StrokeDetailsView.swift; sourceTree = "<group>"; };
+		6A7A65102026042200000002 /* DemoDataSeeder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DemoDataSeeder.swift; sourceTree = "<group>"; };
 		6A7A65B02F147F4E00A58C9D /* WatchHomeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchHomeView.swift; sourceTree = "<group>"; };
 		6A9A2C572F7DED6B008ADD6B /* ActiveRoundConfiguredView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ActiveRoundConfiguredView.swift; sourceTree = "<group>"; };
 		6A9CD5A92F46B29F00BC0552 /* GolfWatch Watch App.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = "GolfWatch Watch App.entitlements"; sourceTree = "<group>"; };
@@ -156,20 +159,9 @@
 		6AB83CED2EDFB75100CE341C /* HolePlayView.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = HolePlayView.swift; sourceTree = "<group>"; };
 		6AB83CEF2EDFB78400CE341C /* LocationManager.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = LocationManager.swift; sourceTree = "<group>"; };
 		6AB83CF12EDFB79300CE341C /* Info.plist */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
-		6AFACE000000000000000001 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
-		6AFACE000000000000000003 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 		6AD5EA7A2EE3A5EF00DDDCF0 /* EditModeViews.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = EditModeViews.swift; sourceTree = "<group>"; };
 		6AD5EA7B2EE3A5EF00DDDCF0 /* HolePlayModifiers.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = HolePlayModifiers.swift; sourceTree = "<group>"; };
 		6AD5EA7C2EE3A5EF00DDDCF0 /* MapAnnotations.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = MapAnnotations.swift; sourceTree = "<group>"; };
-		6APERMBAN000000000000001 /* PermissionBanner.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = PermissionBanner.swift; sourceTree = "<group>"; };
-		6AHKBANNR000000000000001 /* HealthKitBanner.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = HealthKitBanner.swift; sourceTree = "<group>"; };
-		6AONBOARD000000000000001 /* OnboardingView.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = OnboardingView.swift; sourceTree = "<group>"; };
-		6AONBOARD000000000000003 /* WatchOnboardingView.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = WatchOnboardingView.swift; sourceTree = "<group>"; };
-		6ASUPAAUTH00000000000001 /* SupabaseClient.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = SupabaseClient.swift; sourceTree = "<group>"; };
-		6ASUPAAUTH00000000000003 /* AuthManager.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = AuthManager.swift; sourceTree = "<group>"; };
-		6ASUPAAUTH00000000000005 /* LoginView.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = LoginView.swift; sourceTree = "<group>"; };
-		6ASUPASYNC00000000000001 /* SupabaseSync.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = SupabaseSync.swift; sourceTree = "<group>"; };
-		6ASETTINGS00000000000001 /* SettingsView.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		6AD5EA7D2EE3A5EF00DDDCF0 /* HoleOverlayControls.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = HoleOverlayControls.swift; sourceTree = "<group>"; };
 		6AD5EA7E2EE3A5EF00DDDCF0 /* HoleMapView.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = HoleMapView.swift; sourceTree = "<group>"; };
 		6AD5EAB32EE3B79B00DDDCF0 /* GolfWatch Watch App.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "GolfWatch Watch App.app"; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -180,32 +172,40 @@
 		6AD5EAC62EE3B7EB00DDDCF0 /* ActiveRoundView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ActiveRoundView.swift; sourceTree = "<group>"; };
 		6AD5EAC82EE3B80700DDDCF0 /* WatchDataStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchDataStore.swift; sourceTree = "<group>"; };
 		6AD5EACD2EE47B0D00DDDCF0 /* WatchConnectivityManager.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = WatchConnectivityManager.swift; sourceTree = "<group>"; };
+		6AFACE000000000000000001 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
+		6AFACE000000000000000003 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
+		6AHKBANNR000000000000001 /* HealthKitBanner.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = HealthKitBanner.swift; sourceTree = "<group>"; };
+		6AONBOARD000000000000001 /* OnboardingView.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = OnboardingView.swift; sourceTree = "<group>"; };
+		6AONBOARD000000000000003 /* WatchOnboardingView.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = WatchOnboardingView.swift; sourceTree = "<group>"; };
+		6APERMBAN000000000000001 /* PermissionBanner.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = PermissionBanner.swift; sourceTree = "<group>"; };
 		6ASETTC2F17000000000002 /* ClubRecommendSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClubRecommendSettingsView.swift; sourceTree = "<group>"; };
+		6ASETTINGS00000000000001 /* SettingsView.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		6ASETTP2F17000000000002 /* PredictGreenSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PredictGreenSettingsView.swift; sourceTree = "<group>"; };
 		6ASETTV2F17000000000002 /* ViewSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ViewSettingsView.swift; sourceTree = "<group>"; };
+		6ASUPAAUTH00000000000001 /* SupabaseClient.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = SupabaseClient.swift; sourceTree = "<group>"; };
+		6ASUPAAUTH00000000000003 /* AuthManager.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = AuthManager.swift; sourceTree = "<group>"; };
+		6ASUPAAUTH00000000000005 /* LoginView.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = LoginView.swift; sourceTree = "<group>"; };
+		6ASUPASYNC00000000000001 /* SupabaseSync.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = SupabaseSync.swift; sourceTree = "<group>"; };
+		6CD8A1F4907C44A4BB2CA042 /* HolePlayView+AddPenaltyMode.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "HolePlayView+AddPenaltyMode.swift"; sourceTree = "<group>"; };
 		70A60D673360436FB2457C24 /* RoundDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RoundDetailView.swift; sourceTree = "<group>"; };
+		870F6DC4F3184CDF81331B32 /* SwingDetectionManager+ContactGates.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "SwingDetectionManager+ContactGates.swift"; sourceTree = "<group>"; };
 		8713ACF846B0498E97AAC629 /* PlayerStats.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlayerStats.swift; sourceTree = "<group>"; };
+		93374566285C433CB8F2AD38 /* HolePlayView+MoveHoleMode.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "HolePlayView+MoveHoleMode.swift"; sourceTree = "<group>"; };
+		A027586C12704EBCAA1B1736 /* ActiveRoundView+ClubPrediction.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "ActiveRoundView+ClubPrediction.swift"; sourceTree = "<group>"; };
+		A6E32218380E4C3C93B38A12 /* ActiveRoundView+Scorecard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "ActiveRoundView+Scorecard.swift"; sourceTree = "<group>"; };
 		AA11BB22CC33DD44EE550002 /* SwingAlgorithmProtocol.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SwingAlgorithmProtocol.swift; sourceTree = "<group>"; };
 		AA11BB22CC33DD44EE550011 /* DetectionEvents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DetectionEvents.swift; sourceTree = "<group>"; };
 		AA11BB22CC33DD44EE550013 /* IncrementalPeakDetector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IncrementalPeakDetector.swift; sourceTree = "<group>"; };
 		AA11BB22CC33DD44EE550015 /* RollingMotionBuffer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RollingMotionBuffer.swift; sourceTree = "<group>"; };
 		AA11BB22CC33DD44EE550019 /* UnifiedDetector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UnifiedDetector.swift; sourceTree = "<group>"; };
-		FB7FE8DA8D214A009C45D055 /* SwingDetectionManager+RawAccel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "SwingDetectionManager+RawAccel.swift"; sourceTree = "<group>"; };
-		870F6DC4F3184CDF81331B32 /* SwingDetectionManager+ContactGates.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "SwingDetectionManager+ContactGates.swift"; sourceTree = "<group>"; };
-		F25CB6D57A294246AD44AF60 /* SwingDetectionManager+DataCollection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "SwingDetectionManager+DataCollection.swift"; sourceTree = "<group>"; };
+		B06522DFDE374AFFB8DC4411 /* CourseDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CourseDetailView.swift; sourceTree = "<group>"; };
+		B395866142294534934CF914 /* ActiveRoundView+StrokeRecording.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "ActiveRoundView+StrokeRecording.swift"; sourceTree = "<group>"; };
 		BEDFC0FA75D24B279C2593AC /* SwingDetectionManager+MotionCapture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "SwingDetectionManager+MotionCapture.swift"; sourceTree = "<group>"; };
 		E0D8E00B351E4F0D84DB3187 /* SupabaseUploader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SupabaseUploader.swift; sourceTree = "<group>"; };
-		B395866142294534934CF914 /* ActiveRoundView+StrokeRecording.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "ActiveRoundView+StrokeRecording.swift"; sourceTree = "<group>"; };
-		A6E32218380E4C3C93B38A12 /* ActiveRoundView+Scorecard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "ActiveRoundView+Scorecard.swift"; sourceTree = "<group>"; };
-		16BCE78889CC4D2BA4EA325D /* ActiveRoundView+GPSIndicator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "ActiveRoundView+GPSIndicator.swift"; sourceTree = "<group>"; };
-		A027586C12704EBCAA1B1736 /* ActiveRoundView+ClubPrediction.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "ActiveRoundView+ClubPrediction.swift"; sourceTree = "<group>"; };
-		25F78BF8E5A4453C91A41B84 /* HolePlayView+AddHoleMode.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "HolePlayView+AddHoleMode.swift"; sourceTree = "<group>"; };
-		93374566285C433CB8F2AD38 /* HolePlayView+MoveHoleMode.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "HolePlayView+MoveHoleMode.swift"; sourceTree = "<group>"; };
-		0F575753710A466D92C391CB /* HolePlayView+MoveStrokeMode.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "HolePlayView+MoveStrokeMode.swift"; sourceTree = "<group>"; };
-		6CD8A1F4907C44A4BB2CA042 /* HolePlayView+AddPenaltyMode.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "HolePlayView+AddPenaltyMode.swift"; sourceTree = "<group>"; };
-		B06522DFDE374AFFB8DC4411 /* CourseDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CourseDetailView.swift; sourceTree = "<group>"; };
 		ED2724CFBFA6421AA2088B76 /* InRoundScorecardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InRoundScorecardView.swift; sourceTree = "<group>"; };
 		EF978CD92BED4BEA9163F87B /* TestFilesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TestFilesView.swift; sourceTree = "<group>"; };
+		F25CB6D57A294246AD44AF60 /* SwingDetectionManager+DataCollection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "SwingDetectionManager+DataCollection.swift"; sourceTree = "<group>"; };
+		FB7FE8DA8D214A009C45D055 /* SwingDetectionManager+RawAccel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "SwingDetectionManager+RawAccel.swift"; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -240,6 +240,29 @@
 				EF978CD92BED4BEA9163F87B /* TestFilesView.swift */,
 			);
 			path = Test;
+			sourceTree = "<group>";
+		};
+		5DD16FB2064D45A2B52082BD /* EditModes */ = {
+			isa = PBXGroup;
+			children = (
+				25F78BF8E5A4453C91A41B84 /* HolePlayView+AddHoleMode.swift */,
+				93374566285C433CB8F2AD38 /* HolePlayView+MoveHoleMode.swift */,
+				0F575753710A466D92C391CB /* HolePlayView+MoveStrokeMode.swift */,
+				6CD8A1F4907C44A4BB2CA042 /* HolePlayView+AddPenaltyMode.swift */,
+			);
+			path = EditModes;
+			sourceTree = "<group>";
+		};
+		60DBFB19282E4F25AC2B2C47 /* Components */ = {
+			isa = PBXGroup;
+			children = (
+				B395866142294534934CF914 /* ActiveRoundView+StrokeRecording.swift */,
+				A6E32218380E4C3C93B38A12 /* ActiveRoundView+Scorecard.swift */,
+				16BCE78889CC4D2BA4EA325D /* ActiveRoundView+GPSIndicator.swift */,
+				A027586C12704EBCAA1B1736 /* ActiveRoundView+ClubPrediction.swift */,
+				6AHKBANNR000000000000001 /* HealthKitBanner.swift */,
+			);
+			path = Components;
 			sourceTree = "<group>";
 		};
 		6A10COMPAT00000003 /* Helpers */ = {
@@ -399,17 +422,6 @@
 			path = Play;
 			sourceTree = "<group>";
 		};
-		5DD16FB2064D45A2B52082BD /* EditModes */ = {
-			isa = PBXGroup;
-			children = (
-				25F78BF8E5A4453C91A41B84 /* HolePlayView+AddHoleMode.swift */,
-				93374566285C433CB8F2AD38 /* HolePlayView+MoveHoleMode.swift */,
-				0F575753710A466D92C391CB /* HolePlayView+MoveStrokeMode.swift */,
-				6CD8A1F4907C44A4BB2CA042 /* HolePlayView+AddPenaltyMode.swift */,
-			);
-			path = EditModes;
-			sourceTree = "<group>";
-		};
 		6AD5EA872EE3A85400DDDCF0 /* Shared */ = {
 			isa = PBXGroup;
 			children = (
@@ -489,18 +501,6 @@
 				60DBFB19282E4F25AC2B2C47 /* Components */,
 			);
 			path = Views;
-			sourceTree = "<group>";
-		};
-		60DBFB19282E4F25AC2B2C47 /* Components */ = {
-			isa = PBXGroup;
-			children = (
-				B395866142294534934CF914 /* ActiveRoundView+StrokeRecording.swift */,
-				A6E32218380E4C3C93B38A12 /* ActiveRoundView+Scorecard.swift */,
-				16BCE78889CC4D2BA4EA325D /* ActiveRoundView+GPSIndicator.swift */,
-				A027586C12704EBCAA1B1736 /* ActiveRoundView+ClubPrediction.swift */,
-				6AHKBANNR000000000000001 /* HealthKitBanner.swift */,
-			);
-			path = Components;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -831,6 +831,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = GolfTracker/GolfTracker.entitlements;
+				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
@@ -848,6 +849,7 @@
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.Jared.GolfTracker;
 				PRODUCT_NAME = "$(TARGET_NAME)";
+				PROVISIONING_PROFILE_SPECIFIER = "";
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
 				SUPPORTS_MACCATALYST = NO;
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -863,6 +865,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = GolfTracker/GolfTracker.entitlements;
+				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
@@ -880,6 +883,7 @@
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.Jared.GolfTracker;
 				PRODUCT_NAME = "$(TARGET_NAME)";
+				PROVISIONING_PROFILE_SPECIFIER = "";
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
 				SUPPORTS_MACCATALYST = NO;
 				SWIFT_EMIT_LOC_STRINGS = YES;

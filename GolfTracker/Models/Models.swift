@@ -300,3 +300,15 @@ struct HoleDetectionFilterSettings: Codable, Hashable {
     )
 }
 
+// MARK: - Auth
+
+/// Supabase auth session. Lives on iPhone (source of truth) and is mirrored to
+/// Watch via WatchConnectivity application context so the Watch can authenticate
+/// its own Supabase requests as the same user.
+struct AuthSession: Codable, Equatable {
+    let accessToken: String
+    let refreshToken: String
+    let expiresAt: Date
+    let userId: String
+}
+
