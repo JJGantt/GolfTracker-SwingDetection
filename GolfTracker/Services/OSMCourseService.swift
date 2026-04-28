@@ -1,5 +1,6 @@
 import Foundation
 import CoreLocation
+import Supabase
 
 // MARK: - Models
 
@@ -105,12 +106,7 @@ final class OSMCourseService {
     private let cacheTTL: TimeInterval = 60 * 60 * 24 * 90  // 90 days
 
     private let session: URLSession
-
-    // Inline Supabase config so this file compiles on both iOS and watchOS
-    // without depending on SupabaseClient/AuthManager (iOS-only today).
-    // Will move to a shared client when we migrate to supabase-swift SDK.
-    private let projectURL = "https://oumnicnvayqrbfbljgyl.supabase.co"
-    private let anonKey = "sb_publishable_i0loB-AZw2qGokBJzHGSKA_VGgAgjBi"
+    private let supabase = SupabaseManager.shared
 
     private init() {
         let config = URLSessionConfiguration.default
@@ -119,32 +115,12 @@ final class OSMCourseService {
         self.session = URLSession(configuration: config)
     }
 
-    private func currentAccessToken() -> String? {
-        #if os(watchOS)
-        return WatchAuthSession.shared.session?.accessToken
-        #else
-        return AuthManager.shared.currentAccessToken
-        #endif
-    }
-
     private func currentUserId() -> String? {
         #if os(watchOS)
         return WatchAuthSession.shared.session?.userId
         #else
         return AuthManager.shared.currentUserId
         #endif
-    }
-
-    private func authedRequest(path: String, method: String = "GET", body: Data? = nil) -> URLRequest? {
-        guard let url = URL(string: "\(projectURL)\(path)") else { return nil }
-        let token = currentAccessToken() ?? anonKey
-        var req = URLRequest(url: url)
-        req.httpMethod = method
-        req.setValue(anonKey, forHTTPHeaderField: "apikey")
-        req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        req.httpBody = body
-        return req
     }
 
     // MARK: - High-level resolve
@@ -302,68 +278,73 @@ final class OSMCourseService {
         return (lat, lon)
     }
 
+    /// Row shape we read out of `osm_course_data`. Only `data` is decoded into
+    /// `OSMCourseData`; the rest of the columns are managed by the migration.
+    private struct CacheRow: Decodable {
+        let data: OSMCourseData
+    }
+
     func fetchFromCache(near coordinate: CLLocationCoordinate2D,
                         completion: @escaping (OSMCourseData?) -> Void) {
         let bucket = bucketKey(for: coordinate)
-        let path = "/rest/v1/osm_course_data?gps_bucket_lat=eq.\(bucket.lat)&gps_bucket_lon=eq.\(bucket.lon)&select=data,fetched_at&limit=1"
-        guard let req = authedRequest(path: path, method: "GET") else {
-            completion(nil); return
-        }
-        session.dataTask(with: req) { data, _, _ in
-            guard let data = data,
-                  let arr = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]],
-                  let row = arr.first,
-                  let blob = row["data"] else {
-                completion(nil); return
-            }
+        Task {
             do {
-                let blobData = try JSONSerialization.data(withJSONObject: blob)
-                let decoded = try JSONDecoder.osm.decode(OSMCourseData.self, from: blobData)
-                completion(decoded)
+                let rows: [CacheRow] = try await supabase.from("osm_course_data")
+                    .select("data,fetched_at")
+                    .eq("gps_bucket_lat", value: bucket.lat)
+                    .eq("gps_bucket_lon", value: bucket.lon)
+                    .limit(1)
+                    .execute()
+                    .value
+                completion(rows.first?.data)
             } catch {
+                dprint("[OSMCourseService] cache fetch failed: \(error)")
                 completion(nil)
             }
-        }.resume()
+        }
+    }
+
+    /// Upsert payload — encoded as the row shape the table expects.
+    private struct CacheUpsert: Encodable {
+        let gps_bucket_lat: Double
+        let gps_bucket_lon: Double
+        let center_latitude: Double
+        let center_longitude: Double
+        let radius_meters: Int
+        let fetched_at: Date
+        let attribution: String
+        let course_id: String?
+        let created_by: String?
+        let data: OSMCourseData
     }
 
     func upsertCache(_ data: OSMCourseData,
                      courseId: UUID?,
                      completion: @escaping (Bool) -> Void) {
         let bucket = bucketKey(for: data.center.coordinate)
-        var payload: [String: Any] = [
-            "gps_bucket_lat": bucket.lat,
-            "gps_bucket_lon": bucket.lon,
-            "center_latitude": data.center.latitude,
-            "center_longitude": data.center.longitude,
-            "radius_meters": Int(data.radiusMeters),
-            "fetched_at": ISO8601DateFormatter().string(from: data.fetchedAt),
-            "attribution": data.attribution
-        ]
-        if let courseId = courseId {
-            payload["course_id"] = courseId.uuidString
+        let row = CacheUpsert(
+            gps_bucket_lat: bucket.lat,
+            gps_bucket_lon: bucket.lon,
+            center_latitude: data.center.latitude,
+            center_longitude: data.center.longitude,
+            radius_meters: Int(data.radiusMeters),
+            fetched_at: data.fetchedAt,
+            attribution: data.attribution,
+            course_id: courseId?.uuidString,
+            created_by: currentUserId(),
+            data: data
+        )
+        Task {
+            do {
+                try await supabase.from("osm_course_data")
+                    .upsert(row, onConflict: "gps_bucket_lat,gps_bucket_lon")
+                    .execute()
+                completion(true)
+            } catch {
+                dprint("[OSMCourseService] cache upsert failed: \(error)")
+                completion(false)
+            }
         }
-        if let userId = currentUserId() {
-            payload["created_by"] = userId
-        }
-        // Encode the OSM dump as a JSONB-compatible object.
-        if let blob = try? JSONEncoder.osm.encode(data),
-           let obj = try? JSONSerialization.jsonObject(with: blob) {
-            payload["data"] = obj
-        }
-
-        guard let body = try? JSONSerialization.data(withJSONObject: payload),
-              var req = authedRequest(
-                path: "/rest/v1/osm_course_data?on_conflict=gps_bucket_lat,gps_bucket_lon",
-                method: "POST",
-                body: body
-              ) else {
-            completion(false); return
-        }
-        req.setValue("resolution=merge-duplicates", forHTTPHeaderField: "Prefer")
-        session.dataTask(with: req) { _, response, _ in
-            let status = (response as? HTTPURLResponse)?.statusCode ?? 0
-            completion(status >= 200 && status < 300)
-        }.resume()
     }
 }
 

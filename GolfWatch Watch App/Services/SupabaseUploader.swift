@@ -1,4 +1,5 @@
 import Foundation
+import Supabase
 
 /// Uploads swing detection events to Supabase for ML analysis.
 /// Manages the pending-event lifecycle: each detection is held until
@@ -8,8 +9,7 @@ class SupabaseUploader {
 
     // MARK: - Configuration
 
-    private let projectURL = "https://oumnicnvayqrbfbljgyl.supabase.co"
-    private let apiKey = "sb_publishable_i0loB-AZw2qGokBJzHGSKA_VGgAgjBi"
+    private let supabase = SupabaseManager.shared
     private let storageBucket = "swing-motion"
 
     /// When true, every detection immediately uploads as false_positive/high.
@@ -113,70 +113,72 @@ class SupabaseUploader {
 
     private func upload(event: PendingEvent) {
         let eventCopy = event
-        queue.async { [weak self] in
-            guard let self = self else { return }
-            // Resolve a valid auth token once, then fan out to the three uploads.
-            // If we're not signed in, drop the event with a clear log — there's no
-            // anonymous fallback, and storing it locally would silently mask the auth gap.
-            WatchAuthSession.shared.validAccessToken { result in
-                switch result {
-                case .failure(let err):
-                    dprint("⌚ [SupabaseUploader] Drop event \(eventCopy.id.uuidString) — no auth: \(err)")
-                case .success(let token):
-                    guard let userId = WatchAuthSession.shared.currentUserId else {
-                        dprint("⌚ [SupabaseUploader] Drop event — token without userId")
-                        return
-                    }
-                    self.uploadMetadata(event: eventCopy, token: token, userId: userId)
-                    self.uploadMotionCSV(event: eventCopy, token: token, userId: userId)
-                    self.uploadRawAccelCSV(event: eventCopy, token: token, userId: userId)
-                }
-            }
-        }
-    }
-
-    private func uploadMetadata(event: PendingEvent, token: String, userId: String) {
-        let meta = event.metadata
-        let storagePath = "\(userId)/\(event.id.uuidString).csv"
-
-        let payload: [String: Any?] = [
-            "id": event.id.uuidString,
-            "classification": event.clubType ?? "unknown",
-            "swing_type": event.clubType ?? "unknown",
-            "label": event.label,
-            "confidence": event.confidence,
-            "fs_peak_rot_mag": meta.fsPeakRotMag,
-            "bs_peak_rot_mag": meta.bsRotMag,
-            "fs_bs_ratio": meta.fsBsRatio,
-            "peak_acceleration": meta.peakAcceleration,
-            "contact_tv": meta.contactTV,
-            "contact_n": meta.contactN,
-            "extrema_spread": meta.extremaSpread,
-            "baseline_tv": meta.baselineTV,
-            "setup_duration": meta.setupDuration,
-            "bs_to_fs_gap": meta.fsPeakT - meta.bsTopT,
-            "club_type": event.clubType,
-            "detection_mode": "unifDetect",
-            "storage_path": storagePath
-        ]
-        let cleanPayload = payload.compactMapValues { $0 }
-        guard let body = try? JSONSerialization.data(withJSONObject: cleanPayload) else {
-            dprint("⌚ [SupabaseUploader] Failed to encode metadata payload")
+        guard let userId = WatchAuthSession.shared.currentUserId else {
+            dprint("⌚ [SupabaseUploader] Drop event \(eventCopy.id.uuidString) — not signed in")
             return
         }
-
-        sendAuthed(
-            urlString: "\(projectURL)/rest/v1/swing_events",
-            method: "POST",
-            contentType: "application/json",
-            body: body,
-            token: token,
-            event: event,
-            tag: "metadata(\(event.label)/\(event.confidence))"
-        )
+        Task { [weak self] in
+            await self?.uploadMetadata(event: eventCopy, userId: userId)
+            await self?.uploadMotionCSV(event: eventCopy, userId: userId)
+            await self?.uploadRawAccelCSV(event: eventCopy, userId: userId)
+        }
     }
 
-    private func uploadMotionCSV(event: PendingEvent, token: String, userId: String) {
+    /// SDK SwingEvent payload — intentionally a separate Codable shape so we
+    /// don't accidentally couple it to anything else.
+    private struct SwingEventRow: Encodable {
+        let id: String
+        let classification: String
+        let swing_type: String
+        let label: String
+        let confidence: String
+        let fs_peak_rot_mag: Double?
+        let bs_peak_rot_mag: Double?
+        let fs_bs_ratio: Double?
+        let peak_acceleration: Double?
+        let contact_tv: Double?
+        let contact_n: Int?
+        let extrema_spread: Double?
+        let baseline_tv: Double?
+        let setup_duration: Double?
+        let bs_to_fs_gap: Double
+        let club_type: String?
+        let detection_mode: String
+        let storage_path: String
+    }
+
+    private func uploadMetadata(event: PendingEvent, userId: String) async {
+        let meta = event.metadata
+        let storagePath = "\(userId)/\(event.id.uuidString).csv"
+        let row = SwingEventRow(
+            id: event.id.uuidString,
+            classification: event.clubType ?? "unknown",
+            swing_type: event.clubType ?? "unknown",
+            label: event.label,
+            confidence: event.confidence,
+            fs_peak_rot_mag: meta.fsPeakRotMag,
+            bs_peak_rot_mag: meta.bsRotMag,
+            fs_bs_ratio: meta.fsBsRatio,
+            peak_acceleration: meta.peakAcceleration,
+            contact_tv: meta.contactTV,
+            contact_n: meta.contactN,
+            extrema_spread: meta.extremaSpread,
+            baseline_tv: meta.baselineTV,
+            setup_duration: meta.setupDuration,
+            bs_to_fs_gap: meta.fsPeakT - meta.bsTopT,
+            club_type: event.clubType,
+            detection_mode: "unifDetect",
+            storage_path: storagePath
+        )
+        do {
+            try await supabase.from("swing_events").insert(row).execute()
+            dprint("⌚ [SupabaseUploader] metadata(\(event.label)/\(event.confidence)) uploaded")
+        } catch {
+            dprint("⌚ [SupabaseUploader] metadata upload failed: \(error)")
+        }
+    }
+
+    private func uploadMotionCSV(event: PendingEvent, userId: String) async {
         guard !event.motionSlice.isEmpty else {
             dprint("⌚ [SupabaseUploader] No motion data to upload")
             return
@@ -188,18 +190,17 @@ class SupabaseUploader {
             csv += "\(f(dp.sensorTime)),\(f(dp.userAccelX)),\(f(dp.userAccelY)),\(f(dp.userAccelZ)),\(f(dp.userAccelMag)),\(f(dp.rotationX)),\(f(dp.rotationY)),\(f(dp.rotationZ)),\(f(dp.rotationMag)),\(f(dp.gravityX)),\(f(dp.gravityY)),\(f(dp.gravityZ)),\(f(dp.pitch)),\(f(dp.roll)),\(f(dp.yaw))\n"
         }
         guard let csvData = csv.data(using: .utf8) else { return }
-        sendAuthed(
-            urlString: "\(projectURL)/storage/v1/object/\(storageBucket)/\(storagePath)",
-            method: "POST",
-            contentType: "text/csv",
-            body: csvData,
-            token: token,
-            event: event,
-            tag: "motionCSV(\(event.motionSlice.count) samples)"
-        )
+        do {
+            _ = try await supabase.storage
+                .from(storageBucket)
+                .upload(storagePath, data: csvData, options: FileOptions(contentType: "text/csv"))
+            dprint("⌚ [SupabaseUploader] motionCSV(\(event.motionSlice.count) samples) uploaded")
+        } catch {
+            dprint("⌚ [SupabaseUploader] motionCSV upload failed: \(error)")
+        }
     }
 
-    private func uploadRawAccelCSV(event: PendingEvent, token: String, userId: String) {
+    private func uploadRawAccelCSV(event: PendingEvent, userId: String) async {
         guard !event.rawAccelSlice.isEmpty else { return }
         let storagePath = "\(userId)/\(event.id.uuidString)_raw.csv"
         var csv = "SensorTime,RawAccelX,RawAccelY,RawAccelZ,RawAccelMag\n"
@@ -208,66 +209,13 @@ class SupabaseUploader {
             csv += "\(f(dp.sensorTime)),\(f(dp.rawAccelX)),\(f(dp.rawAccelY)),\(f(dp.rawAccelZ)),\(f(dp.rawAccelMag))\n"
         }
         guard let csvData = csv.data(using: .utf8) else { return }
-        sendAuthed(
-            urlString: "\(projectURL)/storage/v1/object/\(storageBucket)/\(storagePath)",
-            method: "POST",
-            contentType: "text/csv",
-            body: csvData,
-            token: token,
-            event: event,
-            tag: "rawAccelCSV(\(event.rawAccelSlice.count) samples)"
-        )
-    }
-
-    /// Shared HTTP helper. On 401, refreshes the session once and retries.
-    /// `apikey` header is the project-level anon key (Supabase requires it on every
-    /// PostgREST/Storage call); `Authorization` is the user's JWT (what RLS reads).
-    private func sendAuthed(
-        urlString: String,
-        method: String,
-        contentType: String,
-        body: Data,
-        token: String,
-        event: PendingEvent,
-        tag: String,
-        isRetry: Bool = false
-    ) {
-        guard let url = URL(string: urlString) else {
-            dprint("⌚ [SupabaseUploader] Bad URL: \(urlString)")
-            return
+        do {
+            _ = try await supabase.storage
+                .from(storageBucket)
+                .upload(storagePath, data: csvData, options: FileOptions(contentType: "text/csv"))
+            dprint("⌚ [SupabaseUploader] rawAccelCSV(\(event.rawAccelSlice.count) samples) uploaded")
+        } catch {
+            dprint("⌚ [SupabaseUploader] rawAccelCSV upload failed: \(error)")
         }
-        var request = URLRequest(url: url)
-        request.httpMethod = method
-        request.setValue(apiKey, forHTTPHeaderField: "apikey")
-        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        request.setValue(contentType, forHTTPHeaderField: "Content-Type")
-        request.httpBody = body
-
-        URLSession.shared.dataTask(with: request) { [weak self] data, response, error in
-            guard let self = self else { return }
-            if let error = error {
-                dprint("⌚ [SupabaseUploader] \(tag) network error: \(error.localizedDescription)")
-                return
-            }
-            let status = (response as? HTTPURLResponse)?.statusCode ?? 0
-            if status >= 200 && status < 300 {
-                dprint("⌚ [SupabaseUploader] \(tag) uploaded")
-                return
-            }
-            if status == 401 && !isRetry {
-                dprint("⌚ [SupabaseUploader] \(tag) got 401, forcing token refresh and retrying")
-                WatchAuthSession.shared.forceRefresh { result in
-                    switch result {
-                    case .success(let newToken):
-                        self.sendAuthed(urlString: urlString, method: method, contentType: contentType, body: body, token: newToken, event: event, tag: tag, isRetry: true)
-                    case .failure(let err):
-                        dprint("⌚ [SupabaseUploader] \(tag) refresh failed: \(err)")
-                    }
-                }
-                return
-            }
-            let bodyStr = data.flatMap { String(data: $0, encoding: .utf8) } ?? "no body"
-            dprint("⌚ [SupabaseUploader] \(tag) HTTP \(status): \(bodyStr)")
-        }.resume()
     }
 }

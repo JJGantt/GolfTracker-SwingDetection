@@ -76,7 +76,6 @@
 		6ASETTINGS00000000000002 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6ASETTINGS00000000000001 /* SettingsView.swift */; };
 		6ASETTP2F17000000000001 /* PredictGreenSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6ASETTP2F17000000000002 /* PredictGreenSettingsView.swift */; };
 		6ASETTV2F17000000000001 /* ViewSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6ASETTV2F17000000000002 /* ViewSettingsView.swift */; };
-		6ASUPAAUTH00000000000002 /* SupabaseClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6ASUPAAUTH00000000000001 /* SupabaseClient.swift */; };
 		6ASUPAAUTH00000000000004 /* AuthManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6ASUPAAUTH00000000000003 /* AuthManager.swift */; };
 		6ASUPAAUTH00000000000006 /* LoginView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6ASUPAAUTH00000000000005 /* LoginView.swift */; };
 		6ASUPASYNC00000000000002 /* SupabaseSync.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6ASUPASYNC00000000000001 /* SupabaseSync.swift */; };
@@ -190,7 +189,6 @@
 		6ASETTINGS00000000000001 /* SettingsView.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		6ASETTP2F17000000000002 /* PredictGreenSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PredictGreenSettingsView.swift; sourceTree = "<group>"; };
 		6ASETTV2F17000000000002 /* ViewSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ViewSettingsView.swift; sourceTree = "<group>"; };
-		6ASUPAAUTH00000000000001 /* SupabaseClient.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = SupabaseClient.swift; sourceTree = "<group>"; };
 		6ASUPAAUTH00000000000003 /* AuthManager.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = AuthManager.swift; sourceTree = "<group>"; };
 		6ASUPAAUTH00000000000005 /* LoginView.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = LoginView.swift; sourceTree = "<group>"; };
 		6ASUPASYNC00000000000001 /* SupabaseSync.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = SupabaseSync.swift; sourceTree = "<group>"; };
@@ -401,7 +399,6 @@
 				6AB83CE62EDFB19E00CE341C /* DataStore.swift */,
 				01635C6BB56440EA8CF2FA63 /* StatsEngine.swift */,
 				6A7A65102026042200000002 /* DemoDataSeeder.swift */,
-				6ASUPAAUTH00000000000001 /* SupabaseClient.swift */,
 				6ASUPAAUTH00000000000003 /* AuthManager.swift */,
 				6ASUPASYNC00000000000001 /* SupabaseSync.swift */,
 				6AOSMSVC00000000000000A0 /* OSMCourseService.swift */,
@@ -660,7 +657,6 @@
 				6AD5EA812EE3A5F000DDDCF0 /* MapAnnotations.swift in Sources */,
 				6APERMBAN000000000000002 /* PermissionBanner.swift in Sources */,
 				6AONBOARD000000000000002 /* OnboardingView.swift in Sources */,
-				6ASUPAAUTH00000000000002 /* SupabaseClient.swift in Sources */,
 				6ASUPAAUTH00000000000004 /* AuthManager.swift in Sources */,
 				6ASUPAAUTH00000000000006 /* LoginView.swift in Sources */,
 				6ASUPASYNC00000000000002 /* SupabaseSync.swift in Sources */,
