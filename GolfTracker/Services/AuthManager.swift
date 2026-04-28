@@ -1,6 +1,7 @@
 import Foundation
 import AuthenticationServices
 import Combine
+import Supabase
 
 enum AuthError: Error, LocalizedError {
     case noIdentityToken
@@ -18,101 +19,66 @@ enum AuthError: Error, LocalizedError {
     }
 }
 
+/// iPhone-side auth. Backed by the supabase-swift SDK (which handles token
+/// refresh, retry, persistence internally). Public API surface preserved so
+/// existing callers don't change. Mirrors the auth session to the Watch via
+/// `WatchConnectivityManager.sendAuthSession` whenever it changes.
 final class AuthManager: NSObject, ObservableObject {
     static let shared = AuthManager()
 
     @Published private(set) var session: AuthSession?
     @Published private(set) var isSigningIn = false
 
-    private let client = SupabaseClient.shared
-    private let keychain = KeychainStore(service: "com.Jared.GolfTracker.auth")
+    private let supabase = SupabaseManager.shared
+    private var sessionListener: Task<Void, Never>?
 
     private override init() {
         super.init()
-        self.session = keychain.readSession()
-        // Push current session to Watch on launch so a freshly-paired or
-        // freshly-relaunched Watch picks it up without needing a new sign-in.
-        if let session = self.session {
-            WatchConnectivityManager.shared.sendAuthSession(session)
+        // Pick up whatever session the SDK has persisted from a previous launch.
+        if let s = supabase.auth.currentSession {
+            self.session = AuthSession(s)
+            WatchConnectivityManager.shared.sendAuthSession(self.session)
         }
+        startSessionListener()
     }
 
     var isSignedIn: Bool { session != nil }
     var currentUserId: String? { session?.userId }
     var currentAccessToken: String? { session?.accessToken }
 
-    /// Returns a non-expired access token, refreshing first if the current one is
-    /// within 5 minutes of expiry. Use this before every Supabase REST call instead
-    /// of reading `currentAccessToken` directly.
+    /// SDK auto-refreshes; this call returns the current access token if the SDK
+    /// has a valid session. Kept async to preserve the legacy completion-handler
+    /// API used by SupabaseSync.
     func validAccessToken(completion: @escaping (Result<String, AuthError>) -> Void) {
-        guard let session = session else {
-            completion(.failure(.supabaseRejected("not signed in")))
-            return
-        }
-        if session.expiresAt.timeIntervalSinceNow > 300 {
-            completion(.success(session.accessToken))
-            return
-        }
-        refreshSession { result in
-            switch result {
-            case .success(let s): completion(.success(s.accessToken))
-            case .failure(let e): completion(.failure(e))
+        Task {
+            do {
+                let s = try await supabase.auth.session
+                await MainActor.run { completion(.success(s.accessToken)) }
+            } catch {
+                await MainActor.run { completion(.failure(.supabaseRejected(error.localizedDescription))) }
             }
         }
     }
 
-    /// Trades the refresh token for a fresh access token (and rotated refresh token).
-    /// Updates Keychain + propagates the new session to the Watch.
+    /// Forces a refresh. Mostly useful after a 401 retry path.
     func refreshSession(completion: @escaping (Result<AuthSession, AuthError>) -> Void) {
-        guard let session = session else {
-            completion(.failure(.supabaseRejected("not signed in")))
-            return
-        }
-        let payload: [String: Any] = ["refresh_token": session.refreshToken]
-        guard let body = try? JSONSerialization.data(withJSONObject: payload),
-              let req = client.authedRequest(path: "/auth/v1/token?grant_type=refresh_token", method: "POST", body: body) else {
-            completion(.failure(.network(NSError(domain: "AuthManager", code: -1))))
-            return
-        }
-        URLSession.shared.dataTask(with: req) { [weak self] data, response, error in
-            guard let self = self else { return }
-            if let error = error { completion(.failure(.network(error))); return }
-            guard let data = data else { completion(.failure(.decode)); return }
-            let status = (response as? HTTPURLResponse)?.statusCode ?? 0
-            guard status >= 200 && status < 300 else {
-                let msg = String(data: data, encoding: .utf8) ?? "HTTP \(status)"
-                // Refresh token rejected (revoked / expired) — force sign-out so UI prompts re-auth.
-                if status == 400 || status == 401 {
-                    DispatchQueue.main.async { self.signOut() }
+        Task {
+            do {
+                let s = try await supabase.auth.refreshSession()
+                let mirror = AuthSession(s)
+                await MainActor.run {
+                    self.session = mirror
+                    WatchConnectivityManager.shared.sendAuthSession(mirror)
+                    completion(.success(mirror))
                 }
-                completion(.failure(.supabaseRejected(msg)))
-                return
+            } catch {
+                await MainActor.run { completion(.failure(.supabaseRejected(error.localizedDescription))) }
             }
-            guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let access = json["access_token"] as? String,
-                  let refresh = json["refresh_token"] as? String,
-                  let expiresIn = json["expires_in"] as? Double else {
-                completion(.failure(.decode))
-                return
-            }
-            let newSession = AuthSession(
-                accessToken: access,
-                refreshToken: refresh,
-                expiresAt: Date().addingTimeInterval(expiresIn),
-                userId: session.userId
-            )
-            DispatchQueue.main.async {
-                self.session = newSession
-                self.keychain.writeSession(newSession)
-                WatchConnectivityManager.shared.sendAuthSession(newSession)
-                completion(.success(newSession))
-            }
-        }.resume()
+        }
     }
 
     // MARK: - Sign In With Apple
 
-    /// Kicks off the native SIWA flow. Completion fires on main.
     func signInWithApple(from anchor: ASPresentationAnchor? = nil, completion: @escaping (Result<AuthSession, AuthError>) -> Void) {
         isSigningIn = true
         let provider = ASAuthorizationAppleIDProvider()
@@ -124,15 +90,23 @@ final class AuthManager: NSObject, ObservableObject {
             guard let self = self else { return }
             switch result {
             case .success(let identityToken):
-                self.exchangeWithSupabase(identityToken: identityToken) { exchangeResult in
-                    DispatchQueue.main.async {
-                        self.isSigningIn = false
-                        if case .success(let session) = exchangeResult {
-                            self.session = session
-                            self.keychain.writeSession(session)
-                            WatchConnectivityManager.shared.sendAuthSession(session)
+                Task {
+                    do {
+                        let s = try await self.supabase.auth.signInWithIdToken(
+                            credentials: .init(provider: .apple, idToken: identityToken)
+                        )
+                        let mirror = AuthSession(s)
+                        await MainActor.run {
+                            self.isSigningIn = false
+                            self.session = mirror
+                            WatchConnectivityManager.shared.sendAuthSession(mirror)
+                            completion(.success(mirror))
                         }
-                        completion(exchangeResult)
+                    } catch {
+                        await MainActor.run {
+                            self.isSigningIn = false
+                            completion(.failure(.supabaseRejected(error.localizedDescription)))
+                        }
                     }
                 }
             case .failure(let error):
@@ -153,50 +127,46 @@ final class AuthManager: NSObject, ObservableObject {
     // MARK: - Sign out
 
     func signOut() {
-        keychain.deleteSession()
-        session = nil
-        WatchConnectivityManager.shared.sendAuthSession(nil)
+        Task {
+            try? await supabase.auth.signOut()
+            await MainActor.run {
+                self.session = nil
+                WatchConnectivityManager.shared.sendAuthSession(nil)
+            }
+        }
     }
 
-    // MARK: - Supabase token exchange
+    // MARK: - Live session listener
 
-    private func exchangeWithSupabase(identityToken: String, completion: @escaping (Result<AuthSession, AuthError>) -> Void) {
-        let payload: [String: Any] = [
-            "provider": "apple",
-            "id_token": identityToken
-        ]
-        guard let body = try? JSONSerialization.data(withJSONObject: payload),
-              let req = client.authedRequest(path: "/auth/v1/token?grant_type=id_token", method: "POST", body: body) else {
-            completion(.failure(.network(NSError(domain: "AuthManager", code: -1))))
-            return
+    /// SDK fires auth state change events (sign-in, sign-out, token refresh).
+    /// Mirror those into our @Published session and the watch.
+    private func startSessionListener() {
+        sessionListener?.cancel()
+        sessionListener = Task { [weak self] in
+            guard let self = self else { return }
+            for await (_, sdkSession) in self.supabase.auth.authStateChanges {
+                let mirror = sdkSession.map(AuthSession.init)
+                await MainActor.run {
+                    self.session = mirror
+                    WatchConnectivityManager.shared.sendAuthSession(mirror)
+                }
+            }
         }
+    }
+}
 
-        URLSession.shared.dataTask(with: req) { data, response, error in
-            if let error = error { completion(.failure(.network(error))); return }
-            guard let data = data else { completion(.failure(.decode)); return }
-            let status = (response as? HTTPURLResponse)?.statusCode ?? 0
-            guard status >= 200 && status < 300 else {
-                let msg = String(data: data, encoding: .utf8) ?? "HTTP \(status)"
-                completion(.failure(.supabaseRejected(msg)))
-                return
-            }
-            guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let access = json["access_token"] as? String,
-                  let refresh = json["refresh_token"] as? String,
-                  let expiresIn = json["expires_in"] as? Double,
-                  let user = json["user"] as? [String: Any],
-                  let userId = user["id"] as? String else {
-                completion(.failure(.decode))
-                return
-            }
-            let session = AuthSession(
-                accessToken: access,
-                refreshToken: refresh,
-                expiresAt: Date().addingTimeInterval(expiresIn),
-                userId: userId
-            )
-            completion(.success(session))
-        }.resume()
+// MARK: - AuthSession ↔ SDK Session bridge
+
+extension AuthSession {
+    /// Build our wire-format session from the SDK's Session type. This mirror
+    /// is what gets sent to the Watch via WatchConnectivity.
+    init(_ s: Supabase.Session) {
+        self.init(
+            accessToken: s.accessToken,
+            refreshToken: s.refreshToken,
+            expiresAt: Date(timeIntervalSince1970: s.expiresAt),
+            userId: s.user.id.uuidString
+        )
     }
 }
 
@@ -228,51 +198,5 @@ private final class SIWACoordinator: NSObject, ASAuthorizationControllerDelegate
     func presentationAnchor(for controller: ASAuthorizationController) -> ASPresentationAnchor {
         if let anchor = anchor { return anchor }
         return ASPresentationAnchor()
-    }
-}
-
-// MARK: - Keychain helper
-
-private struct KeychainStore {
-    let service: String
-    private let account = "session"
-
-    func readSession() -> AuthSession? {
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account,
-            kSecReturnData as String: true,
-            kSecMatchLimit as String: kSecMatchLimitOne
-        ]
-        var item: CFTypeRef?
-        guard SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess,
-              let data = item as? Data,
-              let session = try? JSONDecoder().decode(AuthSession.self, from: data) else {
-            return nil
-        }
-        return session
-    }
-
-    func writeSession(_ session: AuthSession) {
-        guard let data = try? JSONEncoder().encode(session) else { return }
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account
-        ]
-        SecItemDelete(query as CFDictionary)
-        var add = query
-        add[kSecValueData as String] = data
-        SecItemAdd(add as CFDictionary, nil)
-    }
-
-    func deleteSession() {
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account
-        ]
-        SecItemDelete(query as CFDictionary)
     }
 }
