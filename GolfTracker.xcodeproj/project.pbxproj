@@ -76,6 +76,8 @@
 		6ASUPAAUTH00000000000004 /* AuthManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6ASUPAAUTH00000000000003 /* AuthManager.swift */; };
 		6ASUPAAUTH00000000000006 /* LoginView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6ASUPAAUTH00000000000005 /* LoginView.swift */; };
 		6ASUPASYNC00000000000002 /* SupabaseSync.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6ASUPASYNC00000000000001 /* SupabaseSync.swift */; };
+		6AOSMSVC00000000000000A1 /* OSMCourseService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6AOSMSVC00000000000000A0 /* OSMCourseService.swift */; };
+		6AOSMSVC00000000000000A2 /* OSMCourseService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6AOSMSVC00000000000000A0 /* OSMCourseService.swift */; };
 		6C8B4EAC38754620BA3C4CB0 /* RoundDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 70A60D673360436FB2457C24 /* RoundDetailView.swift */; };
 		7E4B930B6ED84C57A8AB3034 /* StatsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 65E4113738034AF2B535116F /* StatsView.swift */; };
 		95313A5608784DC394BA3EAC /* HolePlayView+MoveHoleMode.swift in Sources */ = {isa = PBXBuildFile; fileRef = 93374566285C433CB8F2AD38 /* HolePlayView+MoveHoleMode.swift */; };
@@ -187,6 +189,7 @@
 		6ASUPAAUTH00000000000003 /* AuthManager.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = AuthManager.swift; sourceTree = "<group>"; };
 		6ASUPAAUTH00000000000005 /* LoginView.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = LoginView.swift; sourceTree = "<group>"; };
 		6ASUPASYNC00000000000001 /* SupabaseSync.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = SupabaseSync.swift; sourceTree = "<group>"; };
+		6AOSMSVC00000000000000A0 /* OSMCourseService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OSMCourseService.swift; sourceTree = "<group>"; };
 		6CD8A1F4907C44A4BB2CA042 /* HolePlayView+AddPenaltyMode.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "HolePlayView+AddPenaltyMode.swift"; sourceTree = "<group>"; };
 		70A60D673360436FB2457C24 /* RoundDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RoundDetailView.swift; sourceTree = "<group>"; };
 		870F6DC4F3184CDF81331B32 /* SwingDetectionManager+ContactGates.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "SwingDetectionManager+ContactGates.swift"; sourceTree = "<group>"; };
@@ -386,6 +389,7 @@
 				6ASUPAAUTH00000000000001 /* SupabaseClient.swift */,
 				6ASUPAAUTH00000000000003 /* AuthManager.swift */,
 				6ASUPASYNC00000000000001 /* SupabaseSync.swift */,
+				6AOSMSVC00000000000000A0 /* OSMCourseService.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -641,6 +645,7 @@
 				6ASUPAAUTH00000000000004 /* AuthManager.swift in Sources */,
 				6ASUPAAUTH00000000000006 /* LoginView.swift in Sources */,
 				6ASUPASYNC00000000000002 /* SupabaseSync.swift in Sources */,
+				6AOSMSVC00000000000000A1 /* OSMCourseService.swift in Sources */,
 				6ASETTINGS00000000000002 /* SettingsView.swift in Sources */,
 				6C8B4EAC38754620BA3C4CB0 /* RoundDetailView.swift in Sources */,
 				6AB09FE92F15D47F0087C4ED /* ClubSetEditorView.swift in Sources */,
@@ -678,6 +683,7 @@
 				6AD5EAC72EE3B7EB00DDDCF0 /* ActiveRoundView.swift in Sources */,
 				6AD5EAB62EE3B79B00DDDCF0 /* GolfWatchApp.swift in Sources */,
 				6AD5EACC2EE3B83600DDDCF0 /* Models.swift in Sources */,
+				6AOSMSVC00000000000000A2 /* OSMCourseService.swift in Sources */,
 				6A10COMPAT00000001 /* WatchOS10Compatibility.swift in Sources */,
 				AA11BB22CC33DD44EE550001 /* SwingAlgorithmProtocol.swift in Sources */,
 				AA11BB22CC33DD44EE550010 /* DetectionEvents.swift in Sources */,
