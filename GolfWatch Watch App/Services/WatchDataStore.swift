@@ -470,10 +470,44 @@ class WatchDataStore: ObservableObject {
         objectWillChange.send()
     }
 
+    /// Returns the list of green candidates the user can pick from when
+    /// labeling a hole. Two sources, in priority order:
+    ///   1. **OSM green polygons** (when round was resolved with OSM data) —
+    ///      cleaner: real polygons from mapper-curated data, no false positives
+    ///      from blob detection. Used for Tier-2 rounds (greens present but
+    ///      holes weren't cleanly numberable) AND as a supplement to Tier-3.
+    ///   2. **Blob detection results** (Tier-3 rounds without OSM coverage) —
+    ///      MapKit-pixel-derived polygons from the existing analyzer.
+    /// Both kinds are returned as `HoleDetectionBlob` so the existing picker
+    /// UI doesn't need to know the difference.
     func filteredGreenCandidates(for courseId: UUID?) -> [HoleDetectionBlob] {
-        guard let courseId,
-              let detectionData = holeDetectionDataByCourse[courseId] else { return [] }
-        return detectionData.blobs.filter { $0.passesFilter(holeFilterSettings) }
+        guard let courseId else { return [] }
+        var out: [HoleDetectionBlob] = []
+        if let osm = osmCourseDataByCourse[courseId] {
+            out.append(contentsOf: osm.greens.map(Self.blob(fromOSMGreen:)))
+        }
+        if let detectionData = holeDetectionDataByCourse[courseId] {
+            out.append(contentsOf: detectionData.blobs.filter { $0.passesFilter(holeFilterSettings) })
+        }
+        return out
+    }
+
+    /// Convert an OSM green polygon to the `HoleDetectionBlob` shape the
+    /// picker UI consumes. Filter fields are set so the OSM polygon always
+    /// passes (it's mapper-curated, not heuristic-detected).
+    private static func blob(fromOSMGreen polygon: OSMPolygon) -> HoleDetectionBlob {
+        let avgLat = polygon.points.map(\.latitude).reduce(0, +) / Double(max(polygon.points.count, 1))
+        let avgLon = polygon.points.map(\.longitude).reduce(0, +) / Double(max(polygon.points.count, 1))
+        return HoleDetectionBlob(
+            id: UUID(),  // synthetic — OSM way ids are Int64, doesn't fit UUID
+            area: 9_999,
+            minWidth: 999,
+            elongation: 1.0,
+            greennessScore: 9_999,
+            centroidLatitude: avgLat,
+            centroidLongitude: avgLon,
+            polygon: polygon.points
+        )
     }
 
     func strokeCount(for hole: Hole) -> Int {
