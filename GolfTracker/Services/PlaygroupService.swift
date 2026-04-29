@@ -36,7 +36,7 @@ final class PlaygroupService {
     /// Create a new playgroup with the current user as host. The user's own
     /// round (which they'd already started via the regular flow) becomes the
     /// host's round in this playgroup. Returns the new playgroup row.
-    func hostPlaygroup(courseId: UUID?, courseName: String, roundId: UUID, name: String? = nil) async throws -> Playgroup {
+    func hostPlaygroup(courseId: UUID?, courseName: String, roundId: UUID, name: String? = nil, hostLocation: CLLocationCoordinate2D? = nil) async throws -> Playgroup {
         guard let userId = currentUserId() else { throw PlaygroupError.notSignedIn }
 
         struct InsertRow: Encodable {
@@ -44,12 +44,16 @@ final class PlaygroupService {
             let course_id: String?
             let course_name: String
             let name: String?
+            let host_lat: Double?
+            let host_lon: Double?
         }
         let row = InsertRow(
             host_id: userId,
             course_id: courseId?.uuidString,
             course_name: courseName,
-            name: name
+            name: name,
+            host_lat: hostLocation?.latitude,
+            host_lon: hostLocation?.longitude
         )
         let inserted: Playgroup = try await supabase.from("playgroups")
             .insert(row, returning: .representation)
@@ -78,11 +82,20 @@ final class PlaygroupService {
 
     // MARK: - Discovery (Join screen)
 
-    /// Returns playgroups the user can join — open status, NOT a group they're
-    /// already in, and (for now) any open group regardless of GPS. Server-side
-    /// proximity filtering by course_id match comes later when we wire it.
+    /// Maximum distance (meters) between joiner's current GPS and the host's
+    /// recorded GPS for a playgroup to appear in the joiner's "Nearby" list.
+    /// Tight on purpose — multiplayer is for people physically together at
+    /// the same course, not "anyone on the same continent."
+    static let nearbyMaxMeters: Double = 100
+
+    /// Returns playgroups the user can join: open status, NOT a group they're
+    /// already in, AND (when `currentLocation` is provided) within
+    /// `nearbyMaxMeters` of the host's recorded GPS. If the joiner has no GPS
+    /// yet, returns an empty list rather than the global open set — pairing
+    /// across the country is never the right answer.
     func nearbyJoinable(currentLocation: CLLocationCoordinate2D?) async throws -> [Playgroup] {
         guard let userId = currentUserId() else { throw PlaygroupError.notSignedIn }
+        guard let here = currentLocation else { return [] }
         let groups: [Playgroup] = try await supabase.from("playgroups")
             .select()
             .eq("status", value: "open")
@@ -96,7 +109,13 @@ final class PlaygroupService {
             .execute()
             .value
         let myGroupIds = Set(myMemberships.map { $0.playgroupId })
-        return groups.filter { !myGroupIds.contains($0.id) }
+        let hereLoc = CLLocation(latitude: here.latitude, longitude: here.longitude)
+        return groups.filter { pg in
+            guard !myGroupIds.contains(pg.id) else { return false }
+            guard let lat = pg.hostLat, let lon = pg.hostLon else { return false }
+            let hostLoc = CLLocation(latitude: lat, longitude: lon)
+            return hereLoc.distance(from: hostLoc) <= PlaygroupService.nearbyMaxMeters
+        }
     }
 
     // MARK: - Join flow
@@ -253,28 +272,6 @@ final class PlaygroupService {
             .delete()
             .eq("playgroup_id", value: playgroupId)
             .eq("user_id", value: target)
-            .execute()
-    }
-
-    // MARK: - Profile
-
-    /// Upsert the current user's display name (called from onboarding after SIWA).
-    func upsertMyProfile(firstName: String?, displayName: String?) async throws {
-        guard let userId = currentUserId() else { throw PlaygroupError.notSignedIn }
-        struct Row: Encodable {
-            let user_id: String
-            let first_name: String?
-            let display_name: String?
-            let updated_at: String
-        }
-        let row = Row(
-            user_id: userId,
-            first_name: firstName,
-            display_name: displayName,
-            updated_at: ISO8601DateFormatter().string(from: Date())
-        )
-        try await supabase.from("profiles")
-            .upsert(row, onConflict: "user_id")
             .execute()
     }
 

@@ -10,7 +10,9 @@ import SwiftData
 
 @main
 struct GolfTrackerApp: App {
-    @StateObject private var store = DataStore()
+    // Use the shared singleton so other call sites (MultiplayerView, etc.)
+    // see the same instance the view layer is bound to.
+    @StateObject private var store = DataStore.shared
     @StateObject private var motionDataHandler = MotionDataHandler()
 
     /// SwiftData container is the persistence layer for all relational state

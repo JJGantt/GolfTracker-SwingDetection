@@ -4,6 +4,11 @@ import MapKit
 import SwiftData
 
 class DataStore: ObservableObject {
+    /// Shared instance — mirrors `WatchDataStore.shared`. Singletons that need
+    /// access to the iOS data layer (like `MultiplayerView`) read from this
+    /// rather than relying on environment injection.
+    static let shared = DataStore()
+
     @Published var courses: [Course] = []
     @Published var rounds: [Round] = []
     @Published var clubTypes: [ClubTypeData] = []
@@ -14,6 +19,11 @@ class DataStore: ObservableObject {
     @Published var holeDetectionRunStateByCourse: [UUID: HoleDetectionRunState] = [:]
     @Published var holeFilterSettings: HoleDetectionFilterSettings = .default
     @Published var playerStats: PlayerStats = .empty
+
+    /// The round currently being played on iOS — set by `HolePlayView.onAppear`,
+    /// cleared by its `onDisappear`. Used by `MultiplayerView` to know which
+    /// round to host into. Mirrors `WatchDataStore.currentRoundId`'s purpose.
+    @Published var currentRoundId: UUID?
 
     /// Set at app startup via `configure(container:)`.
     private(set) var modelContainer: ModelContainer?

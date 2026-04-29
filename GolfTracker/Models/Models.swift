@@ -435,6 +435,10 @@ struct Playgroup: Codable, Hashable, Identifiable {
     let endedAt: Date?
     let status: String
     let name: String?
+    /// Captured from the host's GPS at hostPlaygroup() time. Used to filter
+    /// the joiner's "Nearby" list — joiners only see groups within range.
+    let hostLat: Double?
+    let hostLon: Double?
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -445,6 +449,8 @@ struct Playgroup: Codable, Hashable, Identifiable {
         case closedAt = "closed_at"
         case endedAt = "ended_at"
         case status, name
+        case hostLat = "host_lat"
+        case hostLon = "host_lon"
     }
 
     var isOpen: Bool { status == "open" }

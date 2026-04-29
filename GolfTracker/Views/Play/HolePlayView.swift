@@ -423,6 +423,9 @@ struct HolePlayView: View {
                 }
             }
 
+            // Expose the active round id so MultiplayerView can host it.
+            store.currentRoundId = activeRound?.id
+
             applyLocationModeForRound()
 
             // Sync current hole index to watch on initial load
@@ -440,6 +443,7 @@ struct HolePlayView: View {
         .onDisappear {
             // Realtime is round-scoped — drop the WebSocket when leaving play.
             RealtimeSync.shared.stop()
+            store.currentRoundId = nil
         }
         .onChange(of: currentHoleIndex) { _, _ in
             updateMapPosition()

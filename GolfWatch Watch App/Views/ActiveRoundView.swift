@@ -22,7 +22,10 @@ struct ActiveRoundView: View {
     @State var isLastStrokeViewMode = false
     @State var undoHoldProgress: Double = 0.0
     @State var undoHoldTimer: Timer?
-    @State var isFullViewMode = false
+    // Defaults to full hole view (tee → green) — matches the multiplayer use
+    // case (you want to see all players' positions across the hole) and also
+    // helps solo players see the whole hole layout up front.
+    @State var isFullViewMode = true
     @State var isCrownScrolling = false
     @State var crownScrollTimer: Timer?
     @State var isPulsing = false
@@ -776,14 +779,15 @@ struct ActiveRoundView: View {
     func noHoleMapView() -> some View {
         MapReader { proxy in
             Map(position: $position, interactionModes: isInteractiveMapMode ? .all : []) {
-                // User location
+                // User location — tinted with the user's playgroup-assigned
+                // color (defaults to blue when not in a playgroup).
                 if let userLocation = locationManager.location {
                     Annotation("", coordinate: userLocation.coordinate) {
                         let relativeHeading = locationManager.heading ?? 0
 
                         Image(systemName: "location.north.fill")
                             .font(.system(size: 20))
-                            .foregroundColor(.blue)
+                            .foregroundColor(Color(hex: store.myPlayerColor))
                             .rotationEffect(.degrees(relativeHeading))
                             .shadow(color: .white, radius: 2)
                             .shadow(color: .black.opacity(0.3), radius: 1)

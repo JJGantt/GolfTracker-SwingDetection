@@ -43,6 +43,15 @@ class WatchDataStore: ObservableObject {
     /// In-memory cache of OSM course data keyed by courseId. Populated when the
     /// resolver completes; consumed by AutoAdvanceMonitor's visited-green check.
     @Published var osmCourseDataByCourse: [UUID: OSMCourseData] = [:]
+    /// The user's assigned palette color in their current playgroup. Persists
+    /// across devices because it's read from `playgroup_members.color` (set
+    /// once at host/join time and stored in Supabase). Defaults to blue when
+    /// the user isn't in a playgroup. Used to tint the user's own GPS arrow
+    /// on the active round map and their own row/dot in scorecard + member
+    /// lists, so the user can see at-a-glance "I'm blue" and reference that
+    /// when talking to other players in the group.
+    @Published var myPlayerColor: String = PlaygroupService.playerPalette[0]
+
     @Published var holeFilterSettings: HoleDetectionFilterSettings = .default {
         didSet {
             if let data = try? JSONEncoder().encode(holeFilterSettings) {
@@ -115,6 +124,9 @@ class WatchDataStore: ObservableObject {
            let id = UUID(uuidString: stored) {
             currentRoundId = id
         }
+        // Pick up our playgroup-assigned color (if any) so the GPS arrow renders
+        // correctly on first launch even before the user opens MultiplayerView.
+        refreshMyPlayerColor()
     }
 
     // MARK: - Current Round / Hole
@@ -531,6 +543,27 @@ class WatchDataStore: ObservableObject {
 
     func osmCourseData(forCourseId id: UUID) -> OSMCourseData? {
         osmCourseDataByCourse[id]
+    }
+
+    /// Refresh `myPlayerColor` from the user's current playgroup membership.
+    /// Call this after host/join operations. If the user isn't in a playgroup,
+    /// falls back to palette[0] so the GPS arrow stays a familiar color.
+    func refreshMyPlayerColor() {
+        guard let userId = WatchAuthSession.shared.currentUserId else { return }
+        Task { [weak self] in
+            do {
+                guard let pg = try await PlaygroupService.shared.currentOpenPlaygroup() else {
+                    await MainActor.run { self?.myPlayerColor = PlaygroupService.playerPalette[0] }
+                    return
+                }
+                let members = try await PlaygroupService.shared.members(of: pg.id)
+                let myRow = members.first { $0.userId == userId }
+                let color = myRow?.color ?? PlaygroupService.playerPalette[0]
+                await MainActor.run { self?.myPlayerColor = color }
+            } catch {
+                dprint("⌚ [WatchDataStore] refreshMyPlayerColor failed: \(error.localizedDescription)")
+            }
+        }
     }
 
     func replaceTargets(forHoleNumber holeNumber: Int?, with coordinates: [CLLocationCoordinate2D]) {

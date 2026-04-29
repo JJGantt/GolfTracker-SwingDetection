@@ -167,7 +167,8 @@ struct MultiplayerView: View {
         #if os(watchOS)
         return WatchDataStore.shared.currentRoundId
         #else
-        return nil  // iOS round id resolution comes via active HolePlayView; not exposed here yet
+        // Set by HolePlayView's onAppear, cleared on disappear.
+        return DataStore.shared.currentRoundId
         #endif
     }
 
@@ -191,7 +192,7 @@ struct MultiplayerView: View {
                 self.pendingRequests = []
             }
 
-            self.nearbyJoinable = try await PlaygroupService.shared.nearbyJoinable(currentLocation: nil)
+            self.nearbyJoinable = try await PlaygroupService.shared.nearbyJoinable(currentLocation: LocationManager.shared.location?.coordinate)
 
             // Pull profiles for everyone we'll display.
             var ids = Set<String>()
@@ -209,19 +210,25 @@ struct MultiplayerView: View {
     private func host() async {
         guard let roundId = currentRoundId else { return }
         // Need a course for the playgroup — pull it from the current round.
+        let round: Round?
         #if os(watchOS)
-        guard let round = WatchDataStore.shared.currentRound else { return }
+        round = WatchDataStore.shared.currentRound
+        #else
+        round = DataStore.shared.rounds.first { $0.id == roundId }
+        #endif
+        guard let round = round else { return }
         do {
             _ = try await PlaygroupService.shared.hostPlaygroup(
                 courseId: round.courseId,
                 courseName: round.courseName,
-                roundId: roundId
+                roundId: roundId,
+                hostLocation: LocationManager.shared.location?.coordinate
             )
             await reload()
+            refreshMyColor()
         } catch {
             self.errorMessage = "Host failed: \(error.localizedDescription)"
         }
-        #endif
     }
 
     private func requestJoin(_ pg: Playgroup) async {
@@ -255,6 +262,7 @@ struct MultiplayerView: View {
         do {
             try await PlaygroupService.shared.endPlaygroup(pg.id)
             await reload()
+            refreshMyColor()
         } catch {
             self.errorMessage = "End failed: \(error.localizedDescription)"
         }
@@ -264,9 +272,18 @@ struct MultiplayerView: View {
         do {
             try await PlaygroupService.shared.leavePlaygroup(pg.id)
             await reload()
+            refreshMyColor()
         } catch {
             self.errorMessage = "Leave failed: \(error.localizedDescription)"
         }
+    }
+
+    /// Push the latest playgroup color into the local data store so the GPS
+    /// arrow + other UI elements pick it up.
+    private func refreshMyColor() {
+        #if os(watchOS)
+        WatchDataStore.shared.refreshMyPlayerColor()
+        #endif
     }
 }
 
