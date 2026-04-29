@@ -366,9 +366,26 @@ class WatchDataStore: ObservableObject {
     /// delete, set switch).
     func refreshClubsCache() {
         guard let context = context else { return }
-        let fetchedClubs = (try? context.fetch(FetchDescriptor<ClubData>())) ?? []
-        let fetchedTypes = (try? context.fetch(FetchDescriptor<ClubTypeData>())) ?? []
+        let fetchedClubsRaw = (try? context.fetch(FetchDescriptor<ClubData>())) ?? []
+        // Sort club types by average distance descending so the crown
+        // walks Drive (longest) → Putt (shortest), the natural bag order.
+        // SwiftData fetches have no inherent ordering and returns rows
+        // in insertion order; without sorting, the crown was jumbled.
+        let fetchedTypes = ((try? context.fetch(FetchDescriptor<ClubTypeData>())) ?? [])
+            .sorted { (a, b) in
+                let da = a.averageDistance ?? 0
+                let db = b.averageDistance ?? 0
+                if da != db { return da > db }
+                return a.name < b.name
+            }
         let fetchedSets  = (try? context.fetch(FetchDescriptor<ClubSet>())) ?? []
+        // Order clubs by their type's averageDistance so iterating
+        // availableClubs (e.g. for any UI that doesn't go through
+        // activeSetClubs) also gets the right order.
+        let typeRank: [UUID: Int] = Dictionary(uniqueKeysWithValues: fetchedTypes.enumerated().map { ($1.id, $0) })
+        let fetchedClubs = fetchedClubsRaw.sorted {
+            (typeRank[$0.clubTypeId] ?? Int.max) < (typeRank[$1.clubTypeId] ?? Int.max)
+        }
         // Avoid redundant publishes — comparing ids covers the common case
         // (re-publish only when the set of ids actually changed).
         let newClubIds = fetchedClubs.map(\.id)
