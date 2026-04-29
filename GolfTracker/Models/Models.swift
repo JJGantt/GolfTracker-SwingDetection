@@ -107,19 +107,26 @@ final class Course {
     var rating: Double?
     var slope: Int?
     var city: String?
+    /// GolfCourseAPI's id for this course, captured the first time the
+    /// resolver successfully matches it. Letting subsequent round-starts
+    /// at the same course skip the Edge Function call and read tees
+    /// straight out of `course_tees` via `cachedTees(forExternalCourseId:)`.
+    var externalCourseId: String?
 
     init(id: UUID = UUID(),
          name: String,
          holes: [Hole] = [],
          rating: Double? = nil,
          slope: Int? = nil,
-         city: String? = nil) {
+         city: String? = nil,
+         externalCourseId: String? = nil) {
         self.id = id
         self.name = name
         self.holes = holes
         self.rating = rating
         self.slope = slope
         self.city = city
+        self.externalCourseId = externalCourseId
     }
 
     var coordinate: CLLocationCoordinate2D? {

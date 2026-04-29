@@ -236,10 +236,15 @@ final class RealtimeSync {
         let rating = record["rating"]?.doubleValue
         let slope = record["slope"]?.intValue
         let city = record["city"]?.stringValue
+        let externalCourseId = record["external_course_id"]?.stringValue
         if let existing = existing {
-            existing.name = name; existing.rating = rating; existing.slope = slope; existing.city = city
+            existing.name = name
+            existing.rating = rating
+            existing.slope = slope
+            existing.city = city
+            existing.externalCourseId = externalCourseId
         } else {
-            context.insert(Course(id: id, name: name, holes: [], rating: rating, slope: slope, city: city))
+            context.insert(Course(id: id, name: name, holes: [], rating: rating, slope: slope, city: city, externalCourseId: externalCourseId))
         }
     }
 

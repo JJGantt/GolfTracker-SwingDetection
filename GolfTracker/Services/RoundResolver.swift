@@ -53,6 +53,10 @@ final class RoundResolver {
         let courseName: String
         let centroid: CLLocationCoordinate2D
         let distanceMeters: Double
+        /// Cached id from the prior GolfCourseAPI resolve. When non-nil,
+        /// the resolver can skip the Edge Function call on this round-start
+        /// and read tees straight from `course_tees`.
+        let externalCourseId: String?
 
         static func == (lhs: ExistingCourseMatch, rhs: ExistingCourseMatch) -> Bool {
             lhs.courseId == rhs.courseId
@@ -143,16 +147,21 @@ final class RoundResolver {
 
     /// Fast path — saved course within proximity. Skip OSM entirely; reuse
     /// whatever cached geometry the existing course has. Also fetch GolfCourseAPI
-    /// scorecard data so the tee picker can populate.
+    /// scorecard data so the tee picker can populate. If we've resolved this
+    /// course before AND stored the external_course_id on the row, skip the
+    /// Edge Function call entirely and read course_tees direct from cache.
     private func resolveExisting(_ match: ExistingCourseMatch,
                                  progress: @escaping (Step) -> Void,
                                  completion: @escaping (Resolution?) -> Void) {
         progress(.loadingCourseData(courseName: match.courseName))
-        // Pull cached OSM data for the course (if any). If not cached, the
-        // round still starts; the picker UX falls back to manual hole entry.
         osm.fetchFromCache(near: match.centroid) { [weak self] osmData in
             let tier = osmData?.tier ?? .none
-            self?.resolveScorecard(courseName: match.courseName, near: match.centroid) { scorecard in
+            self?.resolveScorecard(
+                courseName: match.courseName,
+                near: match.centroid,
+                knownExternalCourseId: match.externalCourseId,
+                localCourseId: match.courseId
+            ) { scorecard in
                 let resolution = Resolution(
                     courseId: match.courseId,
                     courseName: match.courseName,
@@ -173,6 +182,7 @@ final class RoundResolver {
     private struct CourseProximityRow: Decodable {
         let id: UUID
         let name: String
+        let external_course_id: String?
         let holes: [HoleCoord]
         struct HoleCoord: Decodable {
             let latitude: Double?
@@ -187,7 +197,7 @@ final class RoundResolver {
         Task {
             do {
                 let rows: [CourseProximityRow] = try await supabase.from("courses")
-                    .select("id,name,holes(latitude,longitude)")
+                    .select("id,name,external_course_id,holes(latitude,longitude)")
                     .execute()
                     .value
                 let userLoc = CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude)
@@ -206,7 +216,8 @@ final class RoundResolver {
                         courseId: row.id,
                         courseName: row.name,
                         centroid: centroid,
-                        distanceMeters: dist
+                        distanceMeters: dist,
+                        externalCourseId: row.external_course_id
                     )
                 }
                 completion(matches.sorted { $0.distanceMeters < $1.distanceMeters })
@@ -350,34 +361,111 @@ final class RoundResolver {
         }
     }
 
-    /// Look up the picked course in GolfCourseAPI by name, then pick the best
-    /// match by location proximity. Returns nil if the API has nothing or
-    /// nothing within reasonable distance.
+    /// Look up the picked course in GolfCourseAPI. If we already know the
+    /// external_course_id (passed in from a saved Course row), skip the
+    /// Edge Function call entirely — `course_tees` is the source of truth
+    /// once it's been populated. Otherwise fall back to a name search and
+    /// pick the closest match by GPS, then persist the external id back to
+    /// the local Course so future rounds at the same course skip the API.
     private func resolveScorecard(courseName: String,
                                   near coordinate: CLLocationCoordinate2D,
+                                  knownExternalCourseId: String? = nil,
+                                  localCourseId: UUID? = nil,
                                   completion: @escaping (GCAPICourse?) -> Void) {
-        Task {
-            do {
-                let candidates = try await GolfCourseAPIService.shared.search(query: courseName)
-                let userLoc = CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude)
-                // Pick the closest candidate within 1km of our coordinate. Past
-                // that distance it's almost certainly a different course (the
-                // API name search is loose — "hyde park" returns 5 cities).
-                let best = candidates
-                    .compactMap { c -> (GCAPICourse, Double)? in
-                        guard let coord = c.coordinate else { return nil }
-                        let dist = CLLocation(latitude: coord.latitude, longitude: coord.longitude)
-                            .distance(from: userLoc)
-                        return (c, dist)
+        // Fast path: we already know the external id. Build a stub
+        // GCAPICourse from the cached tees so the tee picker still works
+        // without invoking the Edge Function.
+        if let externalId = knownExternalCourseId {
+            Task {
+                do {
+                    let cached = try await GolfCourseAPIService.shared.cachedTees(forExternalCourseId: externalId)
+                    if let stub = Self.makeStubCourse(externalId: externalId, name: courseName, coord: coordinate, cachedTees: cached) {
+                        completion(stub)
+                        return
                     }
-                    .filter { $0.1 <= 1000 }
-                    .min(by: { $0.1 < $1.1 })
-                completion(best?.0)
-            } catch {
-                dprint("[RoundResolver] GolfCourseAPI lookup failed: \(error.localizedDescription)")
-                completion(nil)
+                } catch {
+                    // Fall through to name search
+                }
+                // Cache miss/error — search to recover the real id.
+                await self.searchAndPersist(courseName: courseName, near: coordinate, localCourseId: localCourseId, completion: completion)
             }
+            return
         }
+        Task {
+            await searchAndPersist(courseName: courseName, near: coordinate, localCourseId: localCourseId, completion: completion)
+        }
+    }
+
+    /// Hits the Edge Function (which calls the paid API) and, on success,
+    /// records the matched external_course_id back to the local Course row
+    /// so future round-starts at this course can skip the API.
+    private func searchAndPersist(courseName: String,
+                                  near coordinate: CLLocationCoordinate2D,
+                                  localCourseId: UUID?,
+                                  completion: @escaping (GCAPICourse?) -> Void) async {
+        do {
+            let candidates = try await GolfCourseAPIService.shared.search(query: courseName)
+            let userLoc = CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude)
+            let best = candidates
+                .compactMap { c -> (GCAPICourse, Double)? in
+                    guard let coord = c.coordinate else { return nil }
+                    let dist = CLLocation(latitude: coord.latitude, longitude: coord.longitude)
+                        .distance(from: userLoc)
+                    return (c, dist)
+                }
+                .filter { $0.1 <= 1000 }
+                .min(by: { $0.1 < $1.1 })?.0
+            if let best = best, let courseId = localCourseId {
+                // Persist the external id on the local courses row. Cheap
+                // upsert — Realtime echoes it back to other devices too.
+                Task {
+                    struct Patch: Encodable { let id: String; let external_course_id: String }
+                    let body = Patch(id: courseId.uuidString, external_course_id: "\(best.id)")
+                    _ = try? await self.supabase.from("courses").upsert(body, onConflict: "id").execute()
+                }
+            }
+            completion(best)
+        } catch {
+            dprint("[RoundResolver] GolfCourseAPI lookup failed: \(error.localizedDescription)")
+            completion(nil)
+        }
+    }
+
+    /// Build a minimal GCAPICourse from cached tee rows so the tee picker
+    /// has data without round-tripping the Edge Function. Used when we
+    /// already know the external_course_id.
+    private static func makeStubCourse(externalId: String, name: String, coord: CLLocationCoordinate2D, cachedTees: [CachedCourseTee]) -> GCAPICourse? {
+        guard !cachedTees.isEmpty, let intId = Int(externalId) else { return nil }
+        let teeBoxes: [GCAPITeeBox] = cachedTees.map { t in
+            GCAPITeeBox(
+                tee_name: t.teeName,
+                course_rating: t.courseRating,
+                slope_rating: t.slopeRating,
+                bogey_rating: t.bogeyRating,
+                total_yards: t.totalYards,
+                total_meters: t.totalMeters,
+                number_of_holes: nil,
+                par_total: t.parTotal,
+                front_course_rating: t.frontCourseRating,
+                front_slope_rating: t.frontSlopeRating,
+                front_bogey_rating: nil,
+                back_course_rating: t.backCourseRating,
+                back_slope_rating: t.backSlopeRating,
+                back_bogey_rating: nil,
+                holes: nil
+            )
+        }
+        let tees = GCAPITees(
+            female: teeBoxes.filter { box in cachedTees.first(where: { $0.teeName == box.tee_name })?.gender == "female" },
+            male: teeBoxes.filter { box in cachedTees.first(where: { $0.teeName == box.tee_name })?.gender == "male" }
+        )
+        return GCAPICourse(
+            id: intId,
+            club_name: name,
+            course_name: name,
+            location: GCAPILocation(address: nil, city: nil, state: nil, country: nil, latitude: coord.latitude, longitude: coord.longitude),
+            tees: tees
+        )
     }
 
     // MARK: - MapKit fallback POI search (used only when OSM is empty)
