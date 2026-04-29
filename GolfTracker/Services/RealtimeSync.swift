@@ -19,9 +19,17 @@ final class RealtimeSync {
     private let supabase = SupabaseManager.shared
 
     private var modelContainer: ModelContainer?
+    /// Critical: returns the SAME `ModelContext` instance used by the
+    /// platform DataStore so mutations from Realtime echoes and from
+    /// local user actions land in one coherent view of the store.
+    /// Separate contexts produced a 21s stale-read bug we hit before this
+    /// fix — see commit history.
     private var context: ModelContext? {
-        guard let modelContainer = modelContainer else { return nil }
-        return ModelContext(modelContainer)
+        #if os(watchOS)
+        return WatchDataStore.shared.modelContext
+        #else
+        return DataStore.shared.modelContext
+        #endif
     }
 
     private var subscriptions: [Task<Void, Never>] = []

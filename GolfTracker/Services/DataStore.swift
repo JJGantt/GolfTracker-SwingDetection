@@ -27,10 +27,14 @@ class DataStore: ObservableObject {
 
     /// Set at app startup via `configure(container:)`.
     private(set) var modelContainer: ModelContainer?
-    private var context: ModelContext? {
-        guard let modelContainer = modelContainer else { return nil }
-        return ModelContext(modelContainer)
-    }
+    /// Single shared `ModelContext` — see WatchDataStore for the rationale.
+    /// Per-access fresh contexts hit cross-context cache-coherence issues
+    /// where saves aren't immediately visible to subsequent fetches.
+    private var sharedContext: ModelContext?
+    private var context: ModelContext? { sharedContext }
+    /// Public read-only accessor so `RealtimeSync` can apply postgres-changes
+    /// echoes into the SAME context our local mutations use.
+    var modelContext: ModelContext? { sharedContext }
 
     private let holeDetectionFileName = "holeDetectionData.json"
     private let playerStatsFileName = "playerStats.json"
@@ -223,6 +227,7 @@ class DataStore: ObservableObject {
     /// Called by GolfTrackerApp at startup to wire SwiftData persistence.
     func configure(container: ModelContainer) {
         self.modelContainer = container
+        self.sharedContext = ModelContext(container)
         loadCourses()
         loadRounds()
         loadClubTypes()

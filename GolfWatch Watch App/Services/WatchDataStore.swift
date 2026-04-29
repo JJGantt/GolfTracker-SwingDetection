@@ -20,12 +20,19 @@ class WatchDataStore: ObservableObject {
 
     /// Set at app startup via `configure(container:)`.
     private(set) var modelContainer: ModelContainer?
-    /// A dedicated context for singleton-driven mutations. Separate from the
-    /// view-layer mainContext so we don't need to be @MainActor-isolated.
-    private var context: ModelContext? {
-        guard let modelContainer = modelContainer else { return nil }
-        return ModelContext(modelContainer)
-    }
+    /// Single shared `ModelContext` for the lifetime of this singleton.
+    /// **Do not** create a fresh context per access — fresh contexts have
+    /// known cross-context cache-coherence issues with SwiftData where a
+    /// save in one context isn't immediately visible to fetches in another
+    /// (we hit a 21s stale-read bug doing it that way; see commit history).
+    /// Using one shared context for all reads + mutations keeps things
+    /// internally consistent and matches SwiftData best practice.
+    private var sharedContext: ModelContext?
+    private var context: ModelContext? { sharedContext }
+    /// Public read-only accessor so `RealtimeSync` can apply postgres-changes
+    /// echoes into the SAME context our local mutations use. Cross-context
+    /// would re-introduce the stale-read bug.
+    var modelContext: ModelContext? { sharedContext }
 
     /// Drives the active round screen. View layer can also use @Query for
     /// reactive updates; this @Published keeps the singleton-driven helpers
@@ -118,6 +125,7 @@ class WatchDataStore: ObservableObject {
     /// Called from GolfWatchApp at startup.
     func configure(container: ModelContainer) {
         self.modelContainer = container
+        self.sharedContext = ModelContext(container)
         // Restore the last-active round id (the round itself was persisted by
         // SwiftData; we just need to point at it again).
         if let stored = UserDefaults.standard.string(forKey: currentRoundIdKey),
