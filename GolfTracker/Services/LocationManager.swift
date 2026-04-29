@@ -54,8 +54,30 @@ class LocationManager: NSObject {
     @ObservationIgnored
     let locationPublisher = PassthroughSubject<CLLocation, Never>()
 
+    /// User-controlled simulated location during test mode. When nil but
+    /// test mode is on, falls back to the static testCoordinate so the
+    /// app has *something* to use. Updated by `TestModeService` from
+    /// Supabase Realtime when the iPhone Test Mode view writes a new pin.
+    private var simulatedTestLocation: CLLocation?
+
     private var forcedTestLocation: CLLocation {
-        CLLocation(latitude: Self.testCoordinate.latitude, longitude: Self.testCoordinate.longitude)
+        simulatedTestLocation
+            ?? CLLocation(latitude: Self.testCoordinate.latitude, longitude: Self.testCoordinate.longitude)
+    }
+
+    /// Push a new simulated location into the running app. Updates
+    /// `location` (which @Observable tracks for views) and fires the
+    /// `locationPublisher` so AutoAdvanceMonitor's throttled subscriber
+    /// re-evaluates. Called from TestModeService when an inbound DB
+    /// change lands. No-op when test mode isn't enabled — caller should
+    /// flip test mode on first via `setTestModeEnabled(true)`.
+    func applyTestLocation(_ coord: CLLocationCoordinate2D) {
+        let loc = CLLocation(latitude: coord.latitude, longitude: coord.longitude)
+        simulatedTestLocation = loc
+        guard isTestModeEnabled else { return }
+        location = loc
+        locationPublisher.send(loc)
+        errorMessage = nil
     }
 
     override init() {
@@ -104,11 +126,19 @@ class LocationManager: NSObject {
                 self.locationManager.stopUpdatingHeading()
                 #endif
 
-                self.location = self.forcedTestLocation
-                self.heading = 0
+                let forced = self.forcedTestLocation
+                self.location = forced
                 self.errorMessage = nil
-                dprint("[LocationManager] Test mode ON: forcing location to \(self.forcedTestLocation.coordinate.latitude), \(self.forcedTestLocation.coordinate.longitude)")
+                // Fire the Combine publisher so AutoAdvanceMonitor and
+                // any other locationPublisher subscribers re-evaluate
+                // against the simulated coord, same as a real GPS update.
+                self.locationPublisher.send(forced)
+                // Heading: leave whatever the real compass reports. User
+                // explicitly opted to keep real heading during test so
+                // bugs in heading-driven UI stay detectable.
+                dprint("[LocationManager] Test mode ON: forcing location to \(forced.coordinate.latitude), \(forced.coordinate.longitude)")
             } else {
+                self.simulatedTestLocation = nil
                 dprint("[LocationManager] Test mode OFF: resuming live GPS")
                 self.startTracking()
             }

@@ -34,6 +34,10 @@ struct GolfTrackerWatchApp: App {
         // Touch WalkieTalkie.shared so its init wires the inbound-audio +
         // talk-start callbacks on PlaygroupChannel before any round starts.
         _ = WalkieTalkie.shared
+        // Cross-device GPS sim — subscribes to user_test_state and pushes
+        // inbound coords into LocationManager so all GPS consumers respond
+        // as if it were a real fix.
+        Task { @MainActor in TestModeService.shared.start() }
     }
 
     var body: some Scene {

@@ -47,6 +47,10 @@ struct GolfTrackerApp: App {
                     // Touch WalkieTalkie.shared so its init wires the
                     // inbound-audio + talk-start callbacks on PlaygroupChannel.
                     _ = WalkieTalkie.shared
+                    // Wire the cross-device GPS sim. Pulls user_test_state
+                    // from Supabase and subscribes to changes; LocationManager
+                    // applies inbound coords into its `location` property.
+                    Task { @MainActor in TestModeService.shared.start() }
                 }
         }
         .modelContainer(modelContainer)

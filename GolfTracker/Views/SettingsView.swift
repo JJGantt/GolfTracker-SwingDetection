@@ -14,6 +14,10 @@ struct SettingsView: View {
     @State private var displayName: String = ""
     @State private var savingName = false
     @State private var nameSavedMessage: String?
+    /// Hidden developer section, revealed by long-pressing the Settings
+    /// title. Persists across this view's lifetime but resets on dismiss
+    /// so casual users don't stumble into it.
+    @State private var showingDeveloper = false
 
     var body: some View {
         NavigationStack {
@@ -88,6 +92,16 @@ struct SettingsView: View {
                         .foregroundColor(.secondary)
                 }
 
+                if showingDeveloper {
+                    Section("Developer") {
+                        NavigationLink {
+                            TestModeView()
+                        } label: {
+                            Label("Test Mode (GPS sim)", systemImage: "scope")
+                        }
+                    }
+                }
+
                 Section("Credits") {
                     Link(destination: URL(string: "https://www.openstreetmap.org/copyright")!) {
                         VStack(alignment: .leading, spacing: 2) {
@@ -102,6 +116,15 @@ struct SettingsView: View {
             .navigationTitle("Settings")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+                ToolbarItem(placement: .principal) {
+                    // Long-press the title to reveal the Developer section
+                    // (Test Mode etc). Tap is a no-op for normal users.
+                    Text("Settings")
+                        .font(.headline)
+                        .onLongPressGesture(minimumDuration: 1.0) {
+                            withAnimation { showingDeveloper.toggle() }
+                        }
+                }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Done") { dismiss() }
                 }

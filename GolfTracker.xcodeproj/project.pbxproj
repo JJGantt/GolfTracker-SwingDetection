@@ -92,6 +92,7 @@
 		6ASCORE0000000000000001E /* ScorecardSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6ASCORE0000000000000001C /* ScorecardSheet.swift */; };
 		6ASETTC2F17000000000001 /* ClubRecommendSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6ASETTC2F17000000000002 /* ClubRecommendSettingsView.swift */; };
 		6ASETTINGS00000000000002 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6ASETTINGS00000000000001 /* SettingsView.swift */; };
+		6ATESTV000000000000000E1 /* TestModeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6ATESTV000000000000000E0 /* TestModeView.swift */; };
 		6ASETTP2F17000000000001 /* PredictGreenSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6ASETTP2F17000000000002 /* PredictGreenSettingsView.swift */; };
 		6ASETTV2F17000000000001 /* ViewSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6ASETTV2F17000000000002 /* ViewSettingsView.swift */; };
 		6ASUPAAUTH00000000000004 /* AuthManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6ASUPAAUTH00000000000003 /* AuthManager.swift */; };
@@ -102,6 +103,8 @@
 		6AWTALKIE0000000000000E2 /* WalkieTalkie.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6AWTALKIE0000000000000E0 /* WalkieTalkie.swift */; };
 		6ACELOG000000000000000E1 /* ClientEventLogger.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6ACELOG000000000000000E0 /* ClientEventLogger.swift */; };
 		6ACELOG000000000000000E2 /* ClientEventLogger.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6ACELOG000000000000000E0 /* ClientEventLogger.swift */; };
+		6ATESTM000000000000000E1 /* TestModeService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6ATESTM000000000000000E0 /* TestModeService.swift */; };
+		6ATESTM000000000000000E2 /* TestModeService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6ATESTM000000000000000E0 /* TestModeService.swift */; };
 		6C8B4EAC38754620BA3C4CB0 /* RoundDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 70A60D673360436FB2457C24 /* RoundDetailView.swift */; };
 		7E4B930B6ED84C57A8AB3034 /* StatsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 65E4113738034AF2B535116F /* StatsView.swift */; };
 		95313A5608784DC394BA3EAC /* HolePlayView+MoveHoleMode.swift in Sources */ = {isa = PBXBuildFile; fileRef = 93374566285C433CB8F2AD38 /* HolePlayView+MoveHoleMode.swift */; };
@@ -218,6 +221,7 @@
 		6ASCORE0000000000000001C /* ScorecardSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScorecardSheet.swift; sourceTree = "<group>"; };
 		6ASETTC2F17000000000002 /* ClubRecommendSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClubRecommendSettingsView.swift; sourceTree = "<group>"; };
 		6ASETTINGS00000000000001 /* SettingsView.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
+		6ATESTV000000000000000E0 /* TestModeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TestModeView.swift; sourceTree = "<group>"; };
 		6ASETTP2F17000000000002 /* PredictGreenSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PredictGreenSettingsView.swift; sourceTree = "<group>"; };
 		6ASETTV2F17000000000002 /* ViewSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ViewSettingsView.swift; sourceTree = "<group>"; };
 		6ASUPAAUTH00000000000003 /* AuthManager.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = AuthManager.swift; sourceTree = "<group>"; };
@@ -225,6 +229,7 @@
 		6ASUPASYNC00000000000001 /* SupabaseSync.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = SupabaseSync.swift; sourceTree = "<group>"; };
 		6AWTALKIE0000000000000E0 /* WalkieTalkie.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WalkieTalkie.swift; sourceTree = "<group>"; };
 		6ACELOG000000000000000E0 /* ClientEventLogger.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClientEventLogger.swift; sourceTree = "<group>"; };
+		6ATESTM000000000000000E0 /* TestModeService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TestModeService.swift; sourceTree = "<group>"; };
 		6CD8A1F4907C44A4BB2CA042 /* HolePlayView+AddPenaltyMode.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "HolePlayView+AddPenaltyMode.swift"; sourceTree = "<group>"; };
 		70A60D673360436FB2457C24 /* RoundDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RoundDetailView.swift; sourceTree = "<group>"; };
 		870F6DC4F3184CDF81331B32 /* SwingDetectionManager+ContactGates.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "SwingDetectionManager+ContactGates.swift"; sourceTree = "<group>"; };
@@ -418,6 +423,7 @@
 				6AONBOARD000000000000001 /* OnboardingView.swift */,
 				6ASUPAAUTH00000000000005 /* LoginView.swift */,
 				6ASETTINGS00000000000001 /* SettingsView.swift */,
+				6ATESTV000000000000000E0 /* TestModeView.swift */,
 			);
 			path = Views;
 			sourceTree = "<group>";
@@ -439,6 +445,7 @@
 				6APGCHAN00000000000000E0 /* PlaygroupChannel.swift */,
 				6AWTALKIE0000000000000E0 /* WalkieTalkie.swift */,
 				6ACELOG000000000000000E0 /* ClientEventLogger.swift */,
+				6ATESTM000000000000000E0 /* TestModeService.swift */,
 				6AGCAPI000000000000000F0 /* GolfCourseAPIService.swift */,
 				6APLAYG00000000000001000 /* PlaygroupService.swift */,
 			);
@@ -710,9 +717,11 @@
 				6APGCHAN00000000000000E1 /* PlaygroupChannel.swift in Sources */,
 				6AWTALKIE0000000000000E1 /* WalkieTalkie.swift in Sources */,
 				6ACELOG000000000000000E1 /* ClientEventLogger.swift in Sources */,
+				6ATESTM000000000000000E1 /* TestModeService.swift in Sources */,
 				6AGCAPI000000000000000F1 /* GolfCourseAPIService.swift in Sources */,
 				6APLAYG00000000000001001 /* PlaygroupService.swift in Sources */,
 				6ASETTINGS00000000000002 /* SettingsView.swift in Sources */,
+				6ATESTV000000000000000E1 /* TestModeView.swift in Sources */,
 				6C8B4EAC38754620BA3C4CB0 /* RoundDetailView.swift in Sources */,
 				6AB09FE92F15D47F0087C4ED /* ClubSetEditorView.swift in Sources */,
 				6AB09FEA2F15D47F0087C4ED /* HomeView.swift in Sources */,
@@ -761,6 +770,7 @@
 				6APGCHAN00000000000000E2 /* PlaygroupChannel.swift in Sources */,
 				6AWTALKIE0000000000000E2 /* WalkieTalkie.swift in Sources */,
 				6ACELOG000000000000000E2 /* ClientEventLogger.swift in Sources */,
+				6ATESTM000000000000000E2 /* TestModeService.swift in Sources */,
 				6AGCAPI000000000000000F2 /* GolfCourseAPIService.swift in Sources */,
 				6APLAYG00000000000001002 /* PlaygroupService.swift in Sources */,
 				6A10COMPAT00000001 /* WatchOS10Compatibility.swift in Sources */,
