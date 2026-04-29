@@ -398,3 +398,92 @@ struct AuthSession: Codable, Equatable {
     let expiresAt: Date
     let userId: String
 }
+
+// MARK: - Multiplayer wire types (read from Supabase, not @Model)
+
+/// User profile — first name + display name for the multiplayer picker.
+/// One row per auth.users.id, public-readable so the host's name shows in
+/// every nearby joiner's "Join Round" list.
+struct UserProfile: Codable, Hashable {
+    let userId: String
+    var firstName: String?
+    var displayName: String?
+
+    enum CodingKeys: String, CodingKey {
+        case userId = "user_id"
+        case firstName = "first_name"
+        case displayName = "display_name"
+    }
+
+    /// Display name resolution: explicit override → first name → "Player".
+    var resolvedName: String {
+        if let display = displayName, !display.isEmpty { return display }
+        if let first = firstName, !first.isEmpty { return first }
+        return "Player"
+    }
+}
+
+/// One playgroup (shared round session). Status governs whether it accepts
+/// new joiners; ended_at marks round completion.
+struct Playgroup: Codable, Hashable, Identifiable {
+    let id: UUID
+    let hostId: String
+    let courseId: UUID?
+    let courseName: String
+    let startedAt: Date
+    let closedAt: Date?
+    let endedAt: Date?
+    let status: String
+    let name: String?
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case hostId = "host_id"
+        case courseId = "course_id"
+        case courseName = "course_name"
+        case startedAt = "started_at"
+        case closedAt = "closed_at"
+        case endedAt = "ended_at"
+        case status, name
+    }
+
+    var isOpen: Bool { status == "open" }
+}
+
+struct PlaygroupMember: Codable, Hashable {
+    let playgroupId: UUID
+    let userId: String
+    let roundId: UUID?
+    let color: String?
+    let joinedAt: Date
+    let leftAt: Date?
+
+    enum CodingKeys: String, CodingKey {
+        case playgroupId = "playgroup_id"
+        case userId = "user_id"
+        case roundId = "round_id"
+        case color
+        case joinedAt = "joined_at"
+        case leftAt = "left_at"
+    }
+}
+
+struct PlaygroupJoinRequest: Codable, Hashable, Identifiable {
+    let id: UUID
+    let playgroupId: UUID
+    let requesterId: String
+    let requestedAt: Date
+    let status: String
+    let respondedAt: Date?
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case playgroupId = "playgroup_id"
+        case requesterId = "requester_id"
+        case requestedAt = "requested_at"
+        case status
+        case respondedAt = "responded_at"
+    }
+
+    var isPending: Bool { status == "pending" }
+}
