@@ -493,3 +493,30 @@ struct PlaygroupJoinRequest: Codable, Hashable, Identifiable {
 
     var isPending: Bool { status == "pending" }
 }
+
+// MARK: - Club catalog hydrate DTOs (shared iOS + watch)
+
+/// Wire shapes for the one-shot Supabase fetch in `WatchDataStore.hydrateClubsFromSupabase`
+/// and `DataStore.reconcileClubsWithSupabase`. Snake-case property names match Postgres
+/// column names directly so we don't need a CodingKeys block.
+struct ClubTypeDTO: Decodable {
+    let id: UUID
+    let name: String
+    let is_default: Bool?
+    let average_distance: Int?
+}
+
+struct ClubDTO: Decodable {
+    let id: UUID
+    let name: String
+    let club_type_id: UUID
+    let is_default: Bool?
+}
+
+struct ClubSetDTO: Decodable {
+    let id: UUID
+    let name: String
+    let is_active: Bool?
+    let date_created: String?
+    let date_modified: String?
+}

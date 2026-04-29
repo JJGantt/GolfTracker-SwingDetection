@@ -314,13 +314,38 @@ class WatchDataStore: ObservableObject {
     /// only on actual mutations.
     @Published private(set) var availableClubs: [ClubData] = []
     @Published private(set) var clubTypes: [ClubTypeData] = []
+    @Published private(set) var clubSets: [ClubSet] = []
 
-    /// Re-pull the cached clubs/types arrays from SwiftData. Call after any
-    /// local mutation that could change them (hydrate, insert, delete).
+    /// Clubs of the active ClubSet, in type order. This is what the
+    /// watch crown should scroll through during a round — NOT the full
+    /// `availableClubs` catalog (which can have multiple clubs per type
+    /// when the user owns alternates). Falls back to `availableClubs` when
+    /// no active set exists yet (shouldn't happen post-seed, but safe).
+    var activeSetClubs: [ClubData] {
+        guard let activeSet = clubSets.first(where: { $0.isActive }) else {
+            return availableClubs
+        }
+        // Order: follow the type order from clubTypes (Drive → Putt) rather
+        // than typeSelections' internal order, so the crown has a stable,
+        // predictable progression.
+        let typeOrder = clubTypes.map(\.id)
+        let selectionsByType = Dictionary(uniqueKeysWithValues:
+            activeSet.typeSelections.map { ($0.typeId, $0.activeClubId) }
+        )
+        return typeOrder.compactMap { typeId in
+            guard let activeClubId = selectionsByType[typeId] ?? nil else { return nil }
+            return availableClubs.first { $0.id == activeClubId }
+        }
+    }
+
+    /// Re-pull the cached clubs/types/sets arrays from SwiftData. Call
+    /// after any local mutation that could change them (hydrate, insert,
+    /// delete, set switch).
     func refreshClubsCache() {
         guard let context = context else { return }
         let fetchedClubs = (try? context.fetch(FetchDescriptor<ClubData>())) ?? []
         let fetchedTypes = (try? context.fetch(FetchDescriptor<ClubTypeData>())) ?? []
+        let fetchedSets  = (try? context.fetch(FetchDescriptor<ClubSet>())) ?? []
         // Avoid redundant publishes — comparing ids covers the common case
         // (re-publish only when the set of ids actually changed).
         let newClubIds = fetchedClubs.map(\.id)
@@ -329,6 +354,11 @@ class WatchDataStore: ObservableObject {
         let newTypeIds = fetchedTypes.map(\.id)
         let oldTypeIds = clubTypes.map(\.id)
         if newTypeIds != oldTypeIds { clubTypes = fetchedTypes }
+        // Sets need a deeper compare — switching active set keeps ids the
+        // same but changes isActive. Compare ids + active flag.
+        let newSetSig = fetchedSets.map { "\($0.id)-\($0.isActive)" }
+        let oldSetSig = clubSets.map { "\($0.id)-\($0.isActive)" }
+        if newSetSig != oldSetSig { clubSets = fetchedSets }
     }
 
     // MARK: - Stroke Management
@@ -885,29 +915,5 @@ class ClubPredictionManager {
     }
 }
 
-// MARK: - Hydrate DTOs
-
-/// Wire shapes for the one-shot hydrate fetch in `hydrateClubsFromSupabase`.
-/// Snake-case property names match the Postgres column names directly so we
-/// don't need a CodingKeys block.
-struct ClubTypeDTO: Decodable {
-    let id: UUID
-    let name: String
-    let is_default: Bool?
-    let average_distance: Int?
-}
-
-struct ClubDTO: Decodable {
-    let id: UUID
-    let name: String
-    let club_type_id: UUID
-    let is_default: Bool?
-}
-
-struct ClubSetDTO: Decodable {
-    let id: UUID
-    let name: String
-    let is_active: Bool?
-    let date_created: String?
-    let date_modified: String?
-}
+// (ClubTypeDTO / ClubDTO / ClubSetDTO moved to Models.swift so both iOS
+// and watch targets share the same wire shape.)

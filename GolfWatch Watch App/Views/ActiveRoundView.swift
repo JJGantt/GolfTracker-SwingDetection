@@ -51,8 +51,13 @@ struct ActiveRoundView: View {
     @FocusState var isMapFocused: Bool
     @FocusState var isMainViewFocused: Bool
 
+    /// Clubs the digital crown scrolls through. Uses the user's currently
+    /// active ClubSet (e.g., "Default Set", or whichever set they've made
+    /// active in the iPhone Club Management view). NOT the full catalog —
+    /// alternate clubs that aren't in the active set don't appear in the
+    /// round-time crown.
     var clubs: [ClubData] {
-        return store.availableClubs
+        return store.activeSetClubs
     }
 
     var selectedClub: ClubData? {

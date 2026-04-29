@@ -252,31 +252,121 @@ class DataStore: ObservableObject {
         loadClubs()
         loadClubSets()
 
-        // Initialize defaults if first run.
-        if clubTypes.isEmpty {
-            clubTypes = ClubTypeData.defaultClubTypes()
-            saveClubTypes()
-        }
-        if availableClubs.isEmpty && !clubTypes.isEmpty {
-            for clubType in clubTypes {
-                let club = ClubData(name: "Default", clubTypeId: clubType.id, isDefault: true)
-                availableClubs.append(club)
-            }
-            saveClubs()
-        }
-        if clubSets.isEmpty && !clubTypes.isEmpty {
-            let typeSelections = clubTypes.map { clubType -> TypeSelection in
-                let defaultClub = availableClubs.first(where: { $0.clubTypeId == clubType.id })
-                return TypeSelection(typeId: clubType.id, activeClubId: defaultClub?.id)
-            }
-            let defaultSet = ClubSet(name: "Default Set", typeSelections: typeSelections, isActive: true)
-            clubSets.append(defaultSet)
-            saveClubSets()
-        }
+        // Reconcile clubs/types/sets with Supabase asynchronously. Was
+        // previously a sync "if local empty, seed defaults" check, but
+        // that re-created defaults with fresh UUIDs every time SwiftData
+        // looked empty (reinstall, container reset, etc.) — pushing
+        // duplicates to Supabase. Now we check Supabase first: if it has
+        // clubs, hydrate locally; if it's also empty, seed cleanly once.
+        Task { await reconcileClubsWithSupabase() }
+
         loadPlayerStats()
         if playerStats.totalRounds != rounds.count {
             rebuildPlayerStats()
         }
+    }
+
+    /// Async reconciliation between local SwiftData and Supabase for the
+    /// clubs/types/sets catalog. Runs once at startup. Three branches:
+    ///   1. Local already populated → nothing to do.
+    ///   2. Local empty + Supabase populated → hydrate from Supabase.
+    ///   3. Local empty + Supabase empty → seed fresh defaults locally and
+    ///      push to Supabase. This is the only path that creates new rows.
+    private func reconcileClubsWithSupabase() async {
+        // Already have a local catalog — assume it's authoritative.
+        let hasLocalCatalog = !clubTypes.isEmpty && !availableClubs.isEmpty && !clubSets.isEmpty
+        if hasLocalCatalog { return }
+        // Not signed in — defer (sign-in handler can re-trigger via
+        // configure, or we can revisit if the auth flow needs an explicit
+        // hook here).
+        guard AuthManager.shared.currentUserId != nil else { return }
+        let supabase = SupabaseManager.shared
+        do {
+            async let typesAsync: [ClubTypeDTO] = supabase.from("club_types").select().execute().value
+            async let clubsAsync: [ClubDTO] = supabase.from("clubs").select().execute().value
+            async let setsAsync: [ClubSetDTO] = supabase.from("club_sets").select().execute().value
+            let (remoteTypes, remoteClubs, remoteSets) = try await (typesAsync, clubsAsync, setsAsync)
+
+            if !remoteTypes.isEmpty || !remoteClubs.isEmpty || !remoteSets.isEmpty {
+                // Branch 2: Supabase has data → hydrate locally.
+                await MainActor.run {
+                    hydrateClubsFromRemote(types: remoteTypes, clubs: remoteClubs, sets: remoteSets)
+                }
+            } else {
+                // Branch 3: Both empty → seed fresh defaults once.
+                await MainActor.run {
+                    seedDefaultCatalog()
+                }
+            }
+        } catch {
+            dprint("📱 [DataStore] club reconcile failed: \(error.localizedDescription)")
+        }
+    }
+
+    /// Insert remote DTOs into local SwiftData. Idempotent — upserts by id.
+    private func hydrateClubsFromRemote(types: [ClubTypeDTO], clubs: [ClubDTO], sets: [ClubSetDTO]) {
+        guard let context = context else { return }
+        for t in types {
+            let id = t.id
+            let descriptor = FetchDescriptor<ClubTypeData>(predicate: #Predicate { $0.id == id })
+            if (try? context.fetch(descriptor))?.first == nil {
+                context.insert(ClubTypeData(id: id, name: t.name, isDefault: t.is_default ?? false, averageDistance: t.average_distance))
+            }
+        }
+        for c in clubs {
+            let id = c.id
+            let descriptor = FetchDescriptor<ClubData>(predicate: #Predicate { $0.id == id })
+            if (try? context.fetch(descriptor))?.first == nil {
+                context.insert(ClubData(id: id, name: c.name, clubTypeId: c.club_type_id, isDefault: c.is_default ?? false))
+            }
+        }
+        for s in sets {
+            let id = s.id
+            let descriptor = FetchDescriptor<ClubSet>(predicate: #Predicate { $0.id == id })
+            if (try? context.fetch(descriptor))?.first == nil {
+                let dc = s.date_created.flatMap(Self.parseISODate) ?? Date()
+                let dm = s.date_modified.flatMap(Self.parseISODate) ?? Date()
+                context.insert(ClubSet(id: id, name: s.name, typeSelections: [], isActive: s.is_active ?? false, dateCreated: dc, dateModified: dm))
+            }
+        }
+        try? context.save()
+        loadClubTypes()
+        loadClubs()
+        loadClubSets()
+        objectWillChange.send()
+    }
+
+    /// One-time seed of the default 16 club types + a single default ClubData
+    /// per type + one ClubSet that uses them as the active selection. Only
+    /// runs when both local SwiftData AND Supabase are empty for the user.
+    private func seedDefaultCatalog() {
+        clubTypes = ClubTypeData.defaultClubTypes()
+        saveClubTypes()
+        for clubType in clubTypes {
+            let club = ClubData(name: "Default", clubTypeId: clubType.id, isDefault: true)
+            availableClubs.append(club)
+        }
+        saveClubs()
+        let typeSelections = clubTypes.map { clubType -> TypeSelection in
+            let defaultClub = availableClubs.first(where: { $0.clubTypeId == clubType.id })
+            return TypeSelection(typeId: clubType.id, activeClubId: defaultClub?.id)
+        }
+        let defaultSet = ClubSet(name: "Default Set", typeSelections: typeSelections, isActive: true)
+        clubSets.append(defaultSet)
+        saveClubSets()
+        objectWillChange.send()
+    }
+
+    private static let isoFormatter: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return f
+    }()
+    private static func parseISODate(_ s: String) -> Date? {
+        if let d = isoFormatter.date(from: s) { return d }
+        let alt = ISO8601DateFormatter()
+        alt.formatOptions = [.withInternetDateTime]
+        return alt.date(from: s)
     }
 
     // MARK: - Player Stats
