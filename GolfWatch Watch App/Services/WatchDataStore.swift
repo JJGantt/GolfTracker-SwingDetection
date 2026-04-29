@@ -41,16 +41,14 @@ class WatchDataStore: ObservableObject {
     /// inserted via Realtime sync from the phone immediately appears as
     /// current on the watch (and vice versa) without any explicit handoff.
     /// `refreshCurrentRound()` re-evaluates the query and updates this id.
-    @Published private(set) var currentRoundId: UUID? {
-        didSet {
-            guard currentRoundId != oldValue else { return }
-            // Apply test-mode flag from the new round (if any). Same side
-            // effect as before; just fired from refreshCurrentRound() now
-            // instead of from explicit currentRoundId writes.
-            let enabled = currentRound?.locationTestModeEnabled == true
-            LocationManager.shared.setTestModeEnabled(enabled)
-        }
-    }
+    @Published private(set) var currentRoundId: UUID?
+    // Note: this used to have a didSet that read `round.locationTestModeEnabled`
+    // (a legacy per-round flag) and called `LocationManager.setTestModeEnabled`.
+    // That stomped on the global test-mode state — the moment a user picked a
+    // tee and the new round was set as current, location flipped to real GPS
+    // because the new Round had locationTestModeEnabled=false. Global test
+    // mode is now owned exclusively by `TestModeService` (writes to
+    // `user_test_state`, syncs cross-device via Realtime).
 
     /// Mirror of `DataStore.currentRoundMaxAgeSeconds` — both platforms use
     /// the same 8h window for "what counts as current."

@@ -780,9 +780,11 @@ struct HolePlayView: View {
     }
 
     func applyLocationModeForRound() {
-        let enabled = currentRound?.locationTestModeEnabled == true
-        locationManager.setTestModeEnabled(enabled)
-        LocationManager.shared.setTestModeEnabled(enabled)
+        // No-op now. Used to read `round.locationTestModeEnabled` (a legacy
+        // per-round flag) and force LocationManager into/out of test mode.
+        // That fought with the global TestModeService (writes user_test_state,
+        // syncs cross-device via Realtime). Test mode is now exclusively
+        // owned by TestModeService — round lifecycle doesn't toggle it.
     }
 
     func updateMapPosition() {
