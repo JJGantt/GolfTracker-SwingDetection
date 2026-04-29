@@ -194,14 +194,42 @@ class WatchDataStore: ObservableObject {
                 async let setsAsync: [ClubSetDTO] = supabase.from("club_sets").select().execute().value
                 let (types, clubs, sets) = try await (typesAsync, clubsAsync, setsAsync)
                 await MainActor.run {
+                    // Supabase is the source of truth for clubs/types/sets
+                    // on the watch. Insert/update for everything we just
+                    // fetched, then DELETE any local row whose id isn't in
+                    // the fetched set. Without this, leftover rows from
+                    // earlier app versions (pre-Supabase-sync) accumulate
+                    // alongside the synced ones, producing duplicates.
+                    let fetchedTypeIds = Set(types.map(\.id))
+                    let fetchedClubIds = Set(clubs.map(\.id))
+                    let fetchedSetIds  = Set(sets.map(\.id))
+
                     for t in types { Self.upsertClubType(t, into: context) }
                     for c in clubs { Self.upsertClub(c, into: context) }
                     for s in sets { Self.upsertClubSet(s, into: context) }
+
+                    // Prune local-only entries.
+                    if let existingTypes = try? context.fetch(FetchDescriptor<ClubTypeData>()) {
+                        for t in existingTypes where !fetchedTypeIds.contains(t.id) {
+                            context.delete(t)
+                        }
+                    }
+                    if let existingClubs = try? context.fetch(FetchDescriptor<ClubData>()) {
+                        for c in existingClubs where !fetchedClubIds.contains(c.id) {
+                            context.delete(c)
+                        }
+                    }
+                    if let existingSets = try? context.fetch(FetchDescriptor<ClubSet>()) {
+                        for s in existingSets where !fetchedSetIds.contains(s.id) {
+                            context.delete(s)
+                        }
+                    }
+
                     try? context.save()
                     // Republish the cached arrays so views pick up new clubs.
                     self.refreshClubsCache()
                     self.objectWillChange.send()
-                    dprint("⌚ [WatchDataStore] hydrated \(types.count) types / \(clubs.count) clubs / \(sets.count) sets")
+                    dprint("⌚ [WatchDataStore] hydrated \(types.count) types / \(clubs.count) clubs / \(sets.count) sets (pruned local-only rows)")
                 }
             } catch {
                 dprint("⌚ [WatchDataStore] hydrate failed: \(error.localizedDescription)")
