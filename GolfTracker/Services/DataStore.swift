@@ -25,6 +25,24 @@ class DataStore: ObservableObject {
     /// round to host into. Mirrors `WatchDataStore.currentRoundId`'s purpose.
     @Published var currentRoundId: UUID?
 
+    /// Maximum window for a round to count as "in progress" — beyond this,
+    /// the round is treated as abandoned and stops appearing as current.
+    /// 8 hours covers slow rounds + lunch breaks; anything beyond is
+    /// effectively a forgotten round.
+    static let currentRoundMaxAgeSeconds: TimeInterval = 8 * 60 * 60
+
+    /// The user's currently-in-progress round, derived from the data — most
+    /// recent Round started within `currentRoundMaxAgeSeconds`. Cross-device
+    /// by design: rounds inserted by the watch arrive here via Realtime
+    /// sync, so the phone's "Continue Round" picks them up automatically.
+    /// Returns nil if no recent round exists.
+    var currentRound: Round? {
+        let cutoff = Date().addingTimeInterval(-Self.currentRoundMaxAgeSeconds)
+        return rounds
+            .filter { $0.date >= cutoff }
+            .max(by: { $0.date < $1.date })
+    }
+
     /// Set at app startup via `configure(container:)`.
     private(set) var modelContainer: ModelContainer?
     /// Single shared `ModelContext` — see WatchDataStore for the rationale.

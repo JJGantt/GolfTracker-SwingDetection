@@ -43,7 +43,7 @@ struct ContentView: View {
 
             RoundsHistoryView(store: store)
                 .tabItem {
-                    Label("History", systemImage: "clock")
+                    Label("Rounds", systemImage: "list.bullet.clipboard")
                 }
 
             TestFilesView()
