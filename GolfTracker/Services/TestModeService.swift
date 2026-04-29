@@ -24,7 +24,13 @@ final class TestModeService: ObservableObject {
     private let supabase = SupabaseManager.shared
     private var channel: RealtimeChannelV2?
     private var subscription: Task<Void, Never>?
-    private var started = false
+    /// Single-flight guard for `start()`. Holding a non-nil Task means
+    /// bootstrap is in flight or has completed; concurrent callers will
+    /// reuse that Task instead of racing into duplicate channels (which
+    /// previously caused Swift.CancellationError on the watch when both
+    /// GolfWatchApp.init and WatchAuthSession.onSessionChanged fired
+    /// simultaneously).
+    private var bootstrapTask: Task<Void, Never>?
 
     private init() {}
 
@@ -33,24 +39,38 @@ final class TestModeService: ObservableObject {
     /// Wire this at app launch and again when auth becomes available
     /// (auth might not be ready at first launch, especially on the watch
     /// where the session arrives via WatchConnectivity from the phone).
-    /// Idempotent: the actual setup checks `started` AND `currentUserId`
-    /// inside the Task, so repeated calls during auth flux are safe.
+    /// Idempotent — only runs the bootstrap Task once.
     func start() {
-        Task { await self.bootstrap() }
+        // Already bootstrapped + still has a live channel — nothing to do.
+        if let existing = bootstrapTask, channel != nil {
+            _ = existing
+            return
+        }
+        // Currently bootstrapping — let the in-flight Task finish; don't
+        // start a second one.
+        if bootstrapTask != nil, channel == nil {
+            return
+        }
+        // Either never started, or the previous attempt completed without
+        // a live channel (e.g., auth wasn't ready) — start fresh.
+        bootstrapTask = Task { [weak self] in
+            await self?.bootstrap()
+        }
     }
 
     private func bootstrap() async {
         ClientEventLogger.log("testmode.bootstrap.enter", detail: [
-            "started": .bool(started),
             "hasChannel": .bool(channel != nil),
             "hasUid": .bool(currentUserId() != nil)
         ])
-        if started, channel != nil { return }
         guard currentUserId() != nil else {
             ClientEventLogger.log("testmode.bootstrap.bail.noAuth")
+            // Clear bootstrapTask so a future start() (after auth arrives)
+            // can retry. Otherwise the never-completed bootstrap blocks
+            // future attempts.
+            bootstrapTask = nil
             return
         }
-        started = true
         await refreshFromDB()
         await subscribeToChanges()
         ClientEventLogger.log("testmode.bootstrap.done")
