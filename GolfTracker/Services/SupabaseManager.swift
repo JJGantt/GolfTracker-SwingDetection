@@ -11,10 +11,15 @@ final class SupabaseManager {
     static let shared = SupabaseManager()
 
     let client: Supabase.SupabaseClient
+    /// Project URL — exposed for callers that need to build URLs against
+    /// Supabase services (e.g., Edge Function endpoints) without going through
+    /// the SDK. The SDK's `client.supabaseURL` is internal-access.
+    let projectURL: URL
 
     private init() {
         let url = URL(string: "https://oumnicnvayqrbfbljgyl.supabase.co")!
         let key = "sb_publishable_i0loB-AZw2qGokBJzHGSKA_VGgAgjBi"
+        self.projectURL = url
         self.client = Supabase.SupabaseClient(supabaseURL: url, supabaseKey: key)
     }
 

@@ -95,6 +95,11 @@ final class RoundResolver {
         let osmData: OSMCourseData?
         let tier: OSMCourseData.Tier
         let isExistingCourse: Bool
+        /// GolfCourseAPI scorecard data, when matched. nil for courses the
+        /// API doesn't have. The tee picker reads `tees` from here; the
+        /// scorecard view reads per-hole yardage/handicap/par via
+        /// `GolfCourseAPIService.cachedHoles(forTeeId:)` once a tee is picked.
+        let scorecardCourse: GCAPICourse?
     }
 
     // MARK: - Entry point
@@ -137,25 +142,29 @@ final class RoundResolver {
     }
 
     /// Fast path — saved course within proximity. Skip OSM entirely; reuse
-    /// whatever cached geometry the existing course has.
+    /// whatever cached geometry the existing course has. Also fetch GolfCourseAPI
+    /// scorecard data so the tee picker can populate.
     private func resolveExisting(_ match: ExistingCourseMatch,
                                  progress: @escaping (Step) -> Void,
                                  completion: @escaping (Resolution?) -> Void) {
         progress(.loadingCourseData(courseName: match.courseName))
         // Pull cached OSM data for the course (if any). If not cached, the
         // round still starts; the picker UX falls back to manual hole entry.
-        osm.fetchFromCache(near: match.centroid) { osmData in
+        osm.fetchFromCache(near: match.centroid) { [weak self] osmData in
             let tier = osmData?.tier ?? .none
-            let resolution = Resolution(
-                courseId: match.courseId,
-                courseName: match.courseName,
-                courseCoordinate: match.centroid,
-                osmData: osmData,
-                tier: tier,
-                isExistingCourse: true
-            )
-            progress(.ready(resolution))
-            completion(resolution)
+            self?.resolveScorecard(courseName: match.courseName, near: match.centroid) { scorecard in
+                let resolution = Resolution(
+                    courseId: match.courseId,
+                    courseName: match.courseName,
+                    courseCoordinate: match.centroid,
+                    osmData: osmData,
+                    tier: tier,
+                    isExistingCourse: true,
+                    scorecardCourse: scorecard
+                )
+                progress(.ready(resolution))
+                completion(resolution)
+            }
         }
     }
 
@@ -296,19 +305,24 @@ final class RoundResolver {
         // query. MapKit fallback candidates skip OSM geometry entirely (we
         // have no polygon to scope to) and the round starts as Tier `none`.
         guard let osmCandidate = candidate.osmCandidate else {
-            let resolution = Resolution(
-                courseId: candidate.existingCourseId ?? UUID(),
-                courseName: candidate.name,
-                courseCoordinate: candidate.coordinate,
-                osmData: nil,
-                tier: .none,
-                isExistingCourse: candidate.existingCourseId != nil
-            )
-            progress(.ready(resolution))
-            completion(resolution)
+            // MapKit-only fallback path. Still try GolfCourseAPI for scorecard
+            // data — name + location alone might match.
+            resolveScorecard(courseName: candidate.name, near: candidate.coordinate) { scorecard in
+                let resolution = Resolution(
+                    courseId: candidate.existingCourseId ?? UUID(),
+                    courseName: candidate.name,
+                    courseCoordinate: candidate.coordinate,
+                    osmData: nil,
+                    tier: .none,
+                    isExistingCourse: candidate.existingCourseId != nil,
+                    scorecardCourse: scorecard
+                )
+                progress(.ready(resolution))
+                completion(resolution)
+            }
             return
         }
-        osm.fetchCourseGeometry(for: osmCandidate) { result in
+        osm.fetchCourseGeometry(for: osmCandidate) { [weak self] result in
             let osmData: OSMCourseData?
             let tier: OSMCourseData.Tier
             switch result {
@@ -320,16 +334,49 @@ final class RoundResolver {
                 osmData = nil
                 tier = .none
             }
-            let resolution = Resolution(
-                courseId: candidate.existingCourseId ?? UUID(),
-                courseName: candidate.name,
-                courseCoordinate: candidate.coordinate,
-                osmData: osmData,
-                tier: tier,
-                isExistingCourse: candidate.existingCourseId != nil
-            )
-            progress(.ready(resolution))
-            completion(resolution)
+            self?.resolveScorecard(courseName: candidate.name, near: candidate.coordinate) { scorecard in
+                let resolution = Resolution(
+                    courseId: candidate.existingCourseId ?? UUID(),
+                    courseName: candidate.name,
+                    courseCoordinate: candidate.coordinate,
+                    osmData: osmData,
+                    tier: tier,
+                    isExistingCourse: candidate.existingCourseId != nil,
+                    scorecardCourse: scorecard
+                )
+                progress(.ready(resolution))
+                completion(resolution)
+            }
+        }
+    }
+
+    /// Look up the picked course in GolfCourseAPI by name, then pick the best
+    /// match by location proximity. Returns nil if the API has nothing or
+    /// nothing within reasonable distance.
+    private func resolveScorecard(courseName: String,
+                                  near coordinate: CLLocationCoordinate2D,
+                                  completion: @escaping (GCAPICourse?) -> Void) {
+        Task {
+            do {
+                let candidates = try await GolfCourseAPIService.shared.search(query: courseName)
+                let userLoc = CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude)
+                // Pick the closest candidate within 1km of our coordinate. Past
+                // that distance it's almost certainly a different course (the
+                // API name search is loose — "hyde park" returns 5 cities).
+                let best = candidates
+                    .compactMap { c -> (GCAPICourse, Double)? in
+                        guard let coord = c.coordinate else { return nil }
+                        let dist = CLLocation(latitude: coord.latitude, longitude: coord.longitude)
+                            .distance(from: userLoc)
+                        return (c, dist)
+                    }
+                    .filter { $0.1 <= 1000 }
+                    .min(by: { $0.1 < $1.1 })
+                completion(best?.0)
+            } catch {
+                dprint("[RoundResolver] GolfCourseAPI lookup failed: \(error.localizedDescription)")
+                completion(nil)
+            }
         }
     }
 
