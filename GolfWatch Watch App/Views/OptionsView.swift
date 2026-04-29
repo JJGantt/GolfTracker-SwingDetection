@@ -113,24 +113,12 @@ struct OptionsView: View {
                     .disabled(!canUndo)
                     .opacity(canUndo ? 1.0 : 0.5)
 
-                    // Edit Hole button
-                    Button(action: {
-                        showingOptions = false
-                        showingEditHole = true
-                    }) {
-                        HStack(spacing: 8) {
-                            Image(systemName: "flag")
-                                .font(.system(size: 16, weight: .bold))
-                            Text("Edit")
-                                .font(.system(size: 13, weight: .semibold))
-                        }
-                        .foregroundColor(.white)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 14)
-                        .background(Color.yellow.opacity(0.9))
-                        .cornerRadius(8)
-                    }
-                    .buttonStyle(PlainButtonStyle())
+                    // Push-to-talk (walkie-talkie) — press-and-hold to record,
+                    // release to send. Visible whether or not in a playgroup;
+                    // disabled when no playgroup is active so the row layout
+                    // stays stable instead of jumping around. Sheet stays open
+                    // during the press so the user can release in-place.
+                    OptionsTalkButton()
                 }
                 .padding(.horizontal, 8)
 
@@ -181,6 +169,28 @@ struct OptionsView: View {
                     }
                     .buttonStyle(PlainButtonStyle())
                 }
+                .padding(.horizontal, 8)
+
+                // Edit Hole — moved down here so the second-row spot can be
+                // used for the higher-frequency Talk button. Edit Hole is a
+                // setup/correction action, fine to be one row lower.
+                Button(action: {
+                    showingOptions = false
+                    showingEditHole = true
+                }) {
+                    HStack(spacing: 8) {
+                        Image(systemName: "flag")
+                            .font(.system(size: 14, weight: .bold))
+                        Text("Edit Hole")
+                            .font(.system(size: 13, weight: .semibold))
+                    }
+                    .foregroundColor(.white)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 12)
+                    .background(Color.yellow.opacity(0.9))
+                    .cornerRadius(8)
+                }
+                .buttonStyle(PlainButtonStyle())
                 .padding(.horizontal, 8)
 
                 // Settings section

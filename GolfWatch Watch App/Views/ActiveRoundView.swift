@@ -657,15 +657,14 @@ struct ActiveRoundView: View {
                 activeRoundContent
             }
         }
-        // Walkie-talkie button + "X is talking…" banner. Both hide when not
-        // in a playgroup, so they're effectively invisible during solo rounds.
-        .overlay(alignment: .topLeading) {
-            VStack(alignment: .leading, spacing: 4) {
-                PTTButton()
-                TalkingBanner()
-            }
-            .padding(.leading, 6)
-            .padding(.top, 6)
+        // Inbound "X is talking…" pill — small, top-trailing so it doesn't
+        // clobber the yardage display at the top center. Hides when no one
+        // is speaking, so most of the time it's invisible. The push-to-talk
+        // BUTTON itself lives in the pull-up Options menu, not on the map.
+        .overlay(alignment: .topTrailing) {
+            TalkingBanner()
+                .padding(.top, 6)
+                .padding(.trailing, 6)
         }
     }
 

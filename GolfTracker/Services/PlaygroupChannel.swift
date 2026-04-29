@@ -299,18 +299,18 @@ final class PlaygroupChannel: ObservableObject {
         }
         broadcastSubscriptions.append(talkSub)
 
-        // Inbound message rows. Filter to this playgroup; postgres-changes
-        // will only push rows we have RLS access to anyway.
-        let inserts = ch.postgresChange(
-            InsertAction.self,
-            table: "playgroup_messages",
-            filter: "playgroup_id=eq.\(playgroupId.uuidString)"
-        )
-        subscriptions.append(Task { [weak self] in
-            for await action in inserts {
-                await self?.handleIncomingMessage(action.record, selfUserId: userId)
+        // Inbound voice clip — single binary broadcast carrying the entire
+        // AAC blob. Server-side fan-out, NOT persisted anywhere — when the
+        // packet leaves the channel state, it's gone. We deliberately do
+        // NOT use Storage or a delivery-row table here: voice messages are
+        // ephemeral by design, and a 5–30s AAC clip @ 16kbps fits well
+        // inside the 256KB-per-message broadcast cap.
+        let voiceSub = ch.onBroadcastData(event: "voice") { [weak self] data in
+            Task { @MainActor [weak self] in
+                self?.handleIncomingVoice(data)
             }
-        })
+        }
+        broadcastSubscriptions.append(voiceSub)
     }
 
     private func handleTalkStart(senderId: String) {
@@ -324,24 +324,20 @@ final class PlaygroupChannel: ObservableObject {
         }
     }
 
-    private func handleIncomingMessage(_ record: [String: AnyJSON], selfUserId: String) async {
-        guard
-            case let .string(senderId)? = record["sender_id"],
-            case let .string(path)? = record["storage_path"]
-        else { return }
-        // Don't play our own messages back.
-        guard senderId != selfUserId else { return }
-
+    private func handleIncomingVoice(_ data: Data) {
+        // Self-broadcasts also fan back out. The audio bytes themselves
+        // don't carry sender info, so we rely on the immediately-prior
+        // `talk_start` broadcast (which IS sender-id-tagged) to know
+        // who's speaking. To suppress our own loopback playback, we skip
+        // any voice payload received while we ourselves are recording.
+        if WalkieTalkie.shared.isRecording { return }
+        let tmpURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString + ".m4a")
         do {
-            let data = try await supabase.storage
-                .from("playgroup-audio")
-                .download(path: path)
-            let tmpURL = FileManager.default.temporaryDirectory
-                .appendingPathComponent(UUID().uuidString + ".m4a")
             try data.write(to: tmpURL)
             onIncomingAudio?(tmpURL)
         } catch {
-            dprint("📡 [PlaygroupChannel] message download failed: \(error.localizedDescription)")
+            dprint("📡 [PlaygroupChannel] voice write failed: \(error.localizedDescription)")
         }
     }
 
@@ -353,38 +349,17 @@ final class PlaygroupChannel: ObservableObject {
         try? await ch.broadcast(event: "talk_start", message: payload)
     }
 
-    /// Upload the recorded audio to Storage and insert a row so all
-    /// co-members get notified via Realtime postgres-changes.
+    /// Send the recorded audio as a single binary broadcast on the playgroup
+    /// channel. NOT persisted anywhere — once the packet has been fanned out
+    /// to currently-connected co-members, it's gone. Late-joiners will not
+    /// hear messages they missed (this is intentional walkie-talkie semantics).
+    /// 256KB cap per message; well above the ~60KB needed for a 30s clip.
     func sendVoiceMessage(localFile: URL, durationMs: Int) async {
-        guard
-            let pgId = activePlaygroupId,
-            let uid = currentUserId
-        else { return }
-        let messageId = UUID()
-        let storagePath = "\(pgId.uuidString)/\(messageId.uuidString).m4a"
-
+        guard let ch = channel else { return }
+        defer { try? FileManager.default.removeItem(at: localFile) }
         do {
             let data = try Data(contentsOf: localFile)
-            _ = try await supabase.storage
-                .from("playgroup-audio")
-                .upload(storagePath, data: data, options: FileOptions(contentType: "audio/m4a"))
-
-            struct Row: Encodable {
-                let id: String
-                let playgroup_id: String
-                let sender_id: String
-                let storage_path: String
-                let duration_ms: Int
-            }
-            let row = Row(
-                id: messageId.uuidString,
-                playgroup_id: pgId.uuidString,
-                sender_id: uid,
-                storage_path: storagePath,
-                duration_ms: durationMs
-            )
-            try await supabase.from("playgroup_messages").insert(row).execute()
-            try? FileManager.default.removeItem(at: localFile)
+            await ch.broadcast(event: "voice", data: data)
         } catch {
             dprint("📡 [PlaygroupChannel] sendVoiceMessage failed: \(error.localizedDescription)")
         }

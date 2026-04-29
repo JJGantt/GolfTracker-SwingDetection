@@ -191,6 +191,43 @@ struct PTTButton: View {
     }
 }
 
+/// Menu-row variant of the PTT button — same press-and-hold semantics as
+/// `PTTButton`, but styled as a full-width row so it slots into the watch
+/// Options pull-up alongside Undo/Penalty/Home. Disabled (greyed) when not
+/// in a playgroup so the row layout doesn't jump around between solo and
+/// multiplayer rounds.
+struct OptionsTalkButton: View {
+    @ObservedObject private var walkie = WalkieTalkie.shared
+    @ObservedObject private var playgroup = PlaygroupChannel.shared
+
+    var body: some View {
+        let inPlaygroup = playgroup.activePlaygroupId != nil
+        HStack(spacing: 8) {
+            Image(systemName: walkie.isRecording ? "waveform" : "mic.fill")
+                .font(.system(size: 16, weight: .bold))
+            Text(walkie.isRecording ? "Talking" : "Talk")
+                .font(.system(size: 13, weight: .semibold))
+        }
+        .foregroundColor(.white)
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 14)
+        .background((walkie.isRecording ? Color.red : Color.blue).opacity(inPlaygroup ? 0.9 : 0.4))
+        .cornerRadius(8)
+        .opacity(inPlaygroup ? 1.0 : 0.6)
+        .gesture(
+            DragGesture(minimumDistance: 0)
+                .onChanged { _ in
+                    guard inPlaygroup else { return }
+                    if !walkie.isRecording { walkie.startTalking() }
+                }
+                .onEnded { _ in
+                    guard inPlaygroup else { return }
+                    walkie.stopTalking()
+                }
+        )
+    }
+}
+
 /// "Alex is talking…" banner driven by inbound `talk_start` broadcasts.
 struct TalkingBanner: View {
     @ObservedObject private var playgroup = PlaygroupChannel.shared
