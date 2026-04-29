@@ -11,9 +11,7 @@ struct SettingsView: View {
     @State private var deleteError: String?
     @AppStorage(PlaygroupChannel.liveDotsEnabledKey) private var liveDotsEnabled = true
 
-    @State private var displayName: String = ""
-    @State private var savingName = false
-    @State private var nameSavedMessage: String?
+    @State private var currentName: String = ""
     /// Hidden developer section, revealed by long-pressing the Settings
     /// title. Persists across this view's lifetime but resets on dismiss
     /// so casual users don't stumble into it.
@@ -31,27 +29,16 @@ struct SettingsView: View {
                         }
                     }
 
-                    HStack {
-                        Text("Display name")
-                        Spacer()
-                        TextField("First name", text: $displayName)
-                            .multilineTextAlignment(.trailing)
-                            .autocorrectionDisabled()
-                            .textInputAutocapitalization(.words)
-                            .onSubmit { saveName() }
-                    }
-                    Button {
-                        saveName()
-                    } label: {
-                        if savingName {
-                            HStack { ProgressView(); Text("Saving…") }
-                        } else {
-                            Text("Save name")
+                    NavigationLink {
+                        NameEditView(initial: currentName) { newName in
+                            try await PlaygroupService.shared.upsertMyProfile(firstName: nil, displayName: newName)
+                            await MainActor.run { currentName = newName }
                         }
-                    }
-                    .disabled(savingName || displayName.trimmingCharacters(in: .whitespaces).isEmpty)
-                    if let msg = nameSavedMessage {
-                        Text(msg).font(.caption).foregroundColor(.secondary)
+                    } label: {
+                        LabeledContent("Display name") {
+                            Text(currentName.isEmpty ? "Not set" : currentName)
+                                .foregroundColor(currentName.isEmpty ? .secondary : .primary)
+                        }
                     }
 
                     Button("Sign Out") {
@@ -127,11 +114,9 @@ struct SettingsView: View {
                 }
             }
             .task {
-                // Pre-fill the name field with whatever's saved (display_name
-                // override beats SIWA-captured first_name).
                 if let p = try? await PlaygroupService.shared.myProfile() {
                     let pre = p.displayName ?? p.firstName ?? ""
-                    if displayName.isEmpty { displayName = pre }
+                    if currentName.isEmpty { currentName = pre }
                 }
             }
             .confirmationDialog("Sign out?", isPresented: $showingSignOutConfirm, titleVisibility: .visible) {
@@ -152,30 +137,6 @@ struct SettingsView: View {
         }
     }
 
-    private func saveName() {
-        let trimmed = displayName.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
-        savingName = true
-        nameSavedMessage = nil
-        Task {
-            do {
-                // We store the user-typed value in `display_name` (the
-                // explicit override slot) so it always wins over any
-                // first_name SIWA captured.
-                try await PlaygroupService.shared.upsertMyProfile(firstName: nil, displayName: trimmed)
-                await MainActor.run {
-                    savingName = false
-                    nameSavedMessage = "Saved."
-                }
-            } catch {
-                await MainActor.run {
-                    savingName = false
-                    nameSavedMessage = "Couldn't save: \(error.localizedDescription)"
-                }
-            }
-        }
-    }
-
     private func performDelete() {
         isDeleting = true
         deleteError = nil
@@ -186,6 +147,125 @@ struct SettingsView: View {
                 dismiss()
             } else {
                 deleteError = "Some data could not be deleted. Try again or contact support."
+            }
+        }
+    }
+}
+
+// MARK: - NameEditView
+
+/// Single-field name editor. Used in two places:
+/// 1. Pushed from Settings → Display name (with Cancel — user can back out).
+/// 2. Presented as a first-launch gate for accounts whose profile has no
+///    name yet (no Cancel — must save before proceeding).
+struct NameEditView: View {
+    let title: String
+    let initial: String
+    let prompt: String?
+    let allowCancel: Bool
+    let onSave: (String) async throws -> Void
+
+    @State private var name: String
+    @State private var saving = false
+    @State private var errorMessage: String?
+    @FocusState private var fieldFocused: Bool
+    @Environment(\.dismiss) private var dismiss
+
+    init(title: String = "Display name",
+         initial: String,
+         prompt: String? = nil,
+         allowCancel: Bool = true,
+         onSave: @escaping (String) async throws -> Void) {
+        self.title = title
+        self.initial = initial
+        self.prompt = prompt
+        self.allowCancel = allowCancel
+        self.onSave = onSave
+        _name = State(initialValue: initial)
+    }
+
+    private var trimmed: String {
+        name.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var canSave: Bool {
+        guard !saving, !trimmed.isEmpty else { return false }
+        // Allow saving the prefilled value when this is a first-time prompt
+        // (initial is blank → any non-empty entry is a real save). Otherwise
+        // require a change vs. what's already stored.
+        if initial.isEmpty { return true }
+        return trimmed != initial.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    var body: some View {
+        Group {
+            if allowCancel {
+                content
+            } else {
+                NavigationStack { content }
+            }
+        }
+    }
+
+    private var content: some View {
+        Form {
+            Section {
+                TextField("First name", text: $name)
+                    .autocorrectionDisabled()
+                    .textInputAutocapitalization(.words)
+                    .focused($fieldFocused)
+                    .submitLabel(.done)
+                    .onSubmit { if canSave { save() } }
+            } header: {
+                if let prompt = prompt {
+                    Text(prompt).textCase(nil)
+                } else {
+                    Text("This is how playgroup partners see you.").textCase(nil)
+                }
+            }
+
+            if let err = errorMessage {
+                Text(err).font(.caption).foregroundColor(.red)
+            }
+        }
+        .scrollDismissesKeyboard(.interactively)
+        .navigationTitle(title)
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .confirmationAction) {
+                if saving {
+                    ProgressView()
+                } else {
+                    Button("Save") { save() }
+                        .disabled(!canSave)
+                }
+            }
+            ToolbarItemGroup(placement: .keyboard) {
+                Spacer()
+                Button("Done") { fieldFocused = false }
+            }
+        }
+        .onAppear { fieldFocused = true }
+        .interactiveDismissDisabled(!allowCancel)
+    }
+
+    private func save() {
+        let value = trimmed
+        guard !value.isEmpty else { return }
+        saving = true
+        errorMessage = nil
+        Task {
+            do {
+                try await onSave(value)
+                await MainActor.run {
+                    saving = false
+                    dismiss()
+                }
+            } catch {
+                await MainActor.run {
+                    saving = false
+                    errorMessage = "Couldn't save: \(error.localizedDescription)"
+                }
             }
         }
     }

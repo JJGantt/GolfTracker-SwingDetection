@@ -40,13 +40,20 @@ final class TestModeService: ObservableObject {
     }
 
     private func bootstrap() async {
-        // Already running — nothing to do.
+        ClientEventLogger.log("testmode.bootstrap.enter", detail: [
+            "started": .bool(started),
+            "hasChannel": .bool(channel != nil),
+            "hasUid": .bool(currentUserId() != nil)
+        ])
         if started, channel != nil { return }
-        // Auth not ready — bail; caller will re-trigger when it is.
-        guard currentUserId() != nil else { return }
+        guard currentUserId() != nil else {
+            ClientEventLogger.log("testmode.bootstrap.bail.noAuth")
+            return
+        }
         started = true
         await refreshFromDB()
         await subscribeToChanges()
+        ClientEventLogger.log("testmode.bootstrap.done")
     }
 
     private func refreshFromDB() async {
@@ -64,11 +71,19 @@ final class TestModeService: ObservableObject {
                 .limit(1)
                 .execute()
                 .value
+            ClientEventLogger.log("testmode.refresh.fetched", detail: [
+                "rowCount": .integer(rows.count),
+                "enabled": rows.first.map { .bool($0.enabled) } ?? .null,
+                "lat": rows.first?.simulated_lat.map { .double($0) } ?? .null,
+                "lon": rows.first?.simulated_lon.map { .double($0) } ?? .null
+            ])
             if let row = rows.first {
                 applyState(enabled: row.enabled, lat: row.simulated_lat, lon: row.simulated_lon)
             }
         } catch {
-            dprint("🧪 [TestModeService] refresh failed: \(error.localizedDescription)")
+            ClientEventLogger.log("testmode.refresh.failed", detail: [
+                "error": .string(error.localizedDescription)
+            ])
         }
     }
 
@@ -96,27 +111,51 @@ final class TestModeService: ObservableObject {
         case .insert(let a): record = a.record
         case .update(let a): record = a.record
         case .delete:
+            ClientEventLogger.log("testmode.realtime.delete")
             applyState(enabled: false, lat: nil, lon: nil)
             return
         }
         let enabled = (record["enabled"]?.boolValue) ?? false
         let lat = record["simulated_lat"]?.doubleValue
         let lon = record["simulated_lon"]?.doubleValue
+        ClientEventLogger.log("testmode.realtime.change", detail: [
+            "enabled": .bool(enabled),
+            "lat": lat.map { .double($0) } ?? .null,
+            "lon": lon.map { .double($0) } ?? .null
+        ])
         applyState(enabled: enabled, lat: lat, lon: lon)
     }
 
     private func applyState(enabled: Bool, lat: Double?, lon: Double?) {
+        ClientEventLogger.log("testmode.applyState", detail: [
+            "enabled": .bool(enabled),
+            "lat": lat.map { .double($0) } ?? .null,
+            "lon": lon.map { .double($0) } ?? .null
+        ])
         self.enabled = enabled
         if let lat = lat, let lon = lon {
             simulatedCoord = CLLocationCoordinate2D(latitude: lat, longitude: lon)
         } else {
             simulatedCoord = nil
         }
-        // Push into LocationManager. Order matters: enable test mode
-        // first so the apply call actually publishes; or disable to fall
-        // back to real GPS.
+        // Push into LocationManager. We do applyTestLocation BEFORE
+        // setTestModeEnabled so the simulated coord is in place when
+        // setTestModeEnabled reads forcedTestLocation. Previously we
+        // called setTestModeEnabled first, which dispatches its work
+        // async and then applyTestLocation was bailing because
+        // isTestModeEnabled wasn't yet flipped — leaving location stuck
+        // on the static fallback testCoordinate or the real GPS.
         if enabled {
+            if let coord = simulatedCoord {
+                // applyTestLocation just stashes simulatedTestLocation if
+                // test mode isn't on yet (its bail path) — safe to call.
+                LocationManager.shared.applyTestLocation(coord)
+            }
             LocationManager.shared.setTestModeEnabled(true)
+            // After test mode flips on, fire one more applyTestLocation so
+            // location/publisher reflect the coord (the dispatch in
+            // setTestModeEnabled may settle after this; both are queued
+            // on main and SwiftUI tolerates either order).
             if let coord = simulatedCoord {
                 LocationManager.shared.applyTestLocation(coord)
             }
