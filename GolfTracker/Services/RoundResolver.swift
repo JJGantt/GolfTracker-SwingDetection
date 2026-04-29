@@ -126,20 +126,24 @@ final class RoundResolver {
         progress(.checkingExisting)
         findExistingCourseMatches(near: currentLocation) { [weak self] matches in
             guard let self = self else { completion(nil); return }
+            ClientEventLogger.log("resolver.existingCourseCheck", detail: [
+                "matchCount": .integer(matches.count),
+                "firstMatchName": matches.first.map { .string($0.courseName) } ?? .null,
+                "firstMatchExternalId": matches.first.flatMap { $0.externalCourseId.map(AnyJSON.string) } ?? .null
+            ])
             if matches.count == 1, let match = matches.first {
                 progress(.confirmingExisting(match))
                 existingCoursePrompt(match) { confirmed in
+                    ClientEventLogger.log("resolver.existingCoursePromptResult", detail: [
+                        "confirmed": .bool(confirmed)
+                    ])
                     if confirmed {
                         self.resolveExisting(match, progress: progress, completion: completion)
                     } else {
-                        // User said "different course" — fall through to OSM.
                         self.resolveViaOSM(at: currentLocation, progress: progress, coursePicker: coursePicker, completion: completion)
                     }
                 }
             } else {
-                // 0 matches → straight to OSM. >1 matches → also OSM (let
-                // the regular picker handle disambiguation; no good UX for
-                // "you have 3 courses near here, which one?" without one).
                 self.resolveViaOSM(at: currentLocation, progress: progress, coursePicker: coursePicker, completion: completion)
             }
         }
@@ -376,21 +380,35 @@ final class RoundResolver {
         // GCAPICourse from the cached tees so the tee picker still works
         // without invoking the Edge Function.
         if let externalId = knownExternalCourseId {
+            ClientEventLogger.log("resolver.scorecard.fastPathTry", detail: [
+                "externalCourseId": .string(externalId)
+            ])
             Task {
                 do {
                     let cached = try await GolfCourseAPIService.shared.cachedTees(forExternalCourseId: externalId)
                     if let stub = Self.makeStubCourse(externalId: externalId, name: courseName, coord: coordinate, cachedTees: cached) {
+                        ClientEventLogger.log("resolver.scorecard.fastPathHit", detail: [
+                            "externalCourseId": .string(externalId),
+                            "teeCount": .integer(cached.count)
+                        ])
                         completion(stub)
                         return
                     }
+                    ClientEventLogger.log("resolver.scorecard.fastPathFell.emptyCache")
                 } catch {
-                    // Fall through to name search
+                    ClientEventLogger.log("resolver.scorecard.fastPathFell.error", detail: [
+                        "error": .string("\(error)")
+                    ])
                 }
                 // Cache miss/error — search to recover the real id.
                 await self.searchAndPersist(courseName: courseName, near: coordinate, localCourseId: localCourseId, completion: completion)
             }
             return
         }
+        ClientEventLogger.log("resolver.scorecard.searchPath", detail: [
+            "reason": .string("noKnownExternalId"),
+            "courseName": .string(courseName)
+        ])
         Task {
             await searchAndPersist(courseName: courseName, near: coordinate, localCourseId: localCourseId, completion: completion)
         }
@@ -415,14 +433,30 @@ final class RoundResolver {
                 }
                 .filter { $0.1 <= 1000 }
                 .min(by: { $0.1 < $1.1 })?.0
-            if let best = best, let courseId = localCourseId {
-                // Persist the external id on the local courses row. Cheap
-                // upsert — Realtime echoes it back to other devices too.
-                Task {
-                    struct Patch: Encodable { let id: String; let external_course_id: String }
-                    let body = Patch(id: courseId.uuidString, external_course_id: "\(best.id)")
-                    _ = try? await self.supabase.from("courses").upsert(body, onConflict: "id").execute()
+            if let best = best {
+                ClientEventLogger.log("resolver.scorecard.searchMatched", detail: [
+                    "externalCourseId": .integer(best.id),
+                    "name": .string(best.displayName)
+                ])
+                if let courseId = localCourseId {
+                    Task {
+                        struct Patch: Encodable { let id: String; let external_course_id: String }
+                        let body = Patch(id: courseId.uuidString, external_course_id: "\(best.id)")
+                        do {
+                            try await self.supabase.from("courses").upsert(body, onConflict: "id").execute()
+                            ClientEventLogger.log("resolver.scorecard.externalIdPersisted", detail: [
+                                "courseId": .string(courseId.uuidString),
+                                "externalCourseId": .integer(best.id)
+                            ])
+                        } catch {
+                            ClientEventLogger.log("resolver.scorecard.externalIdPersistFailed", detail: [
+                                "error": .string("\(error)")
+                            ])
+                        }
+                    }
                 }
+            } else {
+                ClientEventLogger.log("resolver.scorecard.searchNoMatch")
             }
             completion(best)
         } catch {
