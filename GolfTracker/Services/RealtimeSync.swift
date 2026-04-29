@@ -168,8 +168,10 @@ final class RealtimeSync {
         // re-render when these mutations land. Without this, the iPhone can
         // change holes / record strokes and the watch's view won't update
         // until the user navigates the watch UI manually.
+        let isClubsRelated = (table == "clubs" || table == "club_types" || table == "club_sets")
         Task { @MainActor in
             #if os(watchOS)
+            if isClubsRelated { WatchDataStore.shared.refreshClubsCache() }
             WatchDataStore.shared.objectWillChange.send()
             #else
             DataStore.shared.objectWillChange.send()

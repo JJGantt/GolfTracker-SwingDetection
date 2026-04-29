@@ -126,6 +126,9 @@ class WatchDataStore: ObservableObject {
     func configure(container: ModelContainer) {
         self.modelContainer = container
         self.sharedContext = ModelContext(container)
+        // Prime the clubs cache from whatever SwiftData has on disk; the
+        // hydrate path will refresh it again once Supabase responds.
+        refreshClubsCache()
         // Restore the last-active round id (the round itself was persisted by
         // SwiftData; we just need to point at it again).
         if let stored = UserDefaults.standard.string(forKey: currentRoundIdKey),
@@ -168,6 +171,8 @@ class WatchDataStore: ObservableObject {
                     for c in clubs { Self.upsertClub(c, into: context) }
                     for s in sets { Self.upsertClubSet(s, into: context) }
                     try? context.save()
+                    // Republish the cached arrays so views pick up new clubs.
+                    self.refreshClubsCache()
                     self.objectWillChange.send()
                     dprint("⌚ [WatchDataStore] hydrated \(types.count) types / \(clubs.count) clubs / \(sets.count) sets")
                 }
@@ -244,14 +249,31 @@ class WatchDataStore: ObservableObject {
         return sortedHoles[currentHoleIndex]
     }
 
-    var availableClubs: [ClubData] {
-        guard let context = context else { return [] }
-        return (try? context.fetch(FetchDescriptor<ClubData>())) ?? []
-    }
+    /// Cached snapshot of `ClubData` rows. Re-fetching from SwiftData on
+    /// every access (the previous pattern) was producing a fresh array
+    /// per call, which made SwiftUI unable to memoize anything downstream
+    /// of `clubs` — every body evaluation looked like new data and forced
+    /// re-renders of the club picker, swing detector club hookup, etc.
+    /// At ~5 body evals/sec from heading updates, that was the dominant
+    /// cause of digital-crown lag. Now we cache the list and refresh it
+    /// only on actual mutations.
+    @Published private(set) var availableClubs: [ClubData] = []
+    @Published private(set) var clubTypes: [ClubTypeData] = []
 
-    var clubTypes: [ClubTypeData] {
-        guard let context = context else { return [] }
-        return (try? context.fetch(FetchDescriptor<ClubTypeData>())) ?? []
+    /// Re-pull the cached clubs/types arrays from SwiftData. Call after any
+    /// local mutation that could change them (hydrate, insert, delete).
+    func refreshClubsCache() {
+        guard let context = context else { return }
+        let fetchedClubs = (try? context.fetch(FetchDescriptor<ClubData>())) ?? []
+        let fetchedTypes = (try? context.fetch(FetchDescriptor<ClubTypeData>())) ?? []
+        // Avoid redundant publishes — comparing ids covers the common case
+        // (re-publish only when the set of ids actually changed).
+        let newClubIds = fetchedClubs.map(\.id)
+        let oldClubIds = availableClubs.map(\.id)
+        if newClubIds != oldClubIds { availableClubs = fetchedClubs }
+        let newTypeIds = fetchedTypes.map(\.id)
+        let oldTypeIds = clubTypes.map(\.id)
+        if newTypeIds != oldTypeIds { clubTypes = fetchedTypes }
     }
 
     // MARK: - Stroke Management
