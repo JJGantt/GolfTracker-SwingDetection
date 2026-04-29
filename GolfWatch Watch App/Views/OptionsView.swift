@@ -26,6 +26,7 @@ struct OptionsView: View {
 
     @State private var showingUndoConfirmation = false
     @State private var showingMultiplayer = false
+    @AppStorage(PlaygroupChannel.liveDotsEnabledKey) private var liveDotsEnabled = true
 
     var body: some View {
         ScrollView {
@@ -220,6 +221,9 @@ struct OptionsView: View {
                     settingsNavButton("Multiplayer") {
                         showingMultiplayer = true
                     }
+
+                    Toggle("Share live position", isOn: $liveDotsEnabled)
+                        .font(.system(size: 14))
                 }
             }
             .padding()

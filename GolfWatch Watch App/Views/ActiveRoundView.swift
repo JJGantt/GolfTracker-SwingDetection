@@ -7,6 +7,7 @@ struct ActiveRoundView: View {
     @StateObject var locationManager = LocationManager.shared
     @StateObject var swingDetector = SwingDetectionManager.shared
     @StateObject var workoutManager = WorkoutManager.shared
+    @ObservedObject var playgroupChannel = PlaygroupChannel.shared
     @Environment(\.scenePhase) var scenePhase
     @Environment(\.dismiss) var dismiss
     @AppStorage("minimalScreenMode") var minimalScreenMode: Bool = false
@@ -716,6 +717,7 @@ struct ActiveRoundView: View {
         // when the user backs out, so the WebSocket isn't open 24/7.
         if let uid = WatchAuthSession.shared.currentUserId {
             RealtimeSync.shared.start(forUserId: uid)
+            startPlaygroupChannelIfNeeded(userId: uid)
         }
 
         guard store.currentRound != nil, !workoutManager.isWorkoutActive else { return }
@@ -729,6 +731,7 @@ struct ActiveRoundView: View {
     func handleViewDisappear() {
         crownScrollTimer?.invalidate()
         RealtimeSync.shared.stop()
+        PlaygroupChannel.shared.stop()
     }
 
     func handleCurrentHoleIndexChange() {
@@ -738,6 +741,26 @@ struct ActiveRoundView: View {
         autoAddedStrokeId = nil
         locationManager.setGPSPowerMode(.full)
         restoreCalculatedMapPosition(force: true)
+        if let uid = WatchAuthSession.shared.currentUserId,
+           let round = store.currentRound {
+            // Hole index → 1-based hole number (round.currentHoleIndex is 0-based).
+            PlaygroupChannel.shared.updateCurrentHole(round.currentHoleIndex + 1, userId: uid)
+        }
+    }
+
+    private func startPlaygroupChannelIfNeeded(userId: String) {
+        guard let round = store.currentRound else { return }
+        let holeNumber = round.currentHoleIndex + 1
+        Task {
+            do {
+                guard let pg = try await PlaygroupService.shared.currentOpenPlaygroup() else { return }
+                await MainActor.run {
+                    PlaygroupChannel.shared.start(playgroupId: pg.id, currentHole: holeNumber, userId: userId)
+                }
+            } catch {
+                dprint("📡 [ActiveRoundView] PlaygroupChannel start check failed: \(error.localizedDescription)")
+            }
+        }
     }
 
     func handleCurrentHoleChange() {
@@ -913,6 +936,41 @@ struct ActiveRoundView: View {
                                     .frame(height: 12)
                                 }
                             }
+                        }
+                    }
+                }
+
+                // Other players' strokes for the current hole, in their color
+                // at 60% alpha. Lines connect each player's strokes in order.
+                let myUid = WatchAuthSession.shared.currentUserId
+                ForEach(playgroupChannel.members.filter { $0.userId != myUid }, id: \.userId) { member in
+                    let strokes = playgroupChannel.otherStrokes[member.userId] ?? []
+                    let color = Color(hex: member.color ?? PlaygroupService.playerPalette[0])
+                    if strokes.count >= 2 {
+                        MapPolyline(coordinates: strokes.map { $0.coordinate })
+                            .stroke(color.opacity(0.45), lineWidth: 2)
+                    }
+                    ForEach(strokes) { stroke in
+                        Annotation("", coordinate: stroke.coordinate) {
+                            ZStack {
+                                Circle()
+                                    .fill(color.opacity(0.6))
+                                    .frame(width: 12, height: 12)
+                                Text("\(stroke.strokeNumber)")
+                                    .font(.system(size: 8, weight: .bold))
+                                    .foregroundColor(.white)
+                            }
+                        }
+                    }
+                }
+
+                // Other players' live GPS dots from presence.
+                ForEach(Array(playgroupChannel.presence.values.filter { $0.userId != myUid }), id: \.userId) { p in
+                    let color = Color(hex: playgroupChannel.color(for: p.userId))
+                    Annotation("", coordinate: p.coordinate) {
+                        ZStack {
+                            Circle().stroke(color, lineWidth: 2).frame(width: 14, height: 14)
+                            Circle().fill(color).frame(width: 7, height: 7)
                         }
                     }
                 }

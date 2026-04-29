@@ -408,6 +408,7 @@ struct HolePlayView: View {
             // Realtime is round-scoped — start while the play view is visible.
             if let uid = AuthManager.shared.currentUserId {
                 RealtimeSync.shared.start(forUserId: uid)
+                startPlaygroupChannelIfNeeded(userId: uid)
             }
 
             // Start round automatically or resume existing round
@@ -443,10 +444,14 @@ struct HolePlayView: View {
         .onDisappear {
             // Realtime is round-scoped — drop the WebSocket when leaving play.
             RealtimeSync.shared.stop()
+            PlaygroupChannel.shared.stop()
             store.currentRoundId = nil
         }
-        .onChange(of: currentHoleIndex) { _, _ in
+        .onChange(of: currentHoleIndex) { _, newIndex in
             updateMapPosition()
+            if let uid = AuthManager.shared.currentUserId {
+                PlaygroupChannel.shared.updateCurrentHole(newIndex + 1, userId: uid)
+            }
         }
         .onChange(of: currentRound) { _, _ in
             applyLocationModeForRound()
@@ -808,6 +813,23 @@ struct HolePlayView: View {
                 center: holeCoord,
                 span: MKCoordinateSpan(latitudeDelta: 0.0005, longitudeDelta: 0.0005)
             ))
+        }
+    }
+
+    /// Spin up the playgroup Realtime channel if the user is in an open
+    /// playgroup. Async because we need to look up `currentOpenPlaygroup`
+    /// before deciding; no-ops when not in one.
+    private func startPlaygroupChannelIfNeeded(userId: String) {
+        let holeNumber = (activeRound?.currentHoleIndex ?? currentHoleIndex) + 1
+        Task {
+            do {
+                guard let pg = try await PlaygroupService.shared.currentOpenPlaygroup() else { return }
+                await MainActor.run {
+                    PlaygroupChannel.shared.start(playgroupId: pg.id, currentHole: holeNumber, userId: userId)
+                }
+            } catch {
+                print("📡 [HolePlayView] PlaygroupChannel start check failed: \(error.localizedDescription)")
+            }
         }
     }
 }

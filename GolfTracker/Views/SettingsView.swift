@@ -9,6 +9,7 @@ struct SettingsView: View {
     @State private var showingDeleteConfirm = false
     @State private var isDeleting = false
     @State private var deleteError: String?
+    @AppStorage(PlaygroupChannel.liveDotsEnabledKey) private var liveDotsEnabled = true
 
     var body: some View {
         NavigationStack {
@@ -54,6 +55,10 @@ struct SettingsView: View {
                     } label: {
                         Label("Host or join a round", systemImage: "person.2.fill")
                     }
+                    Toggle("Share my live position", isOn: $liveDotsEnabled)
+                    Text("When on, your playgroup partners see a moving dot for you on the map. Other players' dots are still visible to you either way.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
                 }
 
                 Section("Credits") {

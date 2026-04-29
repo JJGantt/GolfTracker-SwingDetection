@@ -16,6 +16,10 @@ struct HoleMapView: View {
     let onHoleTap: () -> Void
     let onStrokeTap: (Int) -> Void
 
+    /// Live multiplayer state for the current playgroup. When the user
+    /// isn't in a playgroup these collections are empty and nothing renders.
+    @ObservedObject private var playgroup = PlaygroupChannel.shared
+
     private var isHoleCompleted: Bool {
         currentRound?.isHoleCompleted(hole.number) ?? false
     }
@@ -68,6 +72,42 @@ struct HoleMapView: View {
                 if let userLocation = userLocation {
                     Annotation("", coordinate: userLocation.coordinate) {
                         UserLocationMarker(heading: heading)
+                    }
+                }
+
+                // Other players' strokes for the current hole, in their color
+                // at 60% alpha. Lines connect each player's strokes in order.
+                ForEach(playgroup.members.filter { $0.userId != AuthManager.shared.currentUserId }, id: \.userId) { member in
+                    let strokes = playgroup.otherStrokes[member.userId] ?? []
+                    let color = Color(hex: member.color ?? PlaygroupService.playerPalette[0])
+                    if strokes.count >= 2 {
+                        MapPolyline(coordinates: strokes.map { $0.coordinate })
+                            .stroke(color.opacity(0.45), lineWidth: 2)
+                    }
+                    ForEach(strokes) { stroke in
+                        Annotation("", coordinate: stroke.coordinate) {
+                            ZStack {
+                                Circle()
+                                    .fill(color.opacity(0.6))
+                                    .frame(width: 18, height: 18)
+                                Text("\(stroke.strokeNumber)")
+                                    .font(.system(size: 10, weight: .bold))
+                                    .foregroundColor(.white)
+                            }
+                        }
+                    }
+                }
+
+                // Other players' live GPS dots (presence). Solid color circle
+                // ring + smaller filled center, so they're distinguishable from
+                // stroke markers.
+                ForEach(Array(playgroup.presence.values.filter { $0.userId != AuthManager.shared.currentUserId }), id: \.userId) { p in
+                    let color = Color(hex: playgroup.color(for: p.userId))
+                    Annotation("", coordinate: p.coordinate) {
+                        ZStack {
+                            Circle().stroke(color, lineWidth: 2).frame(width: 16, height: 16)
+                            Circle().fill(color).frame(width: 8, height: 8)
+                        }
                     }
                 }
 
