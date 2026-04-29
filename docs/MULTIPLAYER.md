@@ -1,6 +1,6 @@
-# Multiplayer Rounds — Design Spec
+# Multiplayer Rounds + Scorecard + Tee Data — Design Spec
 
-**Status:** Designed, not implemented. Scorecard view (single-player) is the prerequisite and goes first; multiplayer builds on it.
+**Status:** Designed, not implemented. Implementation order is bottom-up: GolfCourseAPI integration + tee data → solo scorecard → multiplayer infrastructure → multiplayer scorecard → map color system.
 
 ## Overview
 
@@ -289,18 +289,134 @@ The playgroup row already has `course_id`. If both host and joiner use the same 
 
 For the case where User A hosts at a brand-new course (no existing course row in DB), the playgroup gets the new course_id; User B's join-time existing-course-first check will find that course in the DB (since A just created it) and join via course_id match. Clean.
 
+## Scorecard
+
+**Layout: vertical** — holes go down the page. Columns:
+
+| Hole | Par(s) | Tee yardage(s) | Player strokes |
+|------|--------|----------------|----------------|
+
+- **Hole** — 1..18 row order
+- **Par** — one column normally; splits into multiple par columns only if tees in the group disagree on par for a hole (rare but real, e.g., Hyde Park women's tees are par 73, men's are par 72)
+- **Tee yardage** — one column per tee currently in use by anyone in the group. Header = tee name from API ("Blue", "Red", "White")
+- **Player strokes** — one column per player. Header = first name (truncated to ~3 chars if needed). Header text + cell text colored to that player's assigned palette color (same color used for their map markers)
+
+**Filter columns to what the group is actually using.** Solo on Blue tees → 1 yardage col, 1 par col. Two players both on Blue → 1 yardage, 1 par, 2 stroke columns. Two players on Blue and Red → 2 yardage, 1 par (or 2 if pars differ), 2 stroke columns.
+
+**Sizing target:** ~7 columns fits without scroll. So solo or up to 3 same-tee players, or 2 players on 2 tees, all comfortable. Edge cases (4 players × 4 tees) scroll horizontally. Same layout on phone and watch.
+
+**Front-9 / Back-9 / Total breakdown** — clear visual break between holes 9 and 10. Three subtotal rows:
+- After hole 9: "OUT" — par sum, yardage sum per tee column, stroke sum per player
+- After hole 18: "IN" — same for back nine
+- Below "IN": "TOT" — 18-hole grand totals
+
+**Doubles as the color key for the map.** Player column colors in the scorecard match their map position dot, stroke markers, and connecting lines. No separate legend needed.
+
+**Mid-round tee changes are captured in the data** (per-hole `tee_id` on `round_holes`) **but not visualized on the scorecard.** The yardage column shows the tee's card yardage as a static reference; the player's stroke cell shows their score with no visual indicator of which tee they were on. Real paper scorecards don't represent this either; if a player switches tees mid-round and the scorecard "looks weird" (e.g., wrong yardage column applied to those holes in their head), that's on them.
+
+**Yardage ground truth = API data**, not GPS-derived. Two players' GPS readings will differ by 5-15 yards; using API data keeps the scorecard consistent across devices and sessions.
+
+## Tee data + GolfCourseAPI integration
+
+**GolfCourseAPI is the scorecard-metadata source.** It complements OSM, which remains the geometry source. GolfCourseAPI gives us per-tee per-hole yardage + handicap, plus course/slope/bogey ratings — none of which OSM reliably provides.
+
+API key (free tier, 300 req/day): stored in Supabase + injected at build time, not committed to source.
+
+**Endpoints used:**
+- `GET /v1/search?search_query=<name>` — text search; returns full course detail in results
+- `GET /v1/courses/{id}` — single-course lookup; same shape as search results
+
+No location-based search exists. Matching strategy: search by the course name we got from OSM, then filter API results by location proximity (API's `location.latitude/longitude` clubhouse point vs OSM polygon centroid, within ~500m).
+
+**Coverage observations from real probes:**
+- Standard solo courses (Hyde Park Jacksonville, etc.): present, full data
+- Pebble Beach: present, name slightly truncated ("Pebble Beach Gl") — fuzzy match needed
+- Pinehurst: every numbered course present as a separate entry
+- Bethpage: actually BETTER than OSM. Has all 5 named courses (Yellow / Blue / Black / Green / Red) as separate entries with their own scorecards. Solves the umbrella-polygon disambiguation problem OSM has at this resort.
+
+**Coverage gap fallback** — when a course isn't in GolfCourseAPI:
+- No tee selection picker (no tees to pick from)
+- Scorecard has no yardage columns
+- Par column populated from OSM hole tags where mappers added them (par row is sparse if not)
+- All other scorecard machinery still works
+
+**Cached locally in our DB** so subsequent rounds at the same course skip the API call and the resolver runs faster.
+
+### Schema additions for tee data
+
+Migration `00012_course_tees.sql`:
+
+```sql
+-- One row per course tee box. Cross-user shared (cached from GolfCourseAPI).
+create table course_tees (
+    id uuid primary key default gen_random_uuid(),
+    course_id uuid not null references courses(id) on delete cascade,
+    external_course_id text,           -- GolfCourseAPI course id
+    tee_name text not null,            -- "Blue", "Red", "White", "Black", etc.
+    gender text,                       -- 'male' | 'female' | null
+    course_rating numeric(4,1),
+    slope_rating integer,
+    bogey_rating numeric(4,1),
+    par_total integer,
+    total_yards integer,
+    total_meters integer,
+    front_course_rating numeric(4,1),
+    front_slope_rating integer,
+    back_course_rating numeric(4,1),
+    back_slope_rating integer,
+    fetched_at timestamptz not null default now(),
+    unique (course_id, tee_name, gender)
+);
+
+create index idx_course_tees_course on course_tees(course_id);
+
+-- Per-hole data per tee (yardage + handicap + par-as-played-from-this-tee).
+create table course_tee_holes (
+    id uuid primary key default gen_random_uuid(),
+    tee_id uuid not null references course_tees(id) on delete cascade,
+    hole_number integer not null,
+    par integer,
+    yardage integer,
+    handicap integer,
+    unique (tee_id, hole_number)
+);
+
+create index idx_cth_tee on course_tee_holes(tee_id);
+
+-- Round tracks which tee the user selected.
+alter table rounds add column selected_tee_id uuid references course_tees(id);
+
+-- Per-hole snapshot of which tee was active when the user played it (lets users
+-- change tees mid-round without rewriting history; data captures the change
+-- per-hole even though the scorecard doesn't visualize it).
+alter table round_holes add column tee_id uuid references course_tees(id);
+```
+
+**RLS:** course_tees + course_tee_holes are publicly readable by authenticated users (cross-user shared cache, same as `osm_course_data`). INSERT requires authenticated. No DELETE policy.
+
+### Tee selection UX
+
+1. Round resolver runs (existing-course-first → OSM → GolfCourseAPI), data loaded
+2. **Before** round play screen opens, present **tee picker modal** with all available tees from the API: tee_name, total_yards, par_total, course/slope rating
+3. User taps a tee → `rounds.selected_tee_id` set; all 18 `round_holes` for this round get `tee_id` set to the selection
+4. Round play screen opens; per-hole yardage display reads from `course_tee_holes.yardage` for the selected tee
+5. **Mid-round change** — settings has "Change tee" option. Selecting a new tee updates `rounds.selected_tee_id` and updates the `tee_id` on all FUTURE unplayed `round_holes` (already-played holes keep their original tee_id)
+6. **Coverage gap** — when course has no API tee data, skip the picker entirely; round starts straight into play; per-hole yardage display falls back to live distance from current GPS to green
+7. **Multi-player** — each player picks their own tee at their own round-start. The scorecard surfaces the union of all tees in use across the group.
+
 ## Implementation order
 
-When we come back to build this:
-1. **Scorecard view (single-player)** — prerequisite, doesn't exist today.
-2. **Migration 00011** for the three new tables + RLS policy updates on existing tables.
-3. **Profile capture** for first-name source.
-4. **PlaygroupService** (shared iOS + watchOS) — host, join, accept, decline, end.
-5. **Multiplayer view** in Settings on both targets.
-6. **Map rendering changes** — color per player, lighter stroke markers, faint connecting lines (apply to single-player too while we're at it).
-7. **Scorecard extension** — multi-row layout for shared rounds.
-8. **Realtime additions** — subscribe to playgroup channel + member round subs.
-9. **Background time-based cleanup** — Supabase scheduled function to set `status='closed'` on playgroups older than 6h still in `open`.
+This is the build sequence we agreed on, top to bottom:
+
+1. **Update this doc** ✓
+2. **GolfCourseAPI integration** — `GolfCourseAPIService` (search, course detail), schema migration `00012_course_tees.sql`, hook into RoundResolver after course pick, cache to `course_tees` + `course_tee_holes`
+3. **Tee picker UI** — modal after resolver completes, before round opens; settings option for mid-round change
+4. **Solo scorecard view** — single-player, single-tee variant of the layout. Replaces or augments existing `InRoundScorecardView`.
+5. **Playgroup infrastructure** — migration `00011_playgroups.sql`, `PlaygroupService` (host/join/accept/decline/end), Multiplayer view in Settings, RLS updates, profile capture for first names
+6. **Map color/marker system** — assign palette color on join, render player position dots in color, render stroke markers in lighter version of color, faint connecting lines between strokes (apply to single-player rounds too)
+7. **Scorecard multi-player extensions** — column-per-player + multi-tee column logic + colored player columns
+8. **Realtime additions for playgroups** — subscribe to playgroup channel + member round subs while active round screen visible
+9. **Background time-based cleanup** — Supabase scheduled function to set `playgroups.status='closed'` on rows older than 6h still in `open`
 
 ## Out of scope for v1
 
@@ -311,10 +427,11 @@ When we come back to build this:
 - Stats segmentation between solo and shared rounds (multi-player rounds count in your stats normally)
 - Cross-device player notification when their stroke is recorded by another (e.g., haptic on Mike's watch when Jared tees off)
 - Shared round-level features beyond live positions + stroke markers + scorecard
+- Visualizing per-hole tee changes on the scorecard
 
 ## Open / TODO before implementation
 
-- Scorecard wireframe — single-player layout, then multi-row variant.
-- Color palette specifics — exact 6 hex values for player assignment.
-- Player marker label format on the map — first-letter initial in a circle? full first name in a pill? — affects readability vs. pixel budget on the watch.
-- Whether the "Multiplayer" entry point lives only in Settings or also gets a prominent button in the round-start flow on the home screen.
+- Color palette specifics — exact ~6 hex values for player assignment (one per player slot in a playgroup)
+- Player marker label format on the map — first-letter initial in a circle? full first name in a pill? — affects readability vs. pixel budget on the watch
+- Whether the "Multiplayer" entry point lives only in Settings or also gets a prominent button in the round-start flow on the home screen
+- API key handling — fetched from Supabase config at app launch, or compiled in via xcconfig (not in source)
