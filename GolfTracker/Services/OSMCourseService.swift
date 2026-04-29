@@ -156,6 +156,11 @@ final class OSMCourseService {
         let lat = coordinate.latitude
         let lon = coordinate.longitude
         let r = Int(radius)
+        ClientEventLogger.log("osm.fetchCandidates.overpassStart", detail: [
+            "lat": .double(lat),
+            "lon": .double(lon),
+            "radius": .integer(r)
+        ])
         let query = """
         [out:json][timeout:25];
         (
@@ -166,12 +171,22 @@ final class OSMCourseService {
         """
         executeOverpass(query: query) { result in
             switch result {
-            case .failure(let e): completion(.failure(e))
+            case .failure(let e):
+                ClientEventLogger.log("osm.fetchCandidates.overpassFailed", detail: [
+                    "error": .string("\(e)")
+                ])
+                completion(.failure(e))
             case .success(let data):
                 do {
                     let candidates = try Self.parseCandidates(data: data)
+                    ClientEventLogger.log("osm.fetchCandidates.overpassOk", detail: [
+                        "candidateCount": .integer(candidates.count)
+                    ])
                     completion(.success(candidates))
                 } catch {
+                    ClientEventLogger.log("osm.fetchCandidates.parseFailed", detail: [
+                        "error": .string("\(error)")
+                    ])
                     completion(.failure(error))
                 }
             }
@@ -182,12 +197,23 @@ final class OSMCourseService {
     /// bounding polygon. Cache-first by the course's OSM id.
     func fetchCourseGeometry(for candidate: OSMCourseCandidate,
                              completion: @escaping (Result<OSMCourseData, Error>) -> Void) {
+        ClientEventLogger.log("osm.fetchGeometry.start", detail: [
+            "osmId": .integer(Int(candidate.osmId)),
+            "name": .string(candidate.name)
+        ])
         fetchFromCache(osmId: candidate.osmId) { [weak self] cached in
             guard let self = self else { return }
             if let cached = cached, !self.isExpired(cached) {
+                ClientEventLogger.log("osm.fetchGeometry.cacheHit", detail: [
+                    "osmId": .integer(Int(candidate.osmId))
+                ])
                 completion(.success(cached))
                 return
             }
+            ClientEventLogger.log("osm.fetchGeometry.cacheMiss", detail: [
+                "osmId": .integer(Int(candidate.osmId)),
+                "expired": .bool(cached != nil)
+            ])
             // Build a poly:"lat lon lat lon ..." filter from the candidate's
             // bounding polygon. Overpass docs use whitespace-separated lat/lon.
             let polyString = candidate.polygon
@@ -216,8 +242,22 @@ final class OSMCourseService {
                         )
                         completion(.success(parsed))
                         // Fire-and-forget cache write keyed by OSM id.
-                        self?.upsertCache(parsed, osmId: candidate.osmId) { _ in }
+                        ClientEventLogger.log("osm.fetchGeometry.upsertStart", detail: [
+                            "osmId": .integer(Int(candidate.osmId)),
+                            "holeCount": .integer(parsed.holes.count),
+                            "greenCount": .integer(parsed.greens.count)
+                        ])
+                        self?.upsertCache(parsed, osmId: candidate.osmId) { ok in
+                            ClientEventLogger.log(
+                                ok ? "osm.fetchGeometry.upsertOk" : "osm.fetchGeometry.upsertFailed",
+                                detail: ["osmId": .integer(Int(candidate.osmId))]
+                            )
+                        }
                     } catch {
+                        ClientEventLogger.log("osm.fetchGeometry.parseFailed", detail: [
+                            "osmId": .integer(Int(candidate.osmId)),
+                            "error": .string("\(error)")
+                        ])
                         completion(.failure(error))
                     }
                 }
@@ -476,6 +516,11 @@ final class OSMCourseService {
                     .execute()
                 completion(true)
             } catch {
+                ClientEventLogger.log("osm.upsertRow.threw", detail: [
+                    "error": .string("\(error)"),
+                    "bucketLat": .double(bucketLat),
+                    "bucketLon": .double(bucketLon)
+                ])
                 dprint("[OSMCourseService] cache upsert failed: \(error)")
                 completion(false)
             }
