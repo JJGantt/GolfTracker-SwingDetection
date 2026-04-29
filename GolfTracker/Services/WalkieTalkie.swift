@@ -159,43 +159,10 @@ extension WalkieTalkie: AVAudioPlayerDelegate {
 
 // MARK: - Push-to-talk button
 
-/// Press-and-hold microphone button. Hidden when the user isn't currently
-/// in a playgroup. Fires `WalkieTalkie.startTalking()` on press,
-/// `stopTalking()` on release. Visual state pulses red while recording.
-struct PTTButton: View {
-    @ObservedObject private var walkie = WalkieTalkie.shared
-    @ObservedObject private var playgroup = PlaygroupChannel.shared
-
-    var body: some View {
-        if playgroup.activePlaygroupId != nil {
-            ZStack {
-                Circle()
-                    .fill(walkie.isRecording ? Color.red : Color.black.opacity(0.55))
-                    .frame(width: 36, height: 36)
-                    .overlay(Circle().stroke(Color.white.opacity(0.6), lineWidth: 1.5))
-                Image(systemName: walkie.isRecording ? "waveform" : "mic.fill")
-                    .font(.system(size: 16, weight: .bold))
-                    .foregroundColor(.white)
-            }
-            .gesture(
-                DragGesture(minimumDistance: 0)
-                    .onChanged { _ in
-                        if !walkie.isRecording { walkie.startTalking() }
-                    }
-                    .onEnded { _ in
-                        walkie.stopTalking()
-                    }
-            )
-            .accessibilityLabel("Push to talk")
-        }
-    }
-}
-
-/// Menu-row variant of the PTT button — same press-and-hold semantics as
-/// `PTTButton`, but styled as a full-width row so it slots into the watch
-/// Options pull-up alongside Undo/Penalty/Home. Disabled (greyed) when not
-/// in a playgroup so the row layout doesn't jump around between solo and
-/// multiplayer rounds.
+/// Menu-row variant of the PTT button, styled as a full-width row so it
+/// slots into the watch Options pull-up alongside Undo/Penalty/Home.
+/// Disabled (greyed) when not in a playgroup so the row layout doesn't
+/// jump around between solo and multiplayer rounds.
 struct OptionsTalkButton: View {
     @ObservedObject private var walkie = WalkieTalkie.shared
     @ObservedObject private var playgroup = PlaygroupChannel.shared
