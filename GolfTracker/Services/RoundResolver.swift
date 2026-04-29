@@ -74,6 +74,10 @@ final class RoundResolver {
         /// If non-nil, this candidate matched an existing Course in the user's
         /// DB and we should reuse that course id instead of creating a new one.
         let existingCourseId: UUID?
+        /// If non-nil, the matched existing Course already has its
+        /// GolfCourseAPI external id cached. resolveScorecard uses this to
+        /// skip the Edge Function call entirely.
+        let existingExternalCourseId: String?
         /// OSM source data when available — drives the second-pass geometry
         /// query. nil when this candidate came from the MapKit fallback.
         let osmCandidate: OSMCourseCandidate?
@@ -266,6 +270,7 @@ final class RoundResolver {
                             coordinate: c.centroid.coordinate,
                             distanceMeters: cLoc.distance(from: userLoc),
                             existingCourseId: nil,
+                            existingExternalCourseId: nil,
                             osmCandidate: c
                         )
                     }
@@ -319,12 +324,18 @@ final class RoundResolver {
         // OSM-sourced candidates do the second-pass polygon-scoped geometry
         // query. MapKit fallback candidates skip OSM geometry entirely (we
         // have no polygon to scope to) and the round starts as Tier `none`.
+        let resolvedCourseId = candidate.existingCourseId ?? UUID()
         guard let osmCandidate = candidate.osmCandidate else {
             // MapKit-only fallback path. Still try GolfCourseAPI for scorecard
             // data — name + location alone might match.
-            resolveScorecard(courseName: candidate.name, near: candidate.coordinate) { scorecard in
+            resolveScorecard(
+                courseName: candidate.name,
+                near: candidate.coordinate,
+                knownExternalCourseId: candidate.existingExternalCourseId,
+                localCourseId: resolvedCourseId
+            ) { scorecard in
                 let resolution = Resolution(
-                    courseId: candidate.existingCourseId ?? UUID(),
+                    courseId: resolvedCourseId,
                     courseName: candidate.name,
                     courseCoordinate: candidate.coordinate,
                     osmData: nil,
@@ -349,9 +360,14 @@ final class RoundResolver {
                 osmData = nil
                 tier = .none
             }
-            self?.resolveScorecard(courseName: candidate.name, near: candidate.coordinate) { scorecard in
+            self?.resolveScorecard(
+                courseName: candidate.name,
+                near: candidate.coordinate,
+                knownExternalCourseId: candidate.existingExternalCourseId,
+                localCourseId: resolvedCourseId
+            ) { scorecard in
                 let resolution = Resolution(
-                    courseId: candidate.existingCourseId ?? UUID(),
+                    courseId: resolvedCourseId,
                     courseName: candidate.name,
                     courseCoordinate: candidate.coordinate,
                     osmData: osmData,
@@ -531,6 +547,7 @@ final class RoundResolver {
                     coordinate: c,
                     distanceMeters: dist,
                     existingCourseId: nil,
+                    existingExternalCourseId: nil,
                     osmCandidate: nil
                 )
             } ?? []
@@ -556,13 +573,17 @@ final class RoundResolver {
                                       completion: @escaping ([POICandidate]) -> Void) {
         Task {
             do {
-                let rows: [CourseRow] = try await supabase.from("courses")
-                    .select("id,name")
+                struct CourseRowWithExternal: Decodable {
+                    let id: UUID
+                    let name: String
+                    let external_course_id: String?
+                }
+                let rows: [CourseRowWithExternal] = try await supabase.from("courses")
+                    .select("id,name,external_course_id")
                     .execute()
                     .value
                 let matched: [POICandidate] = pois.map { poi in
                     let existing = rows.first { row in
-                        // Simple name match — case-insensitive substring either way.
                         let a = row.name.lowercased()
                         let b = poi.name.lowercased()
                         return a == b || a.contains(b) || b.contains(a)
@@ -572,13 +593,14 @@ final class RoundResolver {
                         coordinate: poi.coordinate,
                         distanceMeters: poi.distanceMeters,
                         existingCourseId: existing?.id,
+                        existingExternalCourseId: existing?.external_course_id,
                         osmCandidate: poi.osmCandidate
                     )
                 }
                 completion(matched)
             } catch {
                 dprint("[RoundResolver] DB course match failed: \(error)")
-                completion(pois)  // continue without DB matching
+                completion(pois)
             }
         }
     }
