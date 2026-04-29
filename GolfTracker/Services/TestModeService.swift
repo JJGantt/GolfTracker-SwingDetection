@@ -109,27 +109,52 @@ final class TestModeService: ObservableObject {
 
     private func subscribeToChanges() async {
         guard let uid = currentUserId() else { return }
-        ClientEventLogger.log("testmode.subscribe.start")
-        let ch = supabase.realtime.channel("user_test_state:\(uid)")
-        channel = ch
-        let pgFilter: RealtimePostgresFilter = .eq("user_id", value: uid)
-        let stream = ch.postgresChange(AnyAction.self, table: "user_test_state", filter: pgFilter)
-        subscription = Task { [weak self] in
-            ClientEventLogger.log("testmode.subscribe.streamLoop.enter")
-            for await action in stream {
-                ClientEventLogger.log("testmode.subscribe.streamLoop.gotEvent")
-                await self?.handleChange(action)
-            }
-            ClientEventLogger.log("testmode.subscribe.streamLoop.exit")
-        }
-        do {
-            try await ch.subscribeWithError()
-            ClientEventLogger.log("testmode.subscribe.ok")
-        } catch {
-            ClientEventLogger.log("testmode.subscribe.failed", detail: [
-                "error": .string(error.localizedDescription)
+        // Retry on CancellationError. The watch's first subscribe attempt
+        // routinely hits Swift.CancellationError — the SDK's subscribe
+        // gets cancelled mid-flight, likely from connection state changes
+        // (WebSocket setup races, screen sleep, etc.). Each retry creates
+        // a fresh channel + tears down the prior subscription Task.
+        for attempt in 1...5 {
+            ClientEventLogger.log("testmode.subscribe.start", detail: [
+                "attempt": .integer(attempt)
             ])
+            // Tear down any prior in-flight subscription Task before this
+            // attempt so we don't leak parallel for-await loops.
+            subscription?.cancel()
+
+            let ch = supabase.realtime.channel("user_test_state:\(uid)")
+            channel = ch
+            let pgFilter: RealtimePostgresFilter = .eq("user_id", value: uid)
+            let stream = ch.postgresChange(AnyAction.self, table: "user_test_state", filter: pgFilter)
+            subscription = Task { [weak self] in
+                ClientEventLogger.log("testmode.subscribe.streamLoop.enter")
+                for await action in stream {
+                    ClientEventLogger.log("testmode.subscribe.streamLoop.gotEvent")
+                    await self?.handleChange(action)
+                }
+                ClientEventLogger.log("testmode.subscribe.streamLoop.exit")
+            }
+            do {
+                try await ch.subscribeWithError()
+                ClientEventLogger.log("testmode.subscribe.ok", detail: [
+                    "attempt": .integer(attempt)
+                ])
+                return
+            } catch is CancellationError {
+                ClientEventLogger.log("testmode.subscribe.cancelled", detail: [
+                    "attempt": .integer(attempt)
+                ])
+                // Backoff: 0.5s, 1s, 1.5s, 2s
+                try? await Task.sleep(nanoseconds: UInt64(attempt) * 500_000_000)
+            } catch {
+                ClientEventLogger.log("testmode.subscribe.failed", detail: [
+                    "error": .string(error.localizedDescription),
+                    "attempt": .integer(attempt)
+                ])
+                return
+            }
         }
+        ClientEventLogger.log("testmode.subscribe.giveUp")
     }
 
     private func handleChange(_ action: AnyAction) async {
