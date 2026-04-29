@@ -75,6 +75,8 @@
 		6ASCORE0000000000000001B /* ScorecardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6ASCORE00000000000000019 /* ScorecardView.swift */; };
 		6ASCORE0000000000000001D /* ScorecardSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6ASCORE0000000000000001C /* ScorecardSheet.swift */; };
 		6ASCORE0000000000000001E /* ScorecardSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6ASCORE0000000000000001C /* ScorecardSheet.swift */; };
+		6AMULTI00000000000001101 /* MultiplayerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6AMULTI00000000000001100 /* MultiplayerView.swift */; };
+		6AMULTI00000000000001102 /* MultiplayerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6AMULTI00000000000001100 /* MultiplayerView.swift */; };
 		6ASETTC2F17000000000001 /* ClubRecommendSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6ASETTC2F17000000000002 /* ClubRecommendSettingsView.swift */; };
 		6ASETTINGS00000000000002 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6ASETTINGS00000000000001 /* SettingsView.swift */; };
 		6ASETTP2F17000000000001 /* PredictGreenSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6ASETTP2F17000000000002 /* PredictGreenSettingsView.swift */; };
@@ -200,6 +202,7 @@
 		6APERMBAN000000000000001 /* PermissionBanner.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = PermissionBanner.swift; sourceTree = "<group>"; };
 		6ASCORE00000000000000019 /* ScorecardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScorecardView.swift; sourceTree = "<group>"; };
 		6ASCORE0000000000000001C /* ScorecardSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScorecardSheet.swift; sourceTree = "<group>"; };
+		6AMULTI00000000000001100 /* MultiplayerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MultiplayerView.swift; sourceTree = "<group>"; };
 		6ASETTC2F17000000000002 /* ClubRecommendSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClubRecommendSettingsView.swift; sourceTree = "<group>"; };
 		6ASETTINGS00000000000001 /* SettingsView.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		6ASETTP2F17000000000002 /* PredictGreenSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PredictGreenSettingsView.swift; sourceTree = "<group>"; };
@@ -470,6 +473,7 @@
 				6APERMBAN000000000000001 /* PermissionBanner.swift */,
 				6ASCORE00000000000000019 /* ScorecardView.swift */,
 				6ASCORE0000000000000001C /* ScorecardSheet.swift */,
+				6AMULTI00000000000001100 /* MultiplayerView.swift */,
 			);
 			path = Shared;
 			sourceTree = "<group>";
@@ -682,6 +686,7 @@
 				6APERMBAN000000000000002 /* PermissionBanner.swift in Sources */,
 				6ASCORE0000000000000001A /* ScorecardView.swift in Sources */,
 				6ASCORE0000000000000001D /* ScorecardSheet.swift in Sources */,
+				6AMULTI00000000000001101 /* MultiplayerView.swift in Sources */,
 				6AONBOARD000000000000002 /* OnboardingView.swift in Sources */,
 				6ASUPAAUTH00000000000004 /* AuthManager.swift in Sources */,
 				6ASUPAAUTH00000000000006 /* LoginView.swift in Sources */,
@@ -719,6 +724,7 @@
 				6AAUTO000000000000000D1 /* AutoAdvanceMonitor.swift in Sources */,
 				6ASCORE0000000000000001B /* ScorecardView.swift in Sources */,
 				6ASCORE0000000000000001E /* ScorecardSheet.swift in Sources */,
+				6AMULTI00000000000001102 /* MultiplayerView.swift in Sources */,
 				6ASUPASYNC00000000000003 /* SupabaseSync.swift in Sources */,
 				6A27A5752F0C000000000001 /* SwingDetectionManager.swift in Sources */,
 				6A27A5772F0C000000000003 /* WorkoutManager.swift in Sources */,

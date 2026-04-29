@@ -25,6 +25,7 @@ struct OptionsView: View {
     var canUndo: Bool
 
     @State private var showingUndoConfirmation = false
+    @State private var showingMultiplayer = false
 
     var body: some View {
         ScrollView {
@@ -215,9 +216,18 @@ struct OptionsView: View {
                             navigateToPredictGreen = true
                         }
                     }
+
+                    settingsNavButton("Multiplayer") {
+                        showingMultiplayer = true
+                    }
                 }
             }
             .padding()
+        }
+        .sheet(isPresented: $showingMultiplayer) {
+            NavigationStack {
+                MultiplayerView()
+            }
         }
         .confirmationDialog("Undo Last Stroke?", isPresented: $showingUndoConfirmation, titleVisibility: .visible) {
             Button("Undo", role: .destructive) {

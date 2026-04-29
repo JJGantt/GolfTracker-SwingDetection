@@ -48,6 +48,14 @@ struct SettingsView: View {
                         .foregroundColor(.secondary)
                 }
 
+                Section("Multiplayer") {
+                    NavigationLink {
+                        MultiplayerView()
+                    } label: {
+                        Label("Host or join a round", systemImage: "person.2.fill")
+                    }
+                }
+
                 Section("Credits") {
                     Link(destination: URL(string: "https://www.openstreetmap.org/copyright")!) {
                         VStack(alignment: .leading, spacing: 2) {
