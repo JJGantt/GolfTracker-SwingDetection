@@ -1,4 +1,5 @@
 import SwiftUI
+import SwiftData
 
 /// Multiplayer entry-point view. Three sections:
 ///   1. Current playgroup (if any) — shows members + Leave button (or End for host)
@@ -51,10 +52,14 @@ struct MultiplayerView: View {
                     } label: {
                         Label("Host Round", systemImage: "flag.fill")
                     }
-                    .disabled(currentRoundId == nil)
+                    .disabled(currentRoundId == nil || !currentRoundHasRealCourse)
 
                     if currentRoundId == nil {
                         Text("Start a round first, then host it here.")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    } else if !currentRoundHasRealCourse {
+                        Text("Multiplayer requires a recognized golf course. Quick Start rounds (off-course / manual play) can't be hosted — start a round at a course detected via GPS to use multiplayer.")
                             .font(.caption)
                             .foregroundColor(.secondary)
                     }
@@ -170,6 +175,24 @@ struct MultiplayerView: View {
         // Set by HolePlayView's onAppear, cleared on disappear.
         return DataStore.shared.currentRoundId
         #endif
+    }
+
+    /// True only when the current round's `courseId` references an actual
+    /// `Course` row (resolver-created via OSM/GolfCourseAPI), not a synthetic
+    /// Quick Start placeholder. Multiplayer hosting depends on this because
+    /// `playgroups.course_id` has a FK to `courses(id)` AND because the
+    /// feature only makes sense at a real shared course.
+    private var currentRoundHasRealCourse: Bool {
+        guard let roundId = currentRoundId else { return false }
+        #if os(watchOS)
+        let round = WatchDataStore.shared.currentRound
+        let courses = (try? WatchDataStore.shared.modelContext?.fetch(FetchDescriptor<Course>())) ?? []
+        #else
+        let round = DataStore.shared.rounds.first { $0.id == roundId }
+        let courses = DataStore.shared.courses
+        #endif
+        guard let courseId = round?.courseId else { return false }
+        return courses.contains { $0.id == courseId }
     }
 
     private func reload() async {
