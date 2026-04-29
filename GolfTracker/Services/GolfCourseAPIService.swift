@@ -163,17 +163,28 @@ final class GolfCourseAPIService {
 
     /// Search for courses by name. Returns the courses GolfCourseAPI knows
     /// about; cache writes happen server-side as a side effect.
+    /// **Hits the paid API every time it's called.** Callers should check
+    /// the local cache first if they have an external_course_id to look up.
     func search(query: String) async throws -> [GCAPICourse] {
+        ClientEventLogger.log("gcapi.search.invokeFunction", detail: [
+            "query": .string(query)
+        ])
         let body: [String: Any] = ["query": query]
         let payload = try JSONSerialization.data(withJSONObject: body)
         let response = try await invokeFunction(name: "golfcourse-search", body: payload)
         let decoded = try JSONDecoder().decode(GCAPISearchResponse.self, from: response)
+        ClientEventLogger.log("gcapi.search.responded", detail: [
+            "courseCount": .integer(decoded.courses?.count ?? 0)
+        ])
         return decoded.courses ?? []
     }
 
     /// Fetch a specific course by GolfCourseAPI id. Same side effect as search
     /// — caches the result server-side. Useful for "refresh this course's data".
     func fetchCourse(externalId: Int) async throws -> GCAPICourse? {
+        ClientEventLogger.log("gcapi.fetchCourse.invokeFunction", detail: [
+            "externalId": .integer(externalId)
+        ])
         let body: [String: Any] = ["courseId": externalId]
         let payload = try JSONSerialization.data(withJSONObject: body)
         let response = try await invokeFunction(name: "golfcourse-search", body: payload)
@@ -185,25 +196,37 @@ final class GolfCourseAPIService {
 
     /// Read all cached tees for a given external course id, sorted by gender
     /// then tee name. Used by the tee-picker UI after the user has picked a
-    /// course.
+    /// course. **Cache read — does NOT hit the GolfCourseAPI.**
     func cachedTees(forExternalCourseId externalId: String) async throws -> [CachedCourseTee] {
-        try await supabase.from("course_tees")
+        let rows: [CachedCourseTee] = try await supabase.from("course_tees")
             .select()
             .eq("external_course_id", value: externalId)
             .order("gender")
             .order("tee_name")
             .execute()
             .value
+        ClientEventLogger.log("gcapi.cachedTees.read", detail: [
+            "externalId": .string(externalId),
+            "rowCount": .integer(rows.count),
+            "hit": .bool(!rows.isEmpty)
+        ])
+        return rows
     }
 
-    /// Read the per-hole data for one specific tee.
+    /// Read the per-hole data for one specific tee. **Cache read.**
     func cachedHoles(forTeeId teeId: UUID) async throws -> [CachedCourseTeeHole] {
-        try await supabase.from("course_tee_holes")
+        let rows: [CachedCourseTeeHole] = try await supabase.from("course_tee_holes")
             .select()
             .eq("tee_id", value: teeId)
             .order("hole_number")
             .execute()
             .value
+        ClientEventLogger.log("gcapi.cachedHoles.read", detail: [
+            "teeId": .string(teeId.uuidString),
+            "rowCount": .integer(rows.count),
+            "hit": .bool(!rows.isEmpty)
+        ])
+        return rows
     }
 
     // MARK: Edge Function invocation
