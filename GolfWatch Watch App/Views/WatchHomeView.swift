@@ -130,6 +130,79 @@ struct WatchHomeView: View {
             } message: { match in
                 Text("\(Int(match.distanceMeters))m away")
             }
+            .sheet(item: Binding(
+                get: { store.pendingTeePicker.map { TeePickerWrapper(picker: $0) } },
+                set: { _ in store.pickTee(nil) }
+            )) { wrapper in
+                TeePickerView(
+                    courseName: wrapper.picker.courseName,
+                    tees: wrapper.picker.tees
+                ) { picked in
+                    store.pickTee(picked)
+                }
+            }
+        }
+    }
+}
+
+private struct TeePickerWrapper: Identifiable {
+    let picker: WatchDataStore.PendingTeePicker
+    var id: String { picker.tees.map { $0.id.uuidString }.joined(separator: "|") }
+}
+
+private struct TeePickerView: View {
+    let courseName: String
+    let tees: [CachedCourseTee]
+    let onPick: (CachedCourseTee?) -> Void
+
+    /// Sort: men's tees first, then by total yardage descending (longest tees
+    /// first feels natural — most golfers know roughly which one fits them
+    /// from longest to shortest).
+    private var sorted: [CachedCourseTee] {
+        tees.sorted {
+            let aGenderRank = $0.gender == "male" ? 0 : 1
+            let bGenderRank = $1.gender == "male" ? 0 : 1
+            if aGenderRank != bGenderRank { return aGenderRank < bGenderRank }
+            return ($0.totalYards ?? 0) > ($1.totalYards ?? 0)
+        }
+    }
+
+    var body: some View {
+        NavigationStack {
+            List(sorted) { tee in
+                Button { onPick(tee) } label: {
+                    VStack(alignment: .leading, spacing: 2) {
+                        HStack {
+                            Text(tee.teeName).font(.body)
+                            Spacer()
+                            if let yds = tee.totalYards {
+                                Text("\(yds) yd").font(.caption).foregroundColor(.secondary)
+                            }
+                        }
+                        HStack(spacing: 6) {
+                            if let par = tee.parTotal {
+                                Text("Par \(par)").font(.caption2).foregroundColor(.secondary)
+                            }
+                            if let rating = tee.courseRating, let slope = tee.slopeRating {
+                                Text("• \(rating, specifier: "%.1f")/\(slope)")
+                                    .font(.caption2)
+                                    .foregroundColor(.secondary)
+                            }
+                            if let gender = tee.gender {
+                                Text("• \(gender == "male" ? "M" : "W")")
+                                    .font(.caption2)
+                                    .foregroundColor(.secondary)
+                            }
+                        }
+                    }
+                }
+            }
+            .navigationTitle("Pick tee")
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Skip") { onPick(nil) }
+                }
+            }
         }
     }
 }

@@ -162,6 +162,7 @@ final class RealtimeSync {
         let currentHoleIndex = record["current_hole_index"]?.intValue ?? 0
         let completed = (record["completed_holes"]?.arrayValue?.compactMap { $0.intValue }) ?? []
 
+        let selectedTeeId = record["selected_tee_id"]?.stringValue.flatMap(UUID.init(uuidString:))
         if let existing = existing {
             existing.courseId = courseId
             existing.courseName = courseName
@@ -170,13 +171,15 @@ final class RealtimeSync {
             existing.completedHolesArray = completed
             existing.holeDetectionEnabled = record["hole_detection_enabled"]?.boolValue
             existing.locationTestModeEnabled = record["location_test_mode_enabled"]?.boolValue
+            existing.selectedTeeId = selectedTeeId
         } else {
             let r = Round(
                 id: id,
                 courseId: courseId,
                 courseName: courseName,
                 holes: [],
-                date: date
+                date: date,
+                selectedTeeId: selectedTeeId
             )
             r.currentHoleIndex = currentHoleIndex
             r.completedHolesArray = completed
@@ -215,11 +218,13 @@ final class RealtimeSync {
         let lat = record["latitude"]?.doubleValue
         let lon = record["longitude"]?.doubleValue
         let par = record["par"]?.intValue
+        let teeId = record["tee_id"]?.stringValue.flatMap(UUID.init(uuidString:))
         if let existing = existing {
             existing.number = number; existing.latitude = lat; existing.longitude = lon; existing.par = par
+            existing.teeId = teeId
         } else {
             let h = Hole(id: id, number: number)
-            h.latitude = lat; h.longitude = lon; h.par = par
+            h.latitude = lat; h.longitude = lon; h.par = par; h.teeId = teeId
             context.insert(h)
             // Best-effort link to its round via round_id, if present.
             if let roundId = record["round_id"]?.stringValue.flatMap(UUID.init(uuidString:)) {

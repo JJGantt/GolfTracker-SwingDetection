@@ -135,6 +135,12 @@ final class Hole {
     var latitude: Double?
     var longitude: Double?
     var par: Int?
+    /// Per-hole snapshot of which tee was active when this hole was played.
+    /// Set at round start from `Round.selectedTeeId`; preserved through any
+    /// mid-round tee changes so future holes can update without rewriting
+    /// history. References `course_tees.id` (no SwiftData @Relationship since
+    /// CourseTees aren't @Model — they live in Supabase only as cached rows).
+    var teeId: UUID?
     /// Inverse relationship: nil if this hole is owned by a Round (round-time
     /// snapshot) rather than a course directly.
     var course: Course?
@@ -143,12 +149,14 @@ final class Hole {
     init(id: UUID = UUID(),
          number: Int,
          coordinate: CLLocationCoordinate2D? = nil,
-         par: Int? = nil) {
+         par: Int? = nil,
+         teeId: UUID? = nil) {
         self.id = id
         self.number = number
         self.latitude = coordinate?.latitude
         self.longitude = coordinate?.longitude
         self.par = par
+        self.teeId = teeId
     }
 
     var coordinate: CLLocationCoordinate2D? {
@@ -247,6 +255,11 @@ final class Round {
     @Relationship(deleteRule: .cascade, inverse: \Target.round) var targets: [Target]
     var holeDetectionEnabled: Bool?
     var locationTestModeEnabled: Bool?
+    /// User's currently-selected tee. References `course_tees.id` in Supabase.
+    /// Set when the user picks at round start; updated when they change tee
+    /// mid-round (via Settings). Nil for rounds at courses GolfCourseAPI
+    /// doesn't have (no tee picker shown).
+    var selectedTeeId: UUID?
 
     init(id: UUID = UUID(),
          courseId: UUID,
@@ -254,7 +267,8 @@ final class Round {
          holes: [Hole] = [],
          holeDetectionEnabled: Bool = false,
          locationTestModeEnabled: Bool = false,
-         date: Date = Date()) {
+         date: Date = Date(),
+         selectedTeeId: UUID? = nil) {
         self.id = id
         self.courseId = courseId
         self.courseName = courseName
@@ -266,6 +280,7 @@ final class Round {
         self.targets = []
         self.holeDetectionEnabled = holeDetectionEnabled
         self.locationTestModeEnabled = locationTestModeEnabled
+        self.selectedTeeId = selectedTeeId
     }
 
     var completedHoles: Set<Int> {

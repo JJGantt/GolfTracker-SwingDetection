@@ -143,6 +143,7 @@ final class SupabaseSync {
             "completed_holes": .intArray(Array(round.completedHoles)),
             "hole_detection_enabled": round.holeDetectionEnabled.map(AnyCodableValue.bool) ?? .null,
             "location_test_mode_enabled": round.locationTestModeEnabled.map(AnyCodableValue.bool) ?? .null,
+            "selected_tee_id": round.selectedTeeId.map { .string($0.uuidString) } ?? .null,
             "updated_at": .string(iso(Date()))
         ]
         upsert(table: "rounds", values: body, onConflict: "id")
@@ -159,7 +160,8 @@ final class SupabaseSync {
             "number": .int(hole.number),
             "latitude": hole.latitude.map(AnyCodableValue.double) ?? .null,
             "longitude": hole.longitude.map(AnyCodableValue.double) ?? .null,
-            "par": hole.par.map(AnyCodableValue.int) ?? .null
+            "par": hole.par.map(AnyCodableValue.int) ?? .null,
+            "tee_id": hole.teeId.map { .string($0.uuidString) } ?? .null
         ]
         upsert(table: "round_holes", values: body, onConflict: "id")
     }

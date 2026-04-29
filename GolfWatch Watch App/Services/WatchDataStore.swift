@@ -61,6 +61,18 @@ class WatchDataStore: ObservableObject {
     @Published var pendingExistingCoursePrompt: RoundResolver.ExistingCourseMatch?
     private var pendingExistingCourseCompletion: ((Bool) -> Void)?
 
+    /// Set after the resolver completes with GolfCourseAPI scorecard data —
+    /// the user picks a tee from the cached tee list before the round opens.
+    @Published var pendingTeePicker: PendingTeePicker?
+    /// Holds the resolution while the tee picker is up, so we can start the
+    /// round once the user picks (or skips).
+    private var pendingTeePickerResolution: RoundResolver.Resolution?
+
+    struct PendingTeePicker {
+        let courseName: String
+        let tees: [CachedCourseTee]
+    }
+
     @Published var clubPredictionMode: ClubPredictionMode = .manual {
         didSet { UserDefaults.standard.set(clubPredictionMode.rawValue, forKey: "clubPredictionMode") }
     }
@@ -371,13 +383,61 @@ class WatchDataStore: ObservableObject {
                     guard let self = self else { return }
                     self.roundStartStatus = nil
                     if let resolution = resolution {
-                        self.startRound(from: resolution)
+                        self.handleResolved(resolution)
                     } else {
                         self.startManualQuickRound()
                     }
                 }
             }
         )
+    }
+
+    /// Bridge between resolver completion and round start. If GolfCourseAPI
+    /// returned scorecard data, present the tee picker first; otherwise start
+    /// the round immediately with no tee selection.
+    private func handleResolved(_ resolution: RoundResolver.Resolution) {
+        guard let scorecard = resolution.scorecardCourse else {
+            startRound(from: resolution, selectedTeeId: nil)
+            return
+        }
+        // Pull cached tees from DB (the Edge Function populated them as a side
+        // effect of the search call during resolveScorecard).
+        Task { [weak self] in
+            do {
+                let tees = try await GolfCourseAPIService.shared.cachedTees(
+                    forExternalCourseId: String(scorecard.id)
+                )
+                await MainActor.run {
+                    guard let self = self else { return }
+                    if tees.isEmpty {
+                        // Cache miss (rare — Edge Function should have written
+                        // them). Skip picker, start round with no tee.
+                        self.startRound(from: resolution, selectedTeeId: nil)
+                    } else {
+                        self.pendingTeePickerResolution = resolution
+                        self.pendingTeePicker = PendingTeePicker(
+                            courseName: resolution.courseName,
+                            tees: tees
+                        )
+                    }
+                }
+            } catch {
+                dprint("⌚ [WatchDataStore] tee fetch failed: \(error.localizedDescription) — starting without tee")
+                await MainActor.run {
+                    self?.startRound(from: resolution, selectedTeeId: nil)
+                }
+            }
+        }
+    }
+
+    /// Called by the watch's tee picker UI. `nil` = user cancelled / no tee
+    /// (round still starts).
+    func pickTee(_ tee: CachedCourseTee?) {
+        let resolution = pendingTeePickerResolution
+        pendingTeePicker = nil
+        pendingTeePickerResolution = nil
+        guard let resolution = resolution else { return }
+        startRound(from: resolution, selectedTeeId: tee?.id)
     }
 
     func pickPOICandidate(_ candidate: RoundResolver.POICandidate?) {
@@ -397,7 +457,7 @@ class WatchDataStore: ObservableObject {
         cb?(confirmed)
     }
 
-    private func startRound(from resolution: RoundResolver.Resolution) {
+    private func startRound(from resolution: RoundResolver.Resolution, selectedTeeId: UUID?) {
         guard let context = context else { return }
         if let osm = resolution.osmData {
             osmCourseDataByCourse[resolution.courseId] = osm
@@ -412,18 +472,19 @@ class WatchDataStore: ObservableObject {
                         latitude: h.greenPoint.latitude,
                         longitude: h.greenPoint.longitude
                     )
-                    return (n, Hole(number: n, coordinate: coord, par: h.par))
+                    return (n, Hole(number: n, coordinate: coord, par: h.par, teeId: selectedTeeId))
                 }
                 .sorted { $0.0 < $1.0 }
                 .map { $0.1 }
         } else {
-            holes = [Hole(number: 1)]
+            holes = [Hole(number: 1, teeId: selectedTeeId)]
         }
 
         let newRound = Round(
             courseId: resolution.courseId,
             courseName: resolution.courseName,
-            holes: holes
+            holes: holes,
+            selectedTeeId: selectedTeeId
         )
         for h in holes { context.insert(h) }
         context.insert(newRound)
@@ -431,7 +492,7 @@ class WatchDataStore: ObservableObject {
         currentRoundId = newRound.id
         UserDefaults.standard.set(newRound.id.uuidString, forKey: currentRoundIdKey)
         SupabaseSync.shared.upsertRound(newRound)
-        dprint("⌚ [WatchDataStore] Started round at \(resolution.courseName) (tier=\(resolution.tier), \(holes.count) holes)")
+        dprint("⌚ [WatchDataStore] Started round at \(resolution.courseName) (tier=\(resolution.tier), \(holes.count) holes, tee=\(selectedTeeId?.uuidString ?? "none"))")
     }
 
     func startManualQuickRound() {
