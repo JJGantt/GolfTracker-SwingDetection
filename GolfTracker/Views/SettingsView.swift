@@ -27,6 +27,29 @@ struct SettingsView: View {
                         }
                     }
 
+                    HStack {
+                        Text("Display name")
+                        Spacer()
+                        TextField("First name", text: $displayName)
+                            .multilineTextAlignment(.trailing)
+                            .autocorrectionDisabled()
+                            .textInputAutocapitalization(.words)
+                            .onSubmit { saveName() }
+                    }
+                    Button {
+                        saveName()
+                    } label: {
+                        if savingName {
+                            HStack { ProgressView(); Text("Saving…") }
+                        } else {
+                            Text("Save name")
+                        }
+                    }
+                    .disabled(savingName || displayName.trimmingCharacters(in: .whitespaces).isEmpty)
+                    if let msg = nameSavedMessage {
+                        Text(msg).font(.caption).foregroundColor(.secondary)
+                    }
+
                     Button("Sign Out") {
                         showingSignOutConfirm = true
                     }
@@ -61,32 +84,6 @@ struct SettingsView: View {
                     }
                     Toggle("Share my live position", isOn: $liveDotsEnabled)
                     Text("When on, your playgroup partners see a moving dot for you on the map. Other players' dots are still visible to you either way.")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-
-                    HStack {
-                        Text("Display name")
-                        Spacer()
-                        TextField("First name", text: $displayName)
-                            .multilineTextAlignment(.trailing)
-                            .autocorrectionDisabled()
-                            .textInputAutocapitalization(.words)
-                            .onSubmit { saveName() }
-                    }
-                    Button {
-                        saveName()
-                    } label: {
-                        if savingName {
-                            HStack { ProgressView(); Text("Saving…") }
-                        } else {
-                            Text("Save name")
-                        }
-                    }
-                    .disabled(savingName || displayName.trimmingCharacters(in: .whitespaces).isEmpty)
-                    if let msg = nameSavedMessage {
-                        Text(msg).font(.caption).foregroundColor(.secondary)
-                    }
-                    Text("Shown to your playgroup partners on the scorecard and member list.")
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }
