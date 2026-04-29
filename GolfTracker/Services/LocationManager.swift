@@ -117,39 +117,32 @@ class LocationManager: NSObject {
     }
 
     func setTestModeEnabled(_ enabled: Bool) {
-        // Dispatch to avoid "Publishing changes from within view updates" when
-        // called from SwiftUI .onChange callbacks.
-        let apply = {
-            self.isTestModeEnabled = enabled
-
-            if enabled {
-                self.locationManager.stopUpdatingLocation()
-                #if os(iOS) || os(watchOS)
-                self.locationManager.stopUpdatingHeading()
-                #endif
-
-                let forced = self.forcedTestLocation
-                self.location = forced
-                self.errorMessage = nil
-                // Fire the Combine publisher so AutoAdvanceMonitor and
-                // any other locationPublisher subscribers re-evaluate
-                // against the simulated coord, same as a real GPS update.
-                self.locationPublisher.send(forced)
-                // Heading: leave whatever the real compass reports. User
-                // explicitly opted to keep real heading during test so
-                // bugs in heading-driven UI stay detectable.
-                dprint("[LocationManager] Test mode ON: forcing location to \(forced.coordinate.latitude), \(forced.coordinate.longitude)")
-            } else {
-                self.simulatedTestLocation = nil
-                dprint("[LocationManager] Test mode OFF: resuming live GPS")
-                self.startTracking()
-            }
-        }
-
-        if Thread.isMainThread {
-            DispatchQueue.main.async { apply() }
+        // Synchronous on whatever thread the caller is on. Used to dispatch
+        // async to avoid SwiftUI "Publishing changes from within view
+        // updates" warnings, but our actual call sites are background Tasks
+        // (TestModeService.applyState / setTestModeEnabled toggle), not view
+        // updates — and the async dispatch was creating a window where
+        // isTestModeEnabled was still `false` when downstream code (like
+        // ActiveRoundView.handleViewAppear → startTracking) ran, causing
+        // real GPS to spin up and overwrite the simulated location.
+        isTestModeEnabled = enabled
+        if enabled {
+            locationManager.stopUpdatingLocation()
+            #if os(iOS) || os(watchOS)
+            locationManager.stopUpdatingHeading()
+            #endif
+            let forced = forcedTestLocation
+            location = forced
+            errorMessage = nil
+            // Fire the Combine publisher so AutoAdvanceMonitor and any
+            // other locationPublisher subscribers re-evaluate against the
+            // simulated coord, same as a real GPS update.
+            locationPublisher.send(forced)
+            dprint("[LocationManager] Test mode ON: forcing location to \(forced.coordinate.latitude), \(forced.coordinate.longitude)")
         } else {
-            apply()
+            simulatedTestLocation = nil
+            dprint("[LocationManager] Test mode OFF: resuming live GPS")
+            startTracking()
         }
     }
 

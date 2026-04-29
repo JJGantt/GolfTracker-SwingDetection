@@ -138,27 +138,16 @@ final class TestModeService: ObservableObject {
         } else {
             simulatedCoord = nil
         }
-        // Push into LocationManager. We do applyTestLocation BEFORE
-        // setTestModeEnabled so the simulated coord is in place when
-        // setTestModeEnabled reads forcedTestLocation. Previously we
-        // called setTestModeEnabled first, which dispatches its work
-        // async and then applyTestLocation was bailing because
-        // isTestModeEnabled wasn't yet flipped — leaving location stuck
-        // on the static fallback testCoordinate or the real GPS.
+        // Push into LocationManager. Order: stash the simulated coord
+        // first so setTestModeEnabled's forcedTestLocation read picks it
+        // up, then enable. Both calls are synchronous so by the time we
+        // return, isTestModeEnabled is true and location is the simulated
+        // coord — no race against startTracking() being called elsewhere.
         if enabled {
             if let coord = simulatedCoord {
-                // applyTestLocation just stashes simulatedTestLocation if
-                // test mode isn't on yet (its bail path) — safe to call.
                 LocationManager.shared.applyTestLocation(coord)
             }
             LocationManager.shared.setTestModeEnabled(true)
-            // After test mode flips on, fire one more applyTestLocation so
-            // location/publisher reflect the coord (the dispatch in
-            // setTestModeEnabled may settle after this; both are queued
-            // on main and SwiftUI tolerates either order).
-            if let coord = simulatedCoord {
-                LocationManager.shared.applyTestLocation(coord)
-            }
         } else {
             LocationManager.shared.setTestModeEnabled(false)
         }
