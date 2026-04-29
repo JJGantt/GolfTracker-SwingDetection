@@ -1,30 +1,58 @@
 import Foundation
 import CoreLocation
 import Combine
+import Observation
 
-class LocationManager: NSObject, ObservableObject {
+/// LocationManager uses the new `@Observable` macro instead of the older
+/// Combine-based `ObservableObject` / `@Published` pattern. Why: with
+/// `ObservableObject`, ANY @Published change publishes "this object
+/// changed" — every observing view re-evaluates its body. The watch's
+/// compass updates `heading` at ~5Hz, which made the entire
+/// `ActiveRoundView` body re-evaluate that often, even though heading is
+/// only needed in two tiny spots (the user-arrow rotation). With
+/// `@Observable`, observation is property-level: a view that reads only
+/// `location` doesn't re-render on `heading` changes.
+///
+/// Required side-effect: every consumer used to use
+/// `@StateObject`/`@ObservedObject var locationManager = LocationManager.shared`.
+/// Those wrappers don't apply to `@Observable` classes — consumers now
+/// access `LocationManager.shared` directly. Inside a SwiftUI view body,
+/// reading `LocationManager.shared.location` registers an observation on
+/// just that property automatically.
+@Observable
+class LocationManager: NSObject {
     static let shared = LocationManager()
     static let testCoordinate = CLLocationCoordinate2D(
         latitude: 30.285357365597697,
         longitude: -81.74623642434663
     )
 
+    @ObservationIgnored
     private let locationManager = CLLocationManager()
 
-    @Published var location: CLLocation?
-    @Published var heading: CLLocationDirection?
-    @Published var authorizationStatus: CLAuthorizationStatus = .notDetermined
-    @Published var errorMessage: String?
-    @Published var isTestModeEnabled: Bool = false
+    var location: CLLocation?
+    var heading: CLLocationDirection?
+    var authorizationStatus: CLAuthorizationStatus = .notDetermined
+    var errorMessage: String?
+    var isTestModeEnabled: Bool = false
     enum GPSPowerMode: String {
         case full       // kCLLocationAccuracyBest, 1m filter
         case moderate   // kCLLocationAccuracyNearestTenMeters, 10m filter
         case off        // GPS completely stopped (on green)
     }
 
-    @Published var gpsPowerMode: GPSPowerMode = .full
-    @Published var isLowPowerMode: Bool = false  // deprecated — use gpsPowerMode == .off
+    var gpsPowerMode: GPSPowerMode = .full
+    var isLowPowerMode: Bool = false  // deprecated — use gpsPowerMode == .off
+    @ObservationIgnored
     private var lowPowerTimer: Timer?
+
+    /// Combine publisher for non-view subscribers (background watchers like
+    /// `AutoAdvanceMonitor` that use throttling/sinks). View code should
+    /// just read the `location` property — `@Observable` will track it
+    /// automatically. The publisher is fed alongside `location` from the
+    /// CLLocation delegate.
+    @ObservationIgnored
+    let locationPublisher = PassthroughSubject<CLLocation, Never>()
 
     private var forcedTestLocation: CLLocation {
         CLLocation(latitude: Self.testCoordinate.latitude, longitude: Self.testCoordinate.longitude)
@@ -240,6 +268,7 @@ extension LocationManager: CLLocationManagerDelegate {
         guard let newLocation = locations.last else { return }
         dprint("[LocationManager] Got location update: \(newLocation.coordinate.latitude), \(newLocation.coordinate.longitude)")
         location = newLocation
+        locationPublisher.send(newLocation)
         errorMessage = nil
     }
 

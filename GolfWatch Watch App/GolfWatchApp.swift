@@ -6,7 +6,7 @@ import CoreMotion
 struct GolfTrackerWatchApp: App {
     // These singletons manage their own lifetime — @ObservedObject is correct here.
     @ObservedObject private var connectivity = WatchConnectivityManager.shared
-    @ObservedObject private var locationManager = LocationManager.shared
+    private let locationManager = LocationManager.shared
     @ObservedObject private var swingDetector = SwingDetectionManager.shared
     @AppStorage("hasSeenWatchOnboarding") private var hasSeenWatchOnboarding = false
     @Environment(\.scenePhase) private var scenePhase

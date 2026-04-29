@@ -33,7 +33,7 @@ struct PermissionBanner: View {
 }
 
 struct LocationPermissionBanner: View {
-    @ObservedObject var locationManager: LocationManager = .shared
+    var locationManager: LocationManager = .shared
 
     var body: some View {
         if locationManager.authorizationStatus == .denied || locationManager.authorizationStatus == .restricted {

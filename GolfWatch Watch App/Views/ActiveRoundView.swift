@@ -4,7 +4,7 @@ import WatchKit
 
 struct ActiveRoundView: View {
     @StateObject var store = WatchDataStore.shared
-    @StateObject var locationManager = LocationManager.shared
+    let locationManager = LocationManager.shared
     @StateObject var swingDetector = SwingDetectionManager.shared
     @StateObject var workoutManager = WorkoutManager.shared
     @ObservedObject var playgroupChannel = PlaygroupChannel.shared

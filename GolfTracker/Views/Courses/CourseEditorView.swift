@@ -5,7 +5,7 @@ struct CourseEditorView: View {
     @ObservedObject var store: DataStore
     let course: Course
 
-    @StateObject private var locationManager = LocationManager()
+    @State private var locationManager = LocationManager()
     @State private var position = MapCameraPosition.automatic
     @State private var selectedHole: Hole?
     @State private var showingHoleActions = false

@@ -9,7 +9,7 @@ struct HolePlayView: View {
     let runHoleDetectionWithTestCoordinates: Bool
 
     // MARK: - Core State
-    @StateObject var locationManager = LocationManager()
+    @State var locationManager = LocationManager()
     @State var currentHoleIndex = 0
     @State var activeRound: Round?
 

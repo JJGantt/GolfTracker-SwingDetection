@@ -9,7 +9,7 @@ import MapKit
 ///   indicator; saving calls `dismiss()`.
 struct HolePlacementView: View {
     @ObservedObject var store: WatchDataStore
-    @ObservedObject var locationManager: LocationManager
+    let locationManager: LocationManager
     let hole: Hole
     let isEditing: Bool
     @Environment(\.dismiss) private var dismiss

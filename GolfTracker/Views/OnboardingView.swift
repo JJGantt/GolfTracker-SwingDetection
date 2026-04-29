@@ -3,7 +3,7 @@ import CoreLocation
 
 struct OnboardingView: View {
     @Binding var hasSeenOnboarding: Bool
-    @ObservedObject private var locationManager = LocationManager.shared
+    private let locationManager = LocationManager.shared
     @State private var didRequestLocation = false
 
     var body: some View {

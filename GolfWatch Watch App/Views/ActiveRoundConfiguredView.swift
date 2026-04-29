@@ -4,7 +4,7 @@ struct ActiveRoundConfiguredView: View {
     let content: AnyView
 
     @ObservedObject var store: WatchDataStore
-    @ObservedObject var locationManager: LocationManager
+    let locationManager: LocationManager
 
     @Binding var showingOptions: Bool
     @Binding var showingEditHole: Bool

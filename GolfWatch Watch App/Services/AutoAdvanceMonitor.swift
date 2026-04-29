@@ -62,8 +62,12 @@ final class AutoAdvanceMonitor: ObservableObject {
     }
 
     private func wireLocationUpdates() {
-        LocationManager.shared.$location
-            .compactMap { $0 }
+        // LocationManager moved from ObservableObject to @Observable, so the
+        // Combine `$location` publisher is gone. We use the explicit
+        // `locationPublisher` (PassthroughSubject) we added alongside the
+        // observed property — view code reads the property, background
+        // watchers like this one use the publisher.
+        LocationManager.shared.locationPublisher
             .throttle(for: .seconds(2), scheduler: RunLoop.main, latest: true)
             .sink { [weak self] loc in
                 self?.evaluate(at: loc.coordinate)
