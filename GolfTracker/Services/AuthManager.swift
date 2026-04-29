@@ -163,6 +163,11 @@ final class AuthManager: NSObject, ObservableObject {
                     // tears it down to be safe.
                     if mirror == nil {
                         RealtimeSync.shared.stop()
+                    } else {
+                        // Retry TestModeService bootstrap whenever a real
+                        // session arrives. start() is idempotent — bails
+                        // if it's already running.
+                        TestModeService.shared.start()
                     }
                 }
             }

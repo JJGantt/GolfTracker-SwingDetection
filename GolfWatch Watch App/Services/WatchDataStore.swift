@@ -172,9 +172,14 @@ class WatchDataStore: ObservableObject {
         // sees iPhone-side club edits unless the user enters a round.
         hydrateClubsFromSupabase()
         // Auth may not be ready at app launch (session arrives via WC from
-        // iPhone). Re-hydrate the moment we have a valid user.
+        // iPhone). Re-hydrate the moment we have a valid user. Also wake
+        // TestModeService here — it bails early if currentUserId is nil
+        // at first launch, so this is the retry hook.
         WatchAuthSession.shared.onSessionChanged = { [weak self] session in
-            if session != nil { self?.hydrateClubsFromSupabase() }
+            if session != nil {
+                self?.hydrateClubsFromSupabase()
+                Task { @MainActor in TestModeService.shared.start() }
+            }
         }
     }
 

@@ -30,21 +30,21 @@ final class TestModeService: ObservableObject {
 
     // MARK: - Lifecycle
 
-    /// Wire this once at app launch (after auth is available). Pulls the
-    /// initial DB state, then subscribes to changes.
+    /// Wire this at app launch and again when auth becomes available
+    /// (auth might not be ready at first launch, especially on the watch
+    /// where the session arrives via WatchConnectivity from the phone).
+    /// Idempotent: the actual setup checks `started` AND `currentUserId`
+    /// inside the Task, so repeated calls during auth flux are safe.
     func start() {
-        guard !started else { return }
-        started = true
         Task { await self.bootstrap() }
     }
 
     private func bootstrap() async {
-        guard currentUserId() != nil else {
-            // Not signed in yet — try again later. Auth handlers can call
-            // start() once a session is available.
-            started = false
-            return
-        }
+        // Already running — nothing to do.
+        if started, channel != nil { return }
+        // Auth not ready — bail; caller will re-trigger when it is.
+        guard currentUserId() != nil else { return }
+        started = true
         await refreshFromDB()
         await subscribeToChanges()
     }
