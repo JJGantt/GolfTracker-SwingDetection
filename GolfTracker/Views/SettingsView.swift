@@ -125,9 +125,6 @@ struct SettingsView: View {
                             withAnimation { showingDeveloper.toggle() }
                         }
                 }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Done") { dismiss() }
-                }
             }
             .task {
                 // Pre-fill the name field with whatever's saved (display_name

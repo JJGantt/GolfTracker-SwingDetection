@@ -50,6 +50,11 @@ struct ContentView: View {
                 .tabItem {
                     Label("Tests", systemImage: "waveform")
                 }
+
+            SettingsView()
+                .tabItem {
+                    Label("Settings", systemImage: "gearshape.fill")
+                }
         }
     }
 }
