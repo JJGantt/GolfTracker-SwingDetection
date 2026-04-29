@@ -16,7 +16,6 @@
 		213F987A236E419F88E9C4C2 /* HolePlayView+MoveStrokeMode.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0F575753710A466D92C391CB /* HolePlayView+MoveStrokeMode.swift */; };
 		25075A32729043CBA13B479B /* ActiveRoundView+StrokeRecording.swift in Sources */ = {isa = PBXBuildFile; fileRef = B395866142294534934CF914 /* ActiveRoundView+StrokeRecording.swift */; };
 		292FA1B1CDCE4D5D80F8A5D6 /* PlayerStats.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8713ACF846B0498E97AAC629 /* PlayerStats.swift */; };
-		42A2A63EE4BD4DACB2C9179E /* InRoundScorecardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = ED2724CFBFA6421AA2088B76 /* InRoundScorecardView.swift */; };
 		5143D17BE2F7418983D61086 /* StatsEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 01635C6BB56440EA8CF2FA63 /* StatsEngine.swift */; };
 		6A10COMPAT00000001 /* WatchOS10Compatibility.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6A10COMPAT00000002 /* WatchOS10Compatibility.swift */; };
 		6A27A5742EF7ABA000D64047 /* AddHoleNavigationView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6A27A5732EF7ABA000D64047 /* AddHoleNavigationView.swift */; };
@@ -72,6 +71,10 @@
 		6AOSMSVC00000000000000A1 /* OSMCourseService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6AOSMSVC00000000000000A0 /* OSMCourseService.swift */; };
 		6AOSMSVC00000000000000A2 /* OSMCourseService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6AOSMSVC00000000000000A0 /* OSMCourseService.swift */; };
 		6APERMBAN000000000000002 /* PermissionBanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6APERMBAN000000000000001 /* PermissionBanner.swift */; };
+		6ASCORE0000000000000001A /* ScorecardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6ASCORE00000000000000019 /* ScorecardView.swift */; };
+		6ASCORE0000000000000001B /* ScorecardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6ASCORE00000000000000019 /* ScorecardView.swift */; };
+		6ASCORE0000000000000001D /* ScorecardSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6ASCORE0000000000000001C /* ScorecardSheet.swift */; };
+		6ASCORE0000000000000001E /* ScorecardSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6ASCORE0000000000000001C /* ScorecardSheet.swift */; };
 		6ASETTC2F17000000000001 /* ClubRecommendSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6ASETTC2F17000000000002 /* ClubRecommendSettingsView.swift */; };
 		6ASETTINGS00000000000002 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6ASETTINGS00000000000001 /* SettingsView.swift */; };
 		6ASETTP2F17000000000001 /* PredictGreenSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6ASETTP2F17000000000002 /* PredictGreenSettingsView.swift */; };
@@ -193,6 +196,8 @@
 		6AONBOARD000000000000003 /* WatchOnboardingView.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = WatchOnboardingView.swift; sourceTree = "<group>"; };
 		6AOSMSVC00000000000000A0 /* OSMCourseService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OSMCourseService.swift; sourceTree = "<group>"; };
 		6APERMBAN000000000000001 /* PermissionBanner.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = PermissionBanner.swift; sourceTree = "<group>"; };
+		6ASCORE00000000000000019 /* ScorecardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScorecardView.swift; sourceTree = "<group>"; };
+		6ASCORE0000000000000001C /* ScorecardSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScorecardSheet.swift; sourceTree = "<group>"; };
 		6ASETTC2F17000000000002 /* ClubRecommendSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClubRecommendSettingsView.swift; sourceTree = "<group>"; };
 		6ASETTINGS00000000000001 /* SettingsView.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		6ASETTP2F17000000000002 /* PredictGreenSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PredictGreenSettingsView.swift; sourceTree = "<group>"; };
@@ -222,7 +227,6 @@
 		BEDFC0FA75D24B279C2593AC /* SwingDetectionManager+MotionCapture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "SwingDetectionManager+MotionCapture.swift"; sourceTree = "<group>"; };
 		E0D8E00B351E4F0D84DB3187 /* SupabaseUploader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SupabaseUploader.swift; sourceTree = "<group>"; };
 		E0D8E00B351E4F0D84DB31AB /* WatchAuthSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchAuthSession.swift; sourceTree = "<group>"; };
-		ED2724CFBFA6421AA2088B76 /* InRoundScorecardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InRoundScorecardView.swift; sourceTree = "<group>"; };
 		EF978CD92BED4BEA9163F87B /* TestFilesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TestFilesView.swift; sourceTree = "<group>"; };
 		F25CB6D57A294246AD44AF60 /* SwingDetectionManager+DataCollection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "SwingDetectionManager+DataCollection.swift"; sourceTree = "<group>"; };
 		FB7FE8DA8D214A009C45D055 /* SwingDetectionManager+RawAccel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "SwingDetectionManager+RawAccel.swift"; sourceTree = "<group>"; };
@@ -451,7 +455,6 @@
 				6AB83CED2EDFB75100CE341C /* HolePlayView.swift */,
 				6AD5EA7E2EE3A5EF00DDDCF0 /* HoleMapView.swift */,
 				6AD5EA7D2EE3A5EF00DDDCF0 /* HoleOverlayControls.swift */,
-				ED2724CFBFA6421AA2088B76 /* InRoundScorecardView.swift */,
 			);
 			path = Play;
 			sourceTree = "<group>";
@@ -461,6 +464,8 @@
 			children = (
 				6AD5EA7C2EE3A5EF00DDDCF0 /* MapAnnotations.swift */,
 				6APERMBAN000000000000001 /* PermissionBanner.swift */,
+				6ASCORE00000000000000019 /* ScorecardView.swift */,
+				6ASCORE0000000000000001C /* ScorecardSheet.swift */,
 			);
 			path = Shared;
 			sourceTree = "<group>";
@@ -649,7 +654,6 @@
 				E4F925C1F0D4499B99626884 /* CourseDetailView.swift in Sources */,
 				6A6298202F0A0A3700303CB6 /* StrokeDetailsView.swift in Sources */,
 				6A6298212F0A0A3700303CB6 /* FloatingButtonsView.swift in Sources */,
-				42A2A63EE4BD4DACB2C9179E /* InRoundScorecardView.swift in Sources */,
 				6AD5EA7F2EE3A5F000DDDCF0 /* EditModeViews.swift in Sources */,
 				6AB83CE52EDFB17500CE341C /* Models.swift in Sources */,
 				6AD5EA822EE3A5F000DDDCF0 /* HoleOverlayControls.swift in Sources */,
@@ -672,6 +676,8 @@
 				06FE06C8A5C9410FB47BCF49 /* RoundsHistoryView.swift in Sources */,
 				6AD5EA812EE3A5F000DDDCF0 /* MapAnnotations.swift in Sources */,
 				6APERMBAN000000000000002 /* PermissionBanner.swift in Sources */,
+				6ASCORE0000000000000001A /* ScorecardView.swift in Sources */,
+				6ASCORE0000000000000001D /* ScorecardSheet.swift in Sources */,
 				6AONBOARD000000000000002 /* OnboardingView.swift in Sources */,
 				6ASUPAAUTH00000000000004 /* AuthManager.swift in Sources */,
 				6ASUPAAUTH00000000000006 /* LoginView.swift in Sources */,
@@ -706,6 +712,8 @@
 				6A9A2C582F7DED6B008ADD6B /* ActiveRoundConfiguredView.swift in Sources */,
 				6AD5EAC92EE3B80700DDDCF0 /* WatchDataStore.swift in Sources */,
 				6AAUTO000000000000000D1 /* AutoAdvanceMonitor.swift in Sources */,
+				6ASCORE0000000000000001B /* ScorecardView.swift in Sources */,
+				6ASCORE0000000000000001E /* ScorecardSheet.swift in Sources */,
 				6ASUPASYNC00000000000003 /* SupabaseSync.swift in Sources */,
 				6A27A5752F0C000000000001 /* SwingDetectionManager.swift in Sources */,
 				6A27A5772F0C000000000003 /* WorkoutManager.swift in Sources */,

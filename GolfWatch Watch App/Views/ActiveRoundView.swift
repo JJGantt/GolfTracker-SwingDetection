@@ -27,6 +27,7 @@ struct ActiveRoundView: View {
     @State var crownScrollTimer: Timer?
     @State var isPulsing = false
     @State var showingDistanceEditor = false
+    @State var showingScorecard = false
     @State var manualClubOverride = false       // True when user manually changed club
     @State var onGreenOverride = false          // True when auto-switched to putter for current green
     @State var navigateToAccelTest = false
@@ -410,6 +411,23 @@ struct ActiveRoundView: View {
                         }
                     }
 
+                    // Scorecard button — opens the shared ScorecardView as a sheet.
+                    // Sized to match the green plus below it; sits right above it.
+                    Button(action: { showingScorecard = true }) {
+                        ZStack {
+                            Circle()
+                                .fill(Color.white.opacity(0.85))
+                                .frame(width: buttonSize * 0.7, height: buttonSize * 0.7)
+                                .shadow(color: .black.opacity(0.3), radius: 2, x: 0, y: 1)
+                            Image(systemName: "list.number")
+                                .font(.system(size: iconSize * 0.7, weight: .semibold))
+                                .foregroundColor(.black)
+                        }
+                    }
+                    .buttonStyle(PlainButtonStyle())
+                    .focusable(false)
+                    .opacity(isPlacingTarget || isPlacingPenalty ? 0 : 0.95)
+
                     // Stroke button
                     VStack(spacing: 4) {
                         // Green stroke button - always show
@@ -675,6 +693,11 @@ struct ActiveRoundView: View {
             onDetectedSwingChange: handleDetectedSwingChange,
             onSelectedClubIndexChange: handleSelectedClubIndexChange
         )
+        .sheet(isPresented: $showingScorecard) {
+            if let round = store.currentRound {
+                ScorecardSheet(round: round)
+            }
+        }
     }
 
     func handleViewAppear() {

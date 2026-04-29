@@ -393,12 +393,8 @@ struct HolePlayView: View {
             ))
             .sheet(isPresented: $showingRoundSummary) {
                 if let round = currentRound {
-                    InRoundScorecardView(
-                        round: round,
-                        currentHoleNumber: currentHole?.number,
-                        store: store
-                    )
-                    .presentationDetents([.medium, .large])
+                    ScorecardSheet(round: round)
+                        .presentationDetents([.medium, .large])
                 }
             }
     }
