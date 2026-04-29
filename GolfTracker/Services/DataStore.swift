@@ -285,12 +285,17 @@ class DataStore: ObservableObject {
             async let typesAsync: [ClubTypeDTO] = supabase.from("club_types").select().execute().value
             async let clubsAsync: [ClubDTO] = supabase.from("clubs").select().execute().value
             async let setsAsync: [ClubSetDTO] = supabase.from("club_sets").select().execute().value
-            let (remoteTypes, remoteClubs, remoteSets) = try await (typesAsync, clubsAsync, setsAsync)
+            // Selections live in a join table (not a column on club_sets).
+            // Fetch them so the rebuilt local ClubSet has its full
+            // typeSelections array — otherwise the watch's active-set
+            // filter resolves to an empty crown.
+            async let selectionsAsync: [ClubSetTypeSelectionDTO] = supabase.from("club_set_type_selections").select().execute().value
+            let (remoteTypes, remoteClubs, remoteSets, remoteSelections) = try await (typesAsync, clubsAsync, setsAsync, selectionsAsync)
 
             if !remoteTypes.isEmpty || !remoteClubs.isEmpty || !remoteSets.isEmpty {
                 // Branch 2: Supabase has data → hydrate locally.
                 await MainActor.run {
-                    hydrateClubsFromRemote(types: remoteTypes, clubs: remoteClubs, sets: remoteSets)
+                    hydrateClubsFromRemote(types: remoteTypes, clubs: remoteClubs, sets: remoteSets, selections: remoteSelections)
                 }
             } else {
                 // Branch 3: Both empty → seed fresh defaults once.
@@ -304,7 +309,7 @@ class DataStore: ObservableObject {
     }
 
     /// Insert remote DTOs into local SwiftData. Idempotent — upserts by id.
-    private func hydrateClubsFromRemote(types: [ClubTypeDTO], clubs: [ClubDTO], sets: [ClubSetDTO]) {
+    private func hydrateClubsFromRemote(types: [ClubTypeDTO], clubs: [ClubDTO], sets: [ClubSetDTO], selections: [ClubSetTypeSelectionDTO]) {
         guard let context = context else { return }
         for t in types {
             let id = t.id
@@ -320,13 +325,19 @@ class DataStore: ObservableObject {
                 context.insert(ClubData(id: id, name: c.name, clubTypeId: c.club_type_id, isDefault: c.is_default ?? false))
             }
         }
+        let selectionsBySetId = Dictionary(grouping: selections, by: { $0.club_set_id })
         for s in sets {
             let id = s.id
             let descriptor = FetchDescriptor<ClubSet>(predicate: #Predicate { $0.id == id })
-            if (try? context.fetch(descriptor))?.first == nil {
+            let typeSels = (selectionsBySetId[id] ?? []).map {
+                TypeSelection(typeId: $0.type_id, activeClubId: $0.active_club_id)
+            }
+            if let existing = (try? context.fetch(descriptor))?.first {
+                existing.typeSelections = typeSels
+            } else {
                 let dc = s.date_created.flatMap(Self.parseISODate) ?? Date()
                 let dm = s.date_modified.flatMap(Self.parseISODate) ?? Date()
-                context.insert(ClubSet(id: id, name: s.name, typeSelections: [], isActive: s.is_active ?? false, dateCreated: dc, dateModified: dm))
+                context.insert(ClubSet(id: id, name: s.name, typeSelections: typeSels, isActive: s.is_active ?? false, dateCreated: dc, dateModified: dm))
             }
         }
         try? context.save()

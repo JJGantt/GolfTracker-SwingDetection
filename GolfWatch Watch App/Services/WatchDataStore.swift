@@ -192,7 +192,13 @@ class WatchDataStore: ObservableObject {
                 async let typesAsync: [ClubTypeDTO] = supabase.from("club_types").select().execute().value
                 async let clubsAsync: [ClubDTO] = supabase.from("clubs").select().execute().value
                 async let setsAsync: [ClubSetDTO] = supabase.from("club_sets").select().execute().value
-                let (types, clubs, sets) = try await (typesAsync, clubsAsync, setsAsync)
+                // ClubSet.typeSelections lives in a separate join table on
+                // Supabase (one row per type per set). We fetch it here so
+                // we can populate the local ClubSet's typeSelections array
+                // — without this the watch sees an empty active set and
+                // the crown filters to zero clubs.
+                async let selectionsAsync: [ClubSetTypeSelectionDTO] = supabase.from("club_set_type_selections").select().execute().value
+                let (types, clubs, sets, selections) = try await (typesAsync, clubsAsync, setsAsync, selectionsAsync)
                 await MainActor.run {
                     // Supabase is the source of truth for clubs/types/sets
                     // on the watch. Insert/update for everything we just
@@ -206,7 +212,12 @@ class WatchDataStore: ObservableObject {
 
                     for t in types { Self.upsertClubType(t, into: context) }
                     for c in clubs { Self.upsertClub(c, into: context) }
-                    for s in sets { Self.upsertClubSet(s, into: context) }
+                    // Group selections by club_set_id so we can attach them
+                    // to each set as we upsert it.
+                    let selectionsBySetId = Dictionary(grouping: selections, by: { $0.club_set_id })
+                    for s in sets {
+                        Self.upsertClubSet(s, selections: selectionsBySetId[s.id] ?? [], into: context)
+                    }
 
                     // Prune local-only entries.
                     if let existingTypes = try? context.fetch(FetchDescriptor<ClubTypeData>()) {
@@ -261,18 +272,20 @@ class WatchDataStore: ObservableObject {
         }
     }
 
-    private static func upsertClubSet(_ s: ClubSetDTO, into context: ModelContext) {
+    private static func upsertClubSet(_ s: ClubSetDTO, selections: [ClubSetTypeSelectionDTO], into context: ModelContext) {
         let id = s.id
         let descriptor = FetchDescriptor<ClubSet>(predicate: #Predicate { $0.id == id })
         let dc = s.date_created.flatMap(Self.parseISO) ?? Date()
         let dm = s.date_modified.flatMap(Self.parseISO) ?? Date()
+        let typeSelections = selections.map { TypeSelection(typeId: $0.type_id, activeClubId: $0.active_club_id) }
         if let existing = (try? context.fetch(descriptor))?.first {
             existing.name = s.name
             existing.isActive = s.is_active ?? false
             existing.dateCreated = dc
             existing.dateModified = dm
+            existing.typeSelections = typeSelections
         } else {
-            context.insert(ClubSet(id: id, name: s.name, typeSelections: [], isActive: s.is_active ?? false, dateCreated: dc, dateModified: dm))
+            context.insert(ClubSet(id: id, name: s.name, typeSelections: typeSelections, isActive: s.is_active ?? false, dateCreated: dc, dateModified: dm))
         }
     }
 
@@ -325,6 +338,13 @@ class WatchDataStore: ObservableObject {
         guard let activeSet = clubSets.first(where: { $0.isActive }) else {
             return availableClubs
         }
+        // Safety net: if the active set has no typeSelections (e.g. join
+        // table fetch failed, or hydrate happened before the selections
+        // were available), fall back to the full catalog rather than
+        // showing zero clubs in the crown.
+        if activeSet.typeSelections.isEmpty {
+            return availableClubs
+        }
         // Order: follow the type order from clubTypes (Drive → Putt) rather
         // than typeSelections' internal order, so the crown has a stable,
         // predictable progression.
@@ -332,10 +352,13 @@ class WatchDataStore: ObservableObject {
         let selectionsByType = Dictionary(uniqueKeysWithValues:
             activeSet.typeSelections.map { ($0.typeId, $0.activeClubId) }
         )
-        return typeOrder.compactMap { typeId in
+        let mapped = typeOrder.compactMap { typeId -> ClubData? in
             guard let activeClubId = selectionsByType[typeId] ?? nil else { return nil }
             return availableClubs.first { $0.id == activeClubId }
         }
+        // Same safety net at the result level — prevents a sparse / broken
+        // selection from silently emptying the crown.
+        return mapped.isEmpty ? availableClubs : mapped
     }
 
     /// Re-pull the cached clubs/types/sets arrays from SwiftData. Call

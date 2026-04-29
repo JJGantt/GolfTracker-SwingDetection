@@ -520,3 +520,12 @@ struct ClubSetDTO: Decodable {
     let date_created: String?
     let date_modified: String?
 }
+
+/// One row of the `club_set_type_selections` join table — links a ClubSet
+/// to which Club is currently active for each ClubType. Hydrated alongside
+/// `club_sets` so local ClubSet.typeSelections gets populated.
+struct ClubSetTypeSelectionDTO: Decodable {
+    let club_set_id: UUID
+    let type_id: UUID
+    let active_club_id: UUID?
+}
