@@ -169,9 +169,14 @@ final class RealtimeSync {
         // change holes / record strokes and the watch's view won't update
         // until the user navigates the watch UI manually.
         let isClubsRelated = (table == "clubs" || table == "club_types" || table == "club_sets")
+        let isRoundsRelated = (table == "rounds" || table == "round_holes" || table == "holes")
         Task { @MainActor in
             #if os(watchOS)
             if isClubsRelated { WatchDataStore.shared.refreshClubsCache() }
+            // Re-evaluate "current round" when an inbound Round / Hole event
+            // lands. Without this, a phone-started round wouldn't show as
+            // current on the watch even though its row IS in our SwiftData.
+            if isRoundsRelated { WatchDataStore.shared.refreshCurrentRound() }
             WatchDataStore.shared.objectWillChange.send()
             #else
             DataStore.shared.objectWillChange.send()

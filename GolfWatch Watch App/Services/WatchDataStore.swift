@@ -34,16 +34,42 @@ class WatchDataStore: ObservableObject {
     /// would re-introduce the stale-read bug.
     var modelContext: ModelContext? { sharedContext }
 
-    /// Drives the active round screen. View layer can also use @Query for
-    /// reactive updates; this @Published keeps the singleton-driven helpers
-    /// (addStroke, navigateToNextHole, etc.) functional.
-    @Published var currentRoundId: UUID? {
+    /// Drives the active round screen. **Now derived** from the rounds in
+    /// SwiftData (most recent round started within `currentRoundMaxAgeSeconds`)
+    /// rather than being explicitly written by start/resume code paths. This
+    /// makes "current round" a global concept across phone + watch — a round
+    /// inserted via Realtime sync from the phone immediately appears as
+    /// current on the watch (and vice versa) without any explicit handoff.
+    /// `refreshCurrentRound()` re-evaluates the query and updates this id.
+    @Published private(set) var currentRoundId: UUID? {
         didSet {
-            objectWillChange.send()
-            // Apply test-mode flag from the new round (if any).
+            guard currentRoundId != oldValue else { return }
+            // Apply test-mode flag from the new round (if any). Same side
+            // effect as before; just fired from refreshCurrentRound() now
+            // instead of from explicit currentRoundId writes.
             let enabled = currentRound?.locationTestModeEnabled == true
             LocationManager.shared.setTestModeEnabled(enabled)
         }
+    }
+
+    /// Mirror of `DataStore.currentRoundMaxAgeSeconds` — both platforms use
+    /// the same 8h window for "what counts as current."
+    static let currentRoundMaxAgeSeconds: TimeInterval = 8 * 60 * 60
+
+    /// Re-evaluate which round (if any) is "current" based on what's in
+    /// SwiftData right now. Call after any code path that mutates rounds:
+    /// local start/resume, addHole, updateHole, etc., and from
+    /// RealtimeSync after an inbound `rounds` postgres-changes event.
+    func refreshCurrentRound() {
+        guard let context = context else { return }
+        let cutoff = Date().addingTimeInterval(-Self.currentRoundMaxAgeSeconds)
+        let descriptor = FetchDescriptor<Round>(
+            sortBy: [SortDescriptor(\Round.date, order: .reverse)]
+        )
+        let rounds = (try? context.fetch(descriptor)) ?? []
+        let mostRecent = rounds.first { $0.date >= cutoff }
+        let newId = mostRecent?.id
+        if newId != currentRoundId { currentRoundId = newId }
     }
 
     @Published var holeDetectionDataByCourse: [UUID: CourseHoleDetectionData] = [:]
@@ -112,7 +138,9 @@ class WatchDataStore: ObservableObject {
     private let connectivity = WatchConnectivityManager.shared
     private let holeDetectionDataKey = "holeDetectionDataByCourse"
     private let holeFilterSettingsKey = "holeFilterSettings"
-    private let currentRoundIdKey = "currentRoundId"
+    // currentRoundIdKey was the UserDefaults key for the old explicit
+    // currentRoundId persistence; no longer used (the SwiftData store is
+    // the source of truth, refreshCurrentRound queries it).
 
     private init() {
         loadUserDefaults()
@@ -129,12 +157,11 @@ class WatchDataStore: ObservableObject {
         // Prime the clubs cache from whatever SwiftData has on disk; the
         // hydrate path will refresh it again once Supabase responds.
         refreshClubsCache()
-        // Restore the last-active round id (the round itself was persisted by
-        // SwiftData; we just need to point at it again).
-        if let stored = UserDefaults.standard.string(forKey: currentRoundIdKey),
-           let id = UUID(uuidString: stored) {
-            currentRoundId = id
-        }
+        // Derive currentRoundId from whatever's in SwiftData (most recent
+        // round started within the 8h window). Replaces the old UserDefaults
+        // persistence — the query is the source of truth, and SwiftData
+        // already persists rounds across launches.
+        refreshCurrentRound()
         // Pick up our playgroup-assigned color (if any) so the GPS arrow renders
         // correctly on first launch even before the user opens MultiplayerView.
         refreshMyPlayerColor()
@@ -638,8 +665,7 @@ class WatchDataStore: ObservableObject {
         for h in holes { context.insert(h) }
         context.insert(newRound)
         try? context.save()
-        currentRoundId = newRound.id
-        UserDefaults.standard.set(newRound.id.uuidString, forKey: currentRoundIdKey)
+        refreshCurrentRound()
         SupabaseSync.shared.upsertRound(newRound)
         dprint("⌚ [WatchDataStore] Started round at \(resolution.courseName) (tier=\(resolution.tier), \(holes.count) holes, tee=\(selectedTeeId?.uuidString ?? "none"))")
     }
@@ -655,8 +681,7 @@ class WatchDataStore: ObservableObject {
         context.insert(firstHole)
         context.insert(newRound)
         try? context.save()
-        currentRoundId = newRound.id
-        UserDefaults.standard.set(newRound.id.uuidString, forKey: currentRoundIdKey)
+        refreshCurrentRound()
         SupabaseSync.shared.upsertRound(newRound)
     }
 
