@@ -188,6 +188,7 @@ struct HolePlacementView: View {
         .toolbar(.hidden, for: .navigationBar)
         .navigationBarBackButtonHidden(true)
         .onAppear {
+            ClientEventLogger.log("HolePlacementView.onAppear", detail: ["holeNumber": .integer(hole.number), "isEditing": .bool(isEditing)])
             locationManager.requestPermission()
             locationManager.startTracking()
 
@@ -215,8 +216,13 @@ struct HolePlacementView: View {
     }
 
     private func save(par: Int) {
-        guard let coordinate = temporaryHolePosition else { return }
+        ClientEventLogger.log("HolePlacementView.save.tapped", detail: ["par": .integer(par)])
+        guard let coordinate = temporaryHolePosition else {
+            ClientEventLogger.log("HolePlacementView.save.noCoord")
+            return
+        }
         store.updateHole(holeNumber: hole.number, newCoordinate: coordinate, par: par)
+        ClientEventLogger.log("HolePlacementView.save.afterUpdate")
         WKInterfaceDevice.current().play(.success)
         if isEditing {
             // Edit mode: dismiss the sheet. Add mode: parent transitions automatically

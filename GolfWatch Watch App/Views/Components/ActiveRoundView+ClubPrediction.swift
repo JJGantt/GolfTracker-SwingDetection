@@ -51,6 +51,7 @@ extension ActiveRoundView {
     }
 
     func handleSelectedClubIndexChange() {
+        ClientEventLogger.log("clubIndexChange", detail: ["index": .double(selectedClubIndex)])
         if !isAutoSelectingClub && store.clubPredictionMode != .off {
             manualClubOverride = true
         }

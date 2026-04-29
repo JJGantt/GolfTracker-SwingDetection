@@ -650,7 +650,19 @@ struct ActiveRoundView: View {
     }
 
     var rootBodyContent: some View {
-        Group {
+        // One log per body re-evaluation — gives us a timeline of when SwiftUI
+        // actually re-runs this view + the values driving the conditional.
+        let _ = ClientEventLogger.log(
+            "rootBodyContent.eval",
+            detail: [
+                "needsFlagPlacement": .bool(needsFlagPlacement),
+                "currentHoleId": store.currentHole.map { .string($0.id.uuidString) } ?? .null,
+                "hasLocation": store.currentHole.map { .bool($0.hasLocation) } ?? .null,
+                "currentHoleIndex": .integer(store.currentHoleIndex),
+                "holesCount": store.currentRound.map { .integer($0.holes.count) } ?? .null
+            ]
+        )
+        return Group {
             if needsFlagPlacement, let hole = store.currentHole {
                 HolePlacementView(store: store, locationManager: locationManager, hole: hole, isEditing: false)
             } else {
@@ -1069,12 +1081,13 @@ struct ActiveRoundView: View {
                     }
 
                     if let indexToDelete = deletedIndex {
-                        // Delete the nearby target
+                        ClientEventLogger.log("targetTap.delete", detail: ["index": .integer(indexToDelete), "before": .integer(coords.count)])
                         coords.remove(at: indexToDelete)
                         targetCoordinatesBinding.wrappedValue = coords
+                        ClientEventLogger.log("targetTap.delete.afterBindingSet", detail: ["after": .integer(coords.count)])
                         WKInterfaceDevice.current().play(.click)
                     } else {
-                        // Add new target
+                        ClientEventLogger.log("targetTap.add", detail: ["before": .integer(coords.count)])
                         coords.append(coordinate)
                         targetCoordinatesBinding.wrappedValue = coords
                         WKInterfaceDevice.current().play(.success)

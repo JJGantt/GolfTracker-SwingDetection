@@ -400,16 +400,23 @@ class WatchDataStore: ObservableObject {
     // MARK: - Hole Management
 
     func addNextHole() {
-        guard let round = currentRound, let context = context else { return }
+        ClientEventLogger.log("addNextHole.start")
+        guard let round = currentRound, let context = context else {
+            ClientEventLogger.log("addNextHole.guardFailed")
+            return
+        }
         let nextHoleNumber = round.holes.count + 1
         let newHole = Hole(number: nextHoleNumber)
         context.insert(newHole)
         round.holes.append(newHole)
         round.currentHoleIndex = nextHoleNumber - 1
         try? context.save()
+        ClientEventLogger.log("addNextHole.saved", detail: ["holeNumber": .integer(nextHoleNumber), "holeCount": .integer(round.holes.count)])
         SupabaseSync.shared.upsertRound(round)
+        ClientEventLogger.log("addNextHole.upsertEnqueued")
         AutoAdvanceMonitor.shared.resetForCurrentHole()
         objectWillChange.send()
+        ClientEventLogger.log("addNextHole.objectWillChangeSent")
     }
 
     func addHole(coordinate: CLLocationCoordinate2D, par: Int? = nil) {
@@ -426,14 +433,24 @@ class WatchDataStore: ObservableObject {
     }
 
     func updateHole(holeNumber: Int, newCoordinate: CLLocationCoordinate2D, par: Int? = nil) {
-        guard let round = currentRound, let context = context else { return }
-        guard let hole = round.holes.first(where: { $0.number == holeNumber }) else { return }
+        ClientEventLogger.log("updateHole.start", detail: ["holeNumber": .integer(holeNumber), "par": par.map { .integer($0) } ?? .null])
+        guard let round = currentRound, let context = context else {
+            ClientEventLogger.log("updateHole.guardFailed.round")
+            return
+        }
+        guard let hole = round.holes.first(where: { $0.number == holeNumber }) else {
+            ClientEventLogger.log("updateHole.guardFailed.hole")
+            return
+        }
         hole.latitude = newCoordinate.latitude
         hole.longitude = newCoordinate.longitude
         if let par = par { hole.par = par }
         try? context.save()
+        ClientEventLogger.log("updateHole.saved")
         SupabaseSync.shared.upsertRound(round)
+        ClientEventLogger.log("updateHole.upsertEnqueued")
         objectWillChange.send()
+        ClientEventLogger.log("updateHole.objectWillChangeSent")
     }
 
     func navigateToNextHole() {
@@ -657,16 +674,22 @@ class WatchDataStore: ObservableObject {
     }
 
     func replaceTargets(forHoleNumber holeNumber: Int?, with coordinates: [CLLocationCoordinate2D]) {
+        ClientEventLogger.log("replaceTargets.start", detail: [
+            "holeNumber": holeNumber.map { .integer($0) } ?? .null,
+            "newCount": .integer(coordinates.count)
+        ])
         guard let holeNumber = holeNumber,
               let round = currentRound,
-              let context = context else { return }
-        // Remove old targets for this hole
+              let context = context else {
+            ClientEventLogger.log("replaceTargets.guardFailed")
+            return
+        }
         let toDelete = round.targets.filter { $0.holeNumber == holeNumber }
+        ClientEventLogger.log("replaceTargets.toDelete", detail: ["count": .integer(toDelete.count)])
         for target in toDelete {
             context.delete(target)
             SupabaseSync.shared.deleteTarget(id: target.id)
         }
-        // Add new targets
         for coord in coordinates {
             let t = Target(holeNumber: holeNumber, coordinate: coord)
             context.insert(t)
@@ -674,6 +697,7 @@ class WatchDataStore: ObservableObject {
             SupabaseSync.shared.upsertTarget(t, roundId: round.id)
         }
         try? context.save()
+        ClientEventLogger.log("replaceTargets.saved", detail: ["roundTargetsCount": .integer(round.targets.count)])
         objectWillChange.send()
     }
 

@@ -151,6 +151,10 @@ final class RealtimeSync {
         default: break
         }
         try? context.save()
+        ClientEventLogger.log("realtime.apply", detail: [
+            "table": .string(table),
+            "kind": .string("\(kind)")
+        ])
         // Notify the platform store so views observing it (which use computed
         // properties like currentRound that re-fetch on each access) actually
         // re-render when these mutations land. Without this, the iPhone can
