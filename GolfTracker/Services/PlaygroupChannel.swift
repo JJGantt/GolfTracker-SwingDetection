@@ -279,6 +279,143 @@ final class PlaygroupChannel: ObservableObject {
         otherStrokes[owner] = bucket
     }
 
+    // MARK: - Scorecard data (multiplayer)
+
+    /// One player's data for the multi-player scorecard view. Built from:
+    /// - the local Round (when `userId == self`), or
+    /// - a Realtime/PostgREST fetch of the co-member's round + strokes.
+    struct ScorecardPlayer: Identifiable {
+        let userId: String
+        let displayName: String
+        let colorHex: String
+        let teeId: UUID?
+        let teeName: String?
+        let teeHoles: [Int: CachedCourseTeeHole]?
+        let strokesByHole: [Int: Int]      // hole # → non-penalty stroke count
+        let completedHoles: Set<Int>
+        var id: String { userId }
+    }
+
+    /// Fetch every member's full-round scorecard payload — including the
+    /// local user, so the caller doesn't have to merge sources. Each
+    /// non-self fetch is cheap (one rounds row + one strokes query +
+    /// optionally one tee/tee-holes lookup), and they run concurrently.
+    func fetchScorecardPlayers(
+        selfRound: Round,
+        selfDisplayName: String,
+        profileLookup: [String: UserProfile]
+    ) async -> [ScorecardPlayer] {
+        let myUid = currentUserId
+
+        var players: [ScorecardPlayer] = []
+
+        // Self — straight from local SwiftData.
+        if let myUid = myUid {
+            let mine = await ScorecardPlayer.fromLocalRound(
+                round: selfRound,
+                userId: myUid,
+                displayName: selfDisplayName,
+                colorHex: color(for: myUid)
+            )
+            players.append(mine)
+        }
+
+        // Others — concurrent fetches.
+        let others = members.filter { $0.userId != myUid && $0.roundId != nil }
+        await withTaskGroup(of: ScorecardPlayer?.self) { group in
+            for m in others {
+                let display = profileLookup[m.userId]?.resolvedName ?? "Player"
+                let colorHex = m.color ?? PlaygroupService.playerPalette[0]
+                let roundId = m.roundId!
+                let userId = m.userId
+                group.addTask { [weak self] in
+                    await self?.fetchOnePlayerScorecard(
+                        userId: userId,
+                        roundId: roundId,
+                        displayName: display,
+                        colorHex: colorHex
+                    )
+                }
+            }
+            for await p in group {
+                if let p = p { players.append(p) }
+            }
+        }
+
+        // Stable order: host first (palette[0]), then by displayName for joiners.
+        players.sort { lhs, rhs in
+            if lhs.colorHex == PlaygroupService.playerPalette[0] { return true }
+            if rhs.colorHex == PlaygroupService.playerPalette[0] { return false }
+            return lhs.displayName < rhs.displayName
+        }
+        return players
+    }
+
+    private func fetchOnePlayerScorecard(
+        userId: String,
+        roundId: UUID,
+        displayName: String,
+        colorHex: String
+    ) async -> ScorecardPlayer? {
+        struct RoundRow: Decodable {
+            let id: UUID
+            let selected_tee_id: UUID?
+            let completed_holes: [Int]?
+        }
+        do {
+            let rows: [RoundRow] = try await supabase.from("rounds")
+                .select("id,selected_tee_id,completed_holes")
+                .eq("id", value: roundId)
+                .limit(1)
+                .execute()
+                .value
+            guard let row = rows.first else { return nil }
+
+            let strokes: [RemoteStroke] = try await supabase.from("strokes")
+                .select()
+                .eq("round_id", value: roundId)
+                .order("hole_number")
+                .execute()
+                .value
+
+            var byHole: [Int: Int] = [:]
+            for s in strokes where !s.isPenalty {
+                byHole[s.holeNumber, default: 0] += 1
+            }
+
+            // Tee data — only loaded when present.
+            var teeName: String? = nil
+            var teeHoles: [Int: CachedCourseTeeHole]? = nil
+            if let teeId = row.selected_tee_id {
+                let holes = try await GolfCourseAPIService.shared.cachedHoles(forTeeId: teeId)
+                let tees: [CachedCourseTee] = try await supabase.from("course_tees")
+                    .select()
+                    .eq("id", value: teeId)
+                    .limit(1)
+                    .execute()
+                    .value
+                teeName = tees.first?.teeName
+                var map: [Int: CachedCourseTeeHole] = [:]
+                for h in holes { map[h.holeNumber] = h }
+                teeHoles = map
+            }
+
+            return ScorecardPlayer(
+                userId: userId,
+                displayName: displayName,
+                colorHex: colorHex,
+                teeId: row.selected_tee_id,
+                teeName: teeName,
+                teeHoles: teeHoles,
+                strokesByHole: byHole,
+                completedHoles: Set(row.completed_holes ?? [])
+            )
+        } catch {
+            dprint("📡 [PlaygroupChannel] scorecard fetch for \(userId.prefix(8))… failed: \(error.localizedDescription)")
+            return nil
+        }
+    }
+
     // MARK: - Color lookup
 
     func color(for userId: String) -> String {
@@ -367,6 +504,57 @@ final class PlaygroupChannel: ObservableObject {
 }
 
 // MARK: - Wire types
+
+// MARK: - ScorecardPlayer self-construction from local Round
+
+extension PlaygroupChannel.ScorecardPlayer {
+    /// Build the self row for the multiplayer scorecard from the local
+    /// SwiftData Round we already have in memory. Pulls tee data via
+    /// GolfCourseAPIService cache, same path the solo scorecard uses.
+    static func fromLocalRound(
+        round: Round,
+        userId: String,
+        displayName: String,
+        colorHex: String
+    ) async -> PlaygroupChannel.ScorecardPlayer {
+        var strokesByHole: [Int: Int] = [:]
+        for s in round.strokes where !s.isPenalty {
+            strokesByHole[s.holeNumber, default: 0] += 1
+        }
+        let completed = Set(round.completedHolesArray)
+
+        var teeName: String? = nil
+        var teeHoles: [Int: CachedCourseTeeHole]? = nil
+        if let teeId = round.selectedTeeId {
+            do {
+                let holes = try await GolfCourseAPIService.shared.cachedHoles(forTeeId: teeId)
+                let tees: [CachedCourseTee] = try await SupabaseManager.shared.from("course_tees")
+                    .select()
+                    .eq("id", value: teeId)
+                    .limit(1)
+                    .execute()
+                    .value
+                teeName = tees.first?.teeName
+                var map: [Int: CachedCourseTeeHole] = [:]
+                for h in holes { map[h.holeNumber] = h }
+                teeHoles = map
+            } catch {
+                // Fall through with nil tee data — scorecard handles that.
+            }
+        }
+
+        return PlaygroupChannel.ScorecardPlayer(
+            userId: userId,
+            displayName: displayName,
+            colorHex: colorHex,
+            teeId: round.selectedTeeId,
+            teeName: teeName,
+            teeHoles: teeHoles,
+            strokesByHole: strokesByHole,
+            completedHoles: completed
+        )
+    }
+}
 
 /// Snapshot of a co-member's last-published GPS.
 struct MemberPresence: Equatable {
