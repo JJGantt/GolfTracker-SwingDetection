@@ -62,6 +62,10 @@ final class PlaygroupChannel: ObservableObject {
     private var subscriptions: [Task<Void, Never>] = []
     private var broadcastSubscriptions: [RealtimeSubscription] = []
     private var currentUserId: String?
+    /// Round ids we've already wired stroke postgres-changes for. Tracked
+    /// so a mid-round joiner can be added without re-subscribing the whole
+    /// channel (and without double-wiring the existing rounds).
+    private var wiredRoundIds: Set<String> = []
 
     /// Hook the host UI installs so we can play received audio without
     /// PlaygroupChannel needing to import AVFoundation. WalkieTalkie service
@@ -123,12 +127,17 @@ final class PlaygroupChannel: ObservableObject {
         // Strokes for other members' rounds — postgres-changes per round_id.
         // Filter is server-side, so we only get events for the round_ids we
         // care about (cheap — Postgres doesn't push events we'd discard).
-        let otherRoundIds = members
-            .filter { $0.userId != userId }
-            .compactMap { $0.roundId?.uuidString }
-        for roundId in otherRoundIds {
-            wireStrokesForRound(ch, roundId: roundId)
+        for m in members where m.userId != userId {
+            if let roundId = m.roundId?.uuidString {
+                wireStrokesForRound(ch, roundId: roundId)
+            }
         }
+
+        // Live membership: when someone joins or leaves the playgroup
+        // mid-round, re-fetch members + wire up strokes for any new
+        // round_ids. Without this, late joiners would be invisible until
+        // the channel restarted (back out of round → re-enter).
+        wireMembersChange(ch, playgroupId: playgroupId, userId: userId)
 
         await ch.subscribe()
 
@@ -162,6 +171,7 @@ final class PlaygroupChannel: ObservableObject {
         channel = nil
         activePlaygroupId = nil
         currentUserId = nil
+        wiredRoundIds.removeAll()
         members = []
         presence = [:]
         otherStrokes = [:]
@@ -239,7 +249,83 @@ final class PlaygroupChannel: ObservableObject {
         otherStrokes = byUser
     }
 
+    /// Subscribe to playgroup_members postgres-changes for the active
+    /// playgroup so mid-round joins/leaves get reflected immediately.
+    /// Triggers a member refetch + wires stroke subscriptions for any
+    /// newly-present round_ids.
+    private func wireMembersChange(_ ch: RealtimeChannelV2, playgroupId: UUID, userId: String) {
+        let inserts = ch.postgresChange(
+            InsertAction.self,
+            table: "playgroup_members",
+            filter: "playgroup_id=eq.\(playgroupId.uuidString)"
+        )
+        let deletes = ch.postgresChange(
+            DeleteAction.self,
+            table: "playgroup_members",
+            filter: "playgroup_id=eq.\(playgroupId.uuidString)"
+        )
+        let updates = ch.postgresChange(
+            UpdateAction.self,
+            table: "playgroup_members",
+            filter: "playgroup_id=eq.\(playgroupId.uuidString)"
+        )
+        subscriptions.append(Task { [weak self] in
+            for await _ in inserts { await self?.refreshMembers(playgroupId: playgroupId, userId: userId) }
+        })
+        subscriptions.append(Task { [weak self] in
+            for await _ in deletes { await self?.refreshMembers(playgroupId: playgroupId, userId: userId) }
+        })
+        subscriptions.append(Task { [weak self] in
+            for await _ in updates { await self?.refreshMembers(playgroupId: playgroupId, userId: userId) }
+        })
+    }
+
+    /// Refetch members + wire stroke subs for any newly-present round_ids.
+    /// Removed members' stroke buckets get cleared from `otherStrokes`.
+    private func refreshMembers(playgroupId: UUID, userId: String) async {
+        guard let ch = channel else { return }
+        do {
+            let fresh = try await PlaygroupService.shared.members(of: playgroupId)
+            members = fresh
+
+            // Wire stroke subs for any new other-member round_ids.
+            for m in fresh where m.userId != userId {
+                if let roundId = m.roundId?.uuidString, !wiredRoundIds.contains(roundId) {
+                    wireStrokesForRound(ch, roundId: roundId)
+                    // Pull existing strokes for the new member's current hole
+                    // so they're visible immediately, not on next stroke.
+                    await refreshStrokesForMember(m)
+                }
+            }
+
+            // Drop stroke caches for users who are no longer members.
+            let validIds = Set(fresh.map { $0.userId })
+            otherStrokes = otherStrokes.filter { validIds.contains($0.key) }
+            // Likewise prune presence dots for departed members.
+            presence = presence.filter { validIds.contains($0.key) }
+        } catch {
+            dprint("📡 [PlaygroupChannel] members refresh failed: \(error.localizedDescription)")
+        }
+    }
+
+    private func refreshStrokesForMember(_ m: PlaygroupMember) async {
+        guard let roundId = m.roundId else { return }
+        do {
+            let rows: [RemoteStroke] = try await supabase.from("strokes")
+                .select()
+                .eq("round_id", value: roundId)
+                .eq("hole_number", value: currentHoleNumber)
+                .order("stroke_number")
+                .execute()
+                .value
+            otherStrokes[m.userId] = rows
+        } catch {
+            dprint("📡 [PlaygroupChannel] stroke refresh for \(m.userId.prefix(8))… failed: \(error.localizedDescription)")
+        }
+    }
+
     private func wireStrokesForRound(_ ch: RealtimeChannelV2, roundId: String) {
+        wiredRoundIds.insert(roundId)
         let inserts = ch.postgresChange(InsertAction.self, table: "strokes", filter: "round_id=eq.\(roundId)")
         let updates = ch.postgresChange(UpdateAction.self, table: "strokes", filter: "round_id=eq.\(roundId)")
         let deletes = ch.postgresChange(DeleteAction.self, table: "strokes", filter: "round_id=eq.\(roundId)")

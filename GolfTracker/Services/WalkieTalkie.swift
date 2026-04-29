@@ -88,6 +88,11 @@ final class WalkieTalkie: NSObject, ObservableObject {
         recordingStartedAt = nil
         isRecording = false
 
+        // Hand the audio session back to the system now that the mic is
+        // closed. Without this, the session lingers in .playAndRecord and
+        // can interfere with phone calls / other apps' audio.
+        deactivateAudioSession()
+
         // Don't bother sending a near-empty clip (button taps).
         guard durationMs >= 250 else {
             try? FileManager.default.removeItem(at: url)
@@ -113,6 +118,12 @@ final class WalkieTalkie: NSObject, ObservableObject {
         } catch {
             print("🎙️ [WalkieTalkie] play failed: \(error.localizedDescription)")
         }
+    }
+
+    private func deactivateAudioSession() {
+        // notifyOthersOnDeactivation lets backgrounded music apps resume
+        // immediately when our voice clip ends.
+        try? AVAudioSession.sharedInstance().setActive(false, options: [.notifyOthersOnDeactivation])
     }
 
     private func fireIncomingAlert() {
@@ -153,6 +164,7 @@ extension WalkieTalkie: AVAudioPlayerDelegate {
         Task { @MainActor in
             self.isPlaying = false
             self.player = nil
+            self.deactivateAudioSession()
         }
     }
 }

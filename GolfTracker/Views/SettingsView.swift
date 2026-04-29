@@ -11,6 +11,10 @@ struct SettingsView: View {
     @State private var deleteError: String?
     @AppStorage(PlaygroupChannel.liveDotsEnabledKey) private var liveDotsEnabled = true
 
+    @State private var displayName: String = ""
+    @State private var savingName = false
+    @State private var nameSavedMessage: String?
+
     var body: some View {
         NavigationStack {
             Form {
@@ -59,6 +63,32 @@ struct SettingsView: View {
                     Text("When on, your playgroup partners see a moving dot for you on the map. Other players' dots are still visible to you either way.")
                         .font(.caption)
                         .foregroundColor(.secondary)
+
+                    HStack {
+                        Text("Display name")
+                        Spacer()
+                        TextField("First name", text: $displayName)
+                            .multilineTextAlignment(.trailing)
+                            .autocorrectionDisabled()
+                            .textInputAutocapitalization(.words)
+                            .onSubmit { saveName() }
+                    }
+                    Button {
+                        saveName()
+                    } label: {
+                        if savingName {
+                            HStack { ProgressView(); Text("Saving…") }
+                        } else {
+                            Text("Save name")
+                        }
+                    }
+                    .disabled(savingName || displayName.trimmingCharacters(in: .whitespaces).isEmpty)
+                    if let msg = nameSavedMessage {
+                        Text(msg).font(.caption).foregroundColor(.secondary)
+                    }
+                    Text("Shown to your playgroup partners on the scorecard and member list.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
                 }
 
                 Section("Credits") {
@@ -79,6 +109,14 @@ struct SettingsView: View {
                     Button("Done") { dismiss() }
                 }
             }
+            .task {
+                // Pre-fill the name field with whatever's saved (display_name
+                // override beats SIWA-captured first_name).
+                if let p = try? await PlaygroupService.shared.myProfile() {
+                    let pre = p.displayName ?? p.firstName ?? ""
+                    if displayName.isEmpty { displayName = pre }
+                }
+            }
             .confirmationDialog("Sign out?", isPresented: $showingSignOutConfirm, titleVisibility: .visible) {
                 Button("Sign Out", role: .destructive) {
                     auth.signOut()
@@ -93,6 +131,30 @@ struct SettingsView: View {
                 Button("Cancel", role: .cancel) { }
             } message: {
                 Text("This permanently removes your rounds, courses, strokes, and clubs from the server. This cannot be undone.")
+            }
+        }
+    }
+
+    private func saveName() {
+        let trimmed = displayName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        savingName = true
+        nameSavedMessage = nil
+        Task {
+            do {
+                // We store the user-typed value in `display_name` (the
+                // explicit override slot) so it always wins over any
+                // first_name SIWA captured.
+                try await PlaygroupService.shared.upsertMyProfile(firstName: nil, displayName: trimmed)
+                await MainActor.run {
+                    savingName = false
+                    nameSavedMessage = "Saved."
+                }
+            } catch {
+                await MainActor.run {
+                    savingName = false
+                    nameSavedMessage = "Couldn't save: \(error.localizedDescription)"
+                }
             }
         }
     }

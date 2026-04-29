@@ -23,6 +23,17 @@ struct ScorecardSheet: View {
             .task(id: playgroup.activePlaygroupId) {
                 await loadPlaygroupPlayers()
             }
+            // Live refresh while the scorecard is open: when any stroke
+            // streams in via PlaygroupChannel (inbound postgres-changes),
+            // re-pull the multiplayer payload so the per-player columns
+            // stay current without the user closing + reopening the sheet.
+            .onChange(of: playgroup.otherStrokes) { _, _ in
+                Task { await loadPlaygroupPlayers() }
+            }
+            // Same for own strokes — local Round mutates as the user records.
+            .onChange(of: round.strokes.count) { _, _ in
+                Task { await loadPlaygroupPlayers() }
+            }
     }
 
     /// Solo tee data — used both for the solo layout and as the "self

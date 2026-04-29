@@ -275,6 +275,48 @@ final class PlaygroupService {
             .execute()
     }
 
+    // MARK: - Profile
+
+    /// Upsert the current user's display name. Called from:
+    /// 1. SIWA flow on first sign-in (Apple gives us first/last name *only*
+    ///    on the very first sign-in for the app — never again, deliberately
+    ///    by Apple's privacy design). We capture it then or we lose it.
+    /// 2. The Settings name editor — user-editable override anytime.
+    /// 3. The Multiplayer first-time prompt — fallback for legacy users
+    ///    who already signed in before profiles existed.
+    func upsertMyProfile(firstName: String?, displayName: String?) async throws {
+        guard let userId = currentUserId() else { throw PlaygroupError.notSignedIn }
+        struct Row: Encodable {
+            let user_id: String
+            let first_name: String?
+            let display_name: String?
+            let updated_at: String
+        }
+        let row = Row(
+            user_id: userId,
+            first_name: firstName,
+            display_name: displayName,
+            updated_at: ISO8601DateFormatter().string(from: Date())
+        )
+        try await supabase.from("profiles")
+            .upsert(row, onConflict: "user_id")
+            .execute()
+    }
+
+    /// Fetch the current user's own profile row, if it exists. Returns nil
+    /// when the user hasn't set a name yet — UI uses that to decide whether
+    /// to show the first-time-name prompt.
+    func myProfile() async throws -> UserProfile? {
+        guard let userId = currentUserId() else { return nil }
+        let rows: [UserProfile] = try await supabase.from("profiles")
+            .select()
+            .eq("user_id", value: userId)
+            .limit(1)
+            .execute()
+            .value
+        return rows.first
+    }
+
     // MARK: - Helpers
 
     private func currentUserId() -> String? {

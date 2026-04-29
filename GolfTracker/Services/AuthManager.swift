@@ -89,11 +89,11 @@ final class AuthManager: NSObject, ObservableObject {
         let coordinator = SIWACoordinator(anchor: anchor) { [weak self] result in
             guard let self = self else { return }
             switch result {
-            case .success(let identityToken):
+            case .success(let payload):
                 Task {
                     do {
                         let s = try await self.supabase.auth.signInWithIdToken(
-                            credentials: .init(provider: .apple, idToken: identityToken)
+                            credentials: .init(provider: .apple, idToken: payload.identityToken)
                         )
                         let mirror = AuthSession(s)
                         await MainActor.run {
@@ -101,6 +101,15 @@ final class AuthManager: NSObject, ObservableObject {
                             self.session = mirror
                             WatchConnectivityManager.shared.sendAuthSession(mirror)
                             completion(.success(mirror))
+                        }
+                        // Apple only ships the user's name on the *very first*
+                        // sign-in for an app — any subsequent sign-in returns
+                        // nil for fullName. Capture it now or lose it forever.
+                        if let firstName = payload.firstName, !firstName.isEmpty {
+                            try? await PlaygroupService.shared.upsertMyProfile(
+                                firstName: firstName,
+                                displayName: nil
+                            )
                         }
                     } catch {
                         await MainActor.run {
@@ -163,11 +172,19 @@ final class AuthManager: NSObject, ObservableObject {
 
 // MARK: - Sign in with Apple coordinator
 
+struct SIWAPayload {
+    let identityToken: String
+    /// Only present on the very first sign-in for an Apple ID against this
+    /// app — Apple deliberately stops sending the name on subsequent
+    /// sign-ins to protect privacy. Capture-or-lose-it.
+    let firstName: String?
+}
+
 private final class SIWACoordinator: NSObject, ASAuthorizationControllerDelegate, ASAuthorizationControllerPresentationContextProviding {
     private let anchor: ASPresentationAnchor?
-    private let completion: (Result<String, AuthError>) -> Void
+    private let completion: (Result<SIWAPayload, AuthError>) -> Void
 
-    init(anchor: ASPresentationAnchor?, completion: @escaping (Result<String, AuthError>) -> Void) {
+    init(anchor: ASPresentationAnchor?, completion: @escaping (Result<SIWAPayload, AuthError>) -> Void) {
         self.anchor = anchor
         self.completion = completion
     }
@@ -179,7 +196,8 @@ private final class SIWACoordinator: NSObject, ASAuthorizationControllerDelegate
             completion(.failure(.noIdentityToken))
             return
         }
-        completion(.success(token))
+        let firstName = credential.fullName?.givenName
+        completion(.success(SIWAPayload(identityToken: token, firstName: firstName)))
     }
 
     func authorizationController(controller: ASAuthorizationController, didCompleteWithError error: Error) {

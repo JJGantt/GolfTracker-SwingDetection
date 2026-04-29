@@ -2,8 +2,8 @@
 
 **Status:** Implemented (2026-04-28). All seven steps shipped: GolfCourseAPI integration → solo scorecard → playgroups schema/service → MultiplayerView → live dots + other-player strokes → walkie-talkie → multi-player scorecard → 6h auto-close. **Deviations from spec:**
 - Walkie-talkie audio sends via Realtime **binary broadcast** (no persistence) instead of the originally-considered Storage+DB-row path. Migrations `00016` created the table+bucket, `00017` dropped them. Empty bucket left in place since SQL can't delete buckets.
-- SIWA→profiles upsert + display-name onboarding intentionally deferred. Co-member name lookups currently fall back to "Player" since no row ever gets written to the `profiles` table. UX gap, by design until we revisit.
-- `PlaygroupChannel.members` is fetched once at channel start, not subscribed-to. Mid-round joins/leaves don't surface until the channel is restarted.
+
+**Post-implementation polish (same day):** SIWA→profiles upsert wired, Settings name editor added, `PlaygroupChannel.members` now subscribed to live postgres-changes (mid-round joins/leaves work), scorecard auto-refreshes via `.onChange(playgroup.otherStrokes)`, audio session deactivates after PTT.
 
 **Outstanding non-design items:** on-device verification with two physical devices in a real playgroup; iOS background-receive for walkie-talkie (currently foreground-only on phone, watch is always-on via workout session).
 
