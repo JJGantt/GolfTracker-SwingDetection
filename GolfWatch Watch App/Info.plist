@@ -30,6 +30,8 @@
 	<string>Golf Tracker needs your location to track your position on the course and calculate distances to holes.</string>
 	<key>NSMotionUsageDescription</key>
 	<string>Golf Tracker uses motion sensors to detect swings and putts during your round.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Golf Tracker uses the microphone for push-to-talk voice messages with your playgroup partners during a round.</string>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>location</string>

@@ -657,6 +657,16 @@ struct ActiveRoundView: View {
                 activeRoundContent
             }
         }
+        // Walkie-talkie button + "X is talking…" banner. Both hide when not
+        // in a playgroup, so they're effectively invisible during solo rounds.
+        .overlay(alignment: .topLeading) {
+            VStack(alignment: .leading, spacing: 4) {
+                PTTButton()
+                TalkingBanner()
+            }
+            .padding(.leading, 6)
+            .padding(.top, 6)
+        }
     }
 
     var body: some View {

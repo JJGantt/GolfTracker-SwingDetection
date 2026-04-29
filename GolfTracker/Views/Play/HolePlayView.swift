@@ -276,6 +276,19 @@ struct HolePlayView: View {
                     onUndo: undoLastAction,
                     onShowScorecard: { showingRoundSummary = true }
                 )
+
+                // Walkie-talkie PTT + "X is talking…" banner. Both views
+                // self-hide when not in a playgroup, so solo rounds are
+                // unchanged.
+                VStack(alignment: .leading, spacing: 6) {
+                    PTTButton()
+                    TalkingBanner()
+                    Spacer()
+                }
+                .padding(.leading, 16)
+                .padding(.top, 60)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                .allowsHitTesting(true)
             } else {
                 Color.clear
                     .onAppear {

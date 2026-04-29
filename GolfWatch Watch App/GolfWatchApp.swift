@@ -30,6 +30,10 @@ struct GolfTrackerWatchApp: App {
         WatchDataStore.shared.configure(container: modelContainer)
         RealtimeSync.shared.configure(container: modelContainer)
         // Realtime is round-scoped — ActiveRoundView starts/stops it.
+
+        // Touch WalkieTalkie.shared so its init wires the inbound-audio +
+        // talk-start callbacks on PlaygroupChannel before any round starts.
+        _ = WalkieTalkie.shared
     }
 
     var body: some Scene {

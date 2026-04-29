@@ -31,6 +31,13 @@ final class PlaygroupChannel: ObservableObject {
     @Published private(set) var activePlaygroupId: UUID?
     @Published private(set) var currentHoleNumber: Int = 1
 
+    /// userId of whoever just hit "push to talk", or nil. Set by inbound
+    /// `talk_start` broadcast; auto-cleared after `talkAlertTTL` seconds so
+    /// stale "is talking" banners don't linger if the audio never arrives.
+    @Published private(set) var currentlySpeaking: String?
+    static let talkAlertTTL: TimeInterval = 5
+    private var talkAlertClearTask: Task<Void, Never>?
+
     /// Master toggle for publishing your own GPS via presence. When `false`,
     /// you still receive others' presence — you just don't broadcast yours.
     /// Persisted in UserDefaults; flipped by Settings/Options UI.
@@ -53,6 +60,15 @@ final class PlaygroupChannel: ObservableObject {
     private var channel: RealtimeChannelV2?
     private var presenceTask: Task<Void, Never>?
     private var subscriptions: [Task<Void, Never>] = []
+    private var broadcastSubscriptions: [RealtimeSubscription] = []
+    private var currentUserId: String?
+
+    /// Hook the host UI installs so we can play received audio without
+    /// PlaygroupChannel needing to import AVFoundation. WalkieTalkie service
+    /// sets this in its init.
+    var onIncomingAudio: ((URL) -> Void)?
+    /// Hook the host UI installs to fire haptic + sound on inbound talk_start.
+    var onTalkStartReceived: ((String) -> Void)?
 
     private init() {}
 
@@ -82,6 +98,7 @@ final class PlaygroupChannel: ObservableObject {
         await teardown()
         activePlaygroupId = playgroupId
         currentHoleNumber = currentHole
+        currentUserId = userId
 
         // Pull the current member list once for color/round-id lookup. Realtime
         // postgres-changes on playgroup_members would be a future optimization.
@@ -119,6 +136,10 @@ final class PlaygroupChannel: ObservableObject {
         // on changes from now on; we need the existing rows too).
         await refreshOtherStrokes(userId: userId)
 
+        // Walkie-talkie: pre-alert via broadcast (~100-200ms latency) +
+        // postgres-changes on playgroup_messages for the audio delivery row.
+        wireWalkieTalkie(ch, playgroupId: playgroupId, userId: userId)
+
         // Start publishing our own presence on a tick.
         startPresenceTick(userId: userId)
 
@@ -128,17 +149,23 @@ final class PlaygroupChannel: ObservableObject {
     private func teardown() async {
         presenceTask?.cancel()
         presenceTask = nil
+        talkAlertClearTask?.cancel()
+        talkAlertClearTask = nil
         for s in subscriptions { s.cancel() }
         subscriptions.removeAll()
+        for s in broadcastSubscriptions { s.cancel() }
+        broadcastSubscriptions.removeAll()
         if let ch = channel {
             try? await ch.untrack()
             await ch.unsubscribe()
         }
         channel = nil
         activePlaygroupId = nil
+        currentUserId = nil
         members = []
         presence = [:]
         otherStrokes = [:]
+        currentlySpeaking = nil
     }
 
     // MARK: - Presence
@@ -257,6 +284,110 @@ final class PlaygroupChannel: ObservableObject {
     func color(for userId: String) -> String {
         members.first(where: { $0.userId == userId })?.color
             ?? PlaygroupService.playerPalette[0]
+    }
+
+    // MARK: - Walkie-talkie
+
+    private func wireWalkieTalkie(_ ch: RealtimeChannelV2, playgroupId: UUID, userId: String) {
+        // Inbound pre-alert. Self-broadcasts come back too — filter ourself out.
+        let talkSub = ch.onBroadcast(event: "talk_start") { [weak self] payload in
+            guard case let .string(senderId) = payload["sender_id"] ?? .null else { return }
+            guard senderId != userId else { return }
+            Task { @MainActor [weak self] in
+                self?.handleTalkStart(senderId: senderId)
+            }
+        }
+        broadcastSubscriptions.append(talkSub)
+
+        // Inbound message rows. Filter to this playgroup; postgres-changes
+        // will only push rows we have RLS access to anyway.
+        let inserts = ch.postgresChange(
+            InsertAction.self,
+            table: "playgroup_messages",
+            filter: "playgroup_id=eq.\(playgroupId.uuidString)"
+        )
+        subscriptions.append(Task { [weak self] in
+            for await action in inserts {
+                await self?.handleIncomingMessage(action.record, selfUserId: userId)
+            }
+        })
+    }
+
+    private func handleTalkStart(senderId: String) {
+        currentlySpeaking = senderId
+        onTalkStartReceived?(senderId)
+        talkAlertClearTask?.cancel()
+        talkAlertClearTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(Self.talkAlertTTL * 1_000_000_000))
+            guard !Task.isCancelled else { return }
+            await MainActor.run { self?.currentlySpeaking = nil }
+        }
+    }
+
+    private func handleIncomingMessage(_ record: [String: AnyJSON], selfUserId: String) async {
+        guard
+            case let .string(senderId)? = record["sender_id"],
+            case let .string(path)? = record["storage_path"]
+        else { return }
+        // Don't play our own messages back.
+        guard senderId != selfUserId else { return }
+
+        do {
+            let data = try await supabase.storage
+                .from("playgroup-audio")
+                .download(path: path)
+            let tmpURL = FileManager.default.temporaryDirectory
+                .appendingPathComponent(UUID().uuidString + ".m4a")
+            try data.write(to: tmpURL)
+            onIncomingAudio?(tmpURL)
+        } catch {
+            dprint("📡 [PlaygroupChannel] message download failed: \(error.localizedDescription)")
+        }
+    }
+
+    /// Fire the pre-alert broadcast so other watches haptic+ding the moment
+    /// the talk button is pressed, before the audio is even recorded.
+    func broadcastTalkStart() async {
+        guard let ch = channel, let uid = currentUserId else { return }
+        let payload: JSONObject = ["sender_id": .string(uid)]
+        try? await ch.broadcast(event: "talk_start", message: payload)
+    }
+
+    /// Upload the recorded audio to Storage and insert a row so all
+    /// co-members get notified via Realtime postgres-changes.
+    func sendVoiceMessage(localFile: URL, durationMs: Int) async {
+        guard
+            let pgId = activePlaygroupId,
+            let uid = currentUserId
+        else { return }
+        let messageId = UUID()
+        let storagePath = "\(pgId.uuidString)/\(messageId.uuidString).m4a"
+
+        do {
+            let data = try Data(contentsOf: localFile)
+            _ = try await supabase.storage
+                .from("playgroup-audio")
+                .upload(storagePath, data: data, options: FileOptions(contentType: "audio/m4a"))
+
+            struct Row: Encodable {
+                let id: String
+                let playgroup_id: String
+                let sender_id: String
+                let storage_path: String
+                let duration_ms: Int
+            }
+            let row = Row(
+                id: messageId.uuidString,
+                playgroup_id: pgId.uuidString,
+                sender_id: uid,
+                storage_path: storagePath,
+                duration_ms: durationMs
+            )
+            try await supabase.from("playgroup_messages").insert(row).execute()
+            try? FileManager.default.removeItem(at: localFile)
+        } catch {
+            dprint("📡 [PlaygroupChannel] sendVoiceMessage failed: \(error.localizedDescription)")
+        }
     }
 }
 
