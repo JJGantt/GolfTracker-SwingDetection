@@ -101,6 +101,7 @@ final class SupabaseSync {
             "rating": course.rating.map(AnyCodableValue.double) ?? .null,
             "slope": course.slope.map(AnyCodableValue.int) ?? .null,
             "city": course.city.map(AnyCodableValue.string) ?? .null,
+            "external_course_id": course.externalCourseId.map(AnyCodableValue.string) ?? .null,
             "updated_at": .string(iso(Date()))
         ]
         upsert(table: "courses", values: body, onConflict: "id")

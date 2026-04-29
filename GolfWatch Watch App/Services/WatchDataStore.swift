@@ -757,6 +757,47 @@ class WatchDataStore: ObservableObject {
             holes = [Hole(number: 1, teeId: selectedTeeId)]
         }
 
+        // Ensure a Course row exists for this resolution. Without it, the
+        // resolver's existing-course-first proximity check on subsequent
+        // round-starts at the same location finds nothing — and without
+        // an existing Course row to carry external_course_id, every
+        // subsequent round at the same course re-hits the GolfCourseAPI
+        // Edge Function. Look up by id; create if missing. The Course's
+        // own holes (separate from round.holes — round.holes is a snapshot)
+        // come from the resolution's OSM data when available.
+        let lookupId = resolution.courseId
+        let courseDescriptor = FetchDescriptor<Course>(
+            predicate: #Predicate { $0.id == lookupId }
+        )
+        let existingCourse = (try? context.fetch(courseDescriptor))?.first
+        let courseExternalId = existingCourse?.externalCourseId
+            ?? resolution.scorecardCourse.map { String($0.id) }
+        let course: Course
+        if let existing = existingCourse {
+            existing.name = resolution.courseName
+            if let ext = courseExternalId {
+                existing.externalCourseId = ext
+            }
+            course = existing
+        } else {
+            // Build a Course with a separate copy of the holes (not the same
+            // instances as round.holes — the round snapshots its own).
+            let courseHoles = holes.map { rh -> Hole in
+                let h = Hole(number: rh.number, par: rh.par, teeId: rh.teeId)
+                h.latitude = rh.latitude
+                h.longitude = rh.longitude
+                return h
+            }
+            for h in courseHoles { context.insert(h) }
+            course = Course(
+                id: resolution.courseId,
+                name: resolution.courseName,
+                holes: courseHoles,
+                externalCourseId: courseExternalId
+            )
+            context.insert(course)
+        }
+
         let newRound = Round(
             courseId: resolution.courseId,
             courseName: resolution.courseName,
@@ -767,8 +808,9 @@ class WatchDataStore: ObservableObject {
         context.insert(newRound)
         try? context.save()
         refreshCurrentRound()
+        SupabaseSync.shared.upsertCourse(course)
         SupabaseSync.shared.upsertRound(newRound)
-        dprint("⌚ [WatchDataStore] Started round at \(resolution.courseName) (tier=\(resolution.tier), \(holes.count) holes, tee=\(selectedTeeId?.uuidString ?? "none"))")
+        dprint("⌚ [WatchDataStore] Started round at \(resolution.courseName) (tier=\(resolution.tier), \(holes.count) holes, tee=\(selectedTeeId?.uuidString ?? "none"), external=\(courseExternalId ?? "nil"))")
     }
 
     func startManualQuickRound() {
