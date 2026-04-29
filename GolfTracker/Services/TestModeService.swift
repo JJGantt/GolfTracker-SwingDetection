@@ -89,19 +89,26 @@ final class TestModeService: ObservableObject {
 
     private func subscribeToChanges() async {
         guard let uid = currentUserId() else { return }
+        ClientEventLogger.log("testmode.subscribe.start")
         let ch = supabase.realtime.channel("user_test_state:\(uid)")
         channel = ch
         let pgFilter: RealtimePostgresFilter = .eq("user_id", value: uid)
         let stream = ch.postgresChange(AnyAction.self, table: "user_test_state", filter: pgFilter)
         subscription = Task { [weak self] in
+            ClientEventLogger.log("testmode.subscribe.streamLoop.enter")
             for await action in stream {
+                ClientEventLogger.log("testmode.subscribe.streamLoop.gotEvent")
                 await self?.handleChange(action)
             }
+            ClientEventLogger.log("testmode.subscribe.streamLoop.exit")
         }
         do {
             try await ch.subscribeWithError()
+            ClientEventLogger.log("testmode.subscribe.ok")
         } catch {
-            dprint("🧪 [TestModeService] subscribe failed: \(error.localizedDescription)")
+            ClientEventLogger.log("testmode.subscribe.failed", detail: [
+                "error": .string(error.localizedDescription)
+            ])
         }
     }
 

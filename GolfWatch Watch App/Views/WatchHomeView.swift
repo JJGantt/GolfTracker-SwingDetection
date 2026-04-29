@@ -138,7 +138,7 @@ struct WatchHomeView: View {
             }
             .sheet(item: Binding(
                 get: { store.pendingTeePicker.map { TeePickerWrapper(picker: $0) } },
-                set: { _ in store.pickTee(nil) }
+                set: { _ in /* sheet only dismisses via picking a tee — no skip */ }
             )) { wrapper in
                 TeePickerView(
                     courseName: wrapper.picker.courseName,
@@ -146,6 +146,7 @@ struct WatchHomeView: View {
                 ) { picked in
                     store.pickTee(picked)
                 }
+                .interactiveDismissDisabled(true)
             }
         }
     }
@@ -204,11 +205,6 @@ private struct TeePickerView: View {
                 }
             }
             .navigationTitle("Pick tee")
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Skip") { onPick(nil) }
-                }
-            }
         }
     }
 }
