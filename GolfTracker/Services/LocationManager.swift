@@ -104,9 +104,11 @@ class LocationManager: NSObject {
     }
 
     func requestPermission() {
-        if isTestModeEnabled {
-            return
-        }
+        // Don't bail on isTestModeEnabled here. Permission and live-GPS
+        // tracking are separate — we can hold the OS-level permission
+        // even while currently sourcing location from a test simulator,
+        // and the user shouldn't be blocked from completing onboarding
+        // just because test mode happens to be on.
         #if os(iOS) || os(watchOS)
         locationManager.requestWhenInUseAuthorization()
         #elseif os(macOS)
