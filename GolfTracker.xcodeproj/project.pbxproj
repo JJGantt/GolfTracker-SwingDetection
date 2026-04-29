@@ -31,6 +31,7 @@
 		6A8668D52FA13AC900C9A535 /* Supabase in Frameworks */ = {isa = PBXBuildFile; productRef = 6A8668D42FA13AC900C9A535 /* Supabase */; };
 		6A9A2C582F7DED6B008ADD6B /* ActiveRoundConfiguredView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6A9A2C572F7DED6B008ADD6B /* ActiveRoundConfiguredView.swift */; };
 		6AACTIONS2F16000000000001 /* OptionsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6AACTIONS2F16000000000002 /* OptionsView.swift */; };
+		6AAUTO000000000000000D1 /* AutoAdvanceMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6AAUTO000000000000000D0 /* AutoAdvanceMonitor.swift */; };
 		6AB09FE92F15D47F0087C4ED /* ClubSetEditorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6AB09FE62F15D47F0087C4ED /* ClubSetEditorView.swift */; };
 		6AB09FEA2F15D47F0087C4ED /* HomeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6AB09FE72F15D47F0087C4ED /* HomeView.swift */; };
 		6AB09FEB2F15D47F0087C4ED /* ClubManagementView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6AB09FE52F15D47F0087C4ED /* ClubManagementView.swift */; };
@@ -65,18 +66,30 @@
 		6AD5EACF2EE47B1500DDDCF0 /* WatchConnectivityManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6AD5EACD2EE47B0D00DDDCF0 /* WatchConnectivityManager.swift */; };
 		6AFACE000000000000000002 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 6AFACE000000000000000001 /* PrivacyInfo.xcprivacy */; };
 		6AFACE000000000000000004 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 6AFACE000000000000000003 /* PrivacyInfo.xcprivacy */; };
+		6AGCAPI000000000000000F1 /* GolfCourseAPIService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6AGCAPI000000000000000F0 /* GolfCourseAPIService.swift */; };
+		6AGCAPI000000000000000F2 /* GolfCourseAPIService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6AGCAPI000000000000000F0 /* GolfCourseAPIService.swift */; };
 		6AHKBANNR000000000000002 /* HealthKitBanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6AHKBANNR000000000000001 /* HealthKitBanner.swift */; };
+		6AMULTI00000000000001101 /* MultiplayerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6AMULTI00000000000001100 /* MultiplayerView.swift */; };
+		6AMULTI00000000000001102 /* MultiplayerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6AMULTI00000000000001100 /* MultiplayerView.swift */; };
 		6AONBOARD000000000000002 /* OnboardingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6AONBOARD000000000000001 /* OnboardingView.swift */; };
 		6AONBOARD000000000000004 /* WatchOnboardingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6AONBOARD000000000000003 /* WatchOnboardingView.swift */; };
 		6AOSMSVC00000000000000A1 /* OSMCourseService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6AOSMSVC00000000000000A0 /* OSMCourseService.swift */; };
 		6AOSMSVC00000000000000A2 /* OSMCourseService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6AOSMSVC00000000000000A0 /* OSMCourseService.swift */; };
 		6APERMBAN000000000000002 /* PermissionBanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6APERMBAN000000000000001 /* PermissionBanner.swift */; };
+		6APGCHAN00000000000000E1 /* PlaygroupChannel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6APGCHAN00000000000000E0 /* PlaygroupChannel.swift */; };
+		6APGCHAN00000000000000E2 /* PlaygroupChannel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6APGCHAN00000000000000E0 /* PlaygroupChannel.swift */; };
+		6APLAYG00000000000001001 /* PlaygroupService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6APLAYG00000000000001000 /* PlaygroupService.swift */; };
+		6APLAYG00000000000001002 /* PlaygroupService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6APLAYG00000000000001000 /* PlaygroupService.swift */; };
+		6ARSLVR000000000000000C1 /* RoundResolver.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6ARSLVR000000000000000C0 /* RoundResolver.swift */; };
+		6ARSLVR000000000000000C2 /* RoundResolver.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6ARSLVR000000000000000C0 /* RoundResolver.swift */; };
+		6ARTSYNC00000000000000E1 /* RealtimeSync.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6ARTSYNC00000000000000E0 /* RealtimeSync.swift */; };
+		6ARTSYNC00000000000000E2 /* RealtimeSync.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6ARTSYNC00000000000000E0 /* RealtimeSync.swift */; };
+		6ASBMGR000000000000000B1 /* SupabaseManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6ASBMGR000000000000000B0 /* SupabaseManager.swift */; };
+		6ASBMGR000000000000000B2 /* SupabaseManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6ASBMGR000000000000000B0 /* SupabaseManager.swift */; };
 		6ASCORE0000000000000001A /* ScorecardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6ASCORE00000000000000019 /* ScorecardView.swift */; };
 		6ASCORE0000000000000001B /* ScorecardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6ASCORE00000000000000019 /* ScorecardView.swift */; };
 		6ASCORE0000000000000001D /* ScorecardSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6ASCORE0000000000000001C /* ScorecardSheet.swift */; };
 		6ASCORE0000000000000001E /* ScorecardSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6ASCORE0000000000000001C /* ScorecardSheet.swift */; };
-		6AMULTI00000000000001101 /* MultiplayerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6AMULTI00000000000001100 /* MultiplayerView.swift */; };
-		6AMULTI00000000000001102 /* MultiplayerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6AMULTI00000000000001100 /* MultiplayerView.swift */; };
 		6ASETTC2F17000000000001 /* ClubRecommendSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6ASETTC2F17000000000002 /* ClubRecommendSettingsView.swift */; };
 		6ASETTINGS00000000000002 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6ASETTINGS00000000000001 /* SettingsView.swift */; };
 		6ASETTP2F17000000000001 /* PredictGreenSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6ASETTP2F17000000000002 /* PredictGreenSettingsView.swift */; };
@@ -85,21 +98,8 @@
 		6ASUPAAUTH00000000000006 /* LoginView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6ASUPAAUTH00000000000005 /* LoginView.swift */; };
 		6ASUPASYNC00000000000002 /* SupabaseSync.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6ASUPASYNC00000000000001 /* SupabaseSync.swift */; };
 		6ASUPASYNC00000000000003 /* SupabaseSync.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6ASUPASYNC00000000000001 /* SupabaseSync.swift */; };
-		6ASBMGR000000000000000B1 /* SupabaseManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6ASBMGR000000000000000B0 /* SupabaseManager.swift */; };
-		6ASBMGR000000000000000B2 /* SupabaseManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6ASBMGR000000000000000B0 /* SupabaseManager.swift */; };
-		6ARSLVR000000000000000C1 /* RoundResolver.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6ARSLVR000000000000000C0 /* RoundResolver.swift */; };
-		6ARSLVR000000000000000C2 /* RoundResolver.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6ARSLVR000000000000000C0 /* RoundResolver.swift */; };
-		6ARTSYNC00000000000000E1 /* RealtimeSync.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6ARTSYNC00000000000000E0 /* RealtimeSync.swift */; };
-		6ARTSYNC00000000000000E2 /* RealtimeSync.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6ARTSYNC00000000000000E0 /* RealtimeSync.swift */; };
-		6APGCHAN00000000000000E1 /* PlaygroupChannel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6APGCHAN00000000000000E0 /* PlaygroupChannel.swift */; };
-		6APGCHAN00000000000000E2 /* PlaygroupChannel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6APGCHAN00000000000000E0 /* PlaygroupChannel.swift */; };
 		6AWTALKIE0000000000000E1 /* WalkieTalkie.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6AWTALKIE0000000000000E0 /* WalkieTalkie.swift */; };
 		6AWTALKIE0000000000000E2 /* WalkieTalkie.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6AWTALKIE0000000000000E0 /* WalkieTalkie.swift */; };
-		6AGCAPI000000000000000F1 /* GolfCourseAPIService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6AGCAPI000000000000000F0 /* GolfCourseAPIService.swift */; };
-		6AGCAPI000000000000000F2 /* GolfCourseAPIService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6AGCAPI000000000000000F0 /* GolfCourseAPIService.swift */; };
-		6APLAYG00000000000001001 /* PlaygroupService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6APLAYG00000000000001000 /* PlaygroupService.swift */; };
-		6APLAYG00000000000001002 /* PlaygroupService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6APLAYG00000000000001000 /* PlaygroupService.swift */; };
-		6AAUTO000000000000000D1 /* AutoAdvanceMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6AAUTO000000000000000D0 /* AutoAdvanceMonitor.swift */; };
 		6C8B4EAC38754620BA3C4CB0 /* RoundDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 70A60D673360436FB2457C24 /* RoundDetailView.swift */; };
 		7E4B930B6ED84C57A8AB3034 /* StatsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 65E4113738034AF2B535116F /* StatsView.swift */; };
 		95313A5608784DC394BA3EAC /* HolePlayView+MoveHoleMode.swift in Sources */ = {isa = PBXBuildFile; fileRef = 93374566285C433CB8F2AD38 /* HolePlayView+MoveHoleMode.swift */; };
@@ -164,6 +164,7 @@
 		6A9A2C572F7DED6B008ADD6B /* ActiveRoundConfiguredView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ActiveRoundConfiguredView.swift; sourceTree = "<group>"; };
 		6A9CD5A92F46B29F00BC0552 /* GolfWatch Watch App.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = "GolfWatch Watch App.entitlements"; sourceTree = "<group>"; };
 		6AACTIONS2F16000000000002 /* OptionsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OptionsView.swift; sourceTree = "<group>"; };
+		6AAUTO000000000000000D0 /* AutoAdvanceMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AutoAdvanceMonitor.swift; sourceTree = "<group>"; };
 		6AB09FE42F15D47F0087C4ED /* TypeEditorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TypeEditorView.swift; sourceTree = "<group>"; };
 		6AB09FE52F15D47F0087C4ED /* ClubManagementView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClubManagementView.swift; sourceTree = "<group>"; };
 		6AB09FE62F15D47F0087C4ED /* ClubSetEditorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClubSetEditorView.swift; sourceTree = "<group>"; };
@@ -199,14 +200,20 @@
 		6AD5EACD2EE47B0D00DDDCF0 /* WatchConnectivityManager.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = WatchConnectivityManager.swift; sourceTree = "<group>"; };
 		6AFACE000000000000000001 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 		6AFACE000000000000000003 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
+		6AGCAPI000000000000000F0 /* GolfCourseAPIService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GolfCourseAPIService.swift; sourceTree = "<group>"; };
 		6AHKBANNR000000000000001 /* HealthKitBanner.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = HealthKitBanner.swift; sourceTree = "<group>"; };
+		6AMULTI00000000000001100 /* MultiplayerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MultiplayerView.swift; sourceTree = "<group>"; };
 		6AONBOARD000000000000001 /* OnboardingView.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = OnboardingView.swift; sourceTree = "<group>"; };
 		6AONBOARD000000000000003 /* WatchOnboardingView.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = WatchOnboardingView.swift; sourceTree = "<group>"; };
 		6AOSMSVC00000000000000A0 /* OSMCourseService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OSMCourseService.swift; sourceTree = "<group>"; };
 		6APERMBAN000000000000001 /* PermissionBanner.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = PermissionBanner.swift; sourceTree = "<group>"; };
+		6APGCHAN00000000000000E0 /* PlaygroupChannel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaygroupChannel.swift; sourceTree = "<group>"; };
+		6APLAYG00000000000001000 /* PlaygroupService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaygroupService.swift; sourceTree = "<group>"; };
+		6ARSLVR000000000000000C0 /* RoundResolver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RoundResolver.swift; sourceTree = "<group>"; };
+		6ARTSYNC00000000000000E0 /* RealtimeSync.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RealtimeSync.swift; sourceTree = "<group>"; };
+		6ASBMGR000000000000000B0 /* SupabaseManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SupabaseManager.swift; sourceTree = "<group>"; };
 		6ASCORE00000000000000019 /* ScorecardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScorecardView.swift; sourceTree = "<group>"; };
 		6ASCORE0000000000000001C /* ScorecardSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScorecardSheet.swift; sourceTree = "<group>"; };
-		6AMULTI00000000000001100 /* MultiplayerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MultiplayerView.swift; sourceTree = "<group>"; };
 		6ASETTC2F17000000000002 /* ClubRecommendSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClubRecommendSettingsView.swift; sourceTree = "<group>"; };
 		6ASETTINGS00000000000001 /* SettingsView.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		6ASETTP2F17000000000002 /* PredictGreenSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PredictGreenSettingsView.swift; sourceTree = "<group>"; };
@@ -214,14 +221,7 @@
 		6ASUPAAUTH00000000000003 /* AuthManager.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = AuthManager.swift; sourceTree = "<group>"; };
 		6ASUPAAUTH00000000000005 /* LoginView.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = LoginView.swift; sourceTree = "<group>"; };
 		6ASUPASYNC00000000000001 /* SupabaseSync.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = SupabaseSync.swift; sourceTree = "<group>"; };
-		6ASBMGR000000000000000B0 /* SupabaseManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SupabaseManager.swift; sourceTree = "<group>"; };
-		6ARSLVR000000000000000C0 /* RoundResolver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RoundResolver.swift; sourceTree = "<group>"; };
-		6ARTSYNC00000000000000E0 /* RealtimeSync.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RealtimeSync.swift; sourceTree = "<group>"; };
-		6APGCHAN00000000000000E0 /* PlaygroupChannel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaygroupChannel.swift; sourceTree = "<group>"; };
 		6AWTALKIE0000000000000E0 /* WalkieTalkie.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WalkieTalkie.swift; sourceTree = "<group>"; };
-		6AGCAPI000000000000000F0 /* GolfCourseAPIService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GolfCourseAPIService.swift; sourceTree = "<group>"; };
-		6APLAYG00000000000001000 /* PlaygroupService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaygroupService.swift; sourceTree = "<group>"; };
-		6AAUTO000000000000000D0 /* AutoAdvanceMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AutoAdvanceMonitor.swift; sourceTree = "<group>"; };
 		6CD8A1F4907C44A4BB2CA042 /* HolePlayView+AddPenaltyMode.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "HolePlayView+AddPenaltyMode.swift"; sourceTree = "<group>"; };
 		70A60D673360436FB2457C24 /* RoundDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RoundDetailView.swift; sourceTree = "<group>"; };
 		870F6DC4F3184CDF81331B32 /* SwingDetectionManager+ContactGates.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "SwingDetectionManager+ContactGates.swift"; sourceTree = "<group>"; };
@@ -607,7 +607,7 @@
 			attributes = {
 				BuildIndependentTargetsInParallel = 1;
 				LastSwiftUpdateCheck = 1540;
-				LastUpgradeCheck = 1540;
+				LastUpgradeCheck = 2640;
 				TargetAttributes = {
 					6AB83CCD2EDFADD200CE341C = {
 						CreatedOnToolsVersion = 15.4;
@@ -823,7 +823,9 @@
 				CLANG_WARN_UNREACHABLE_CODE = YES;
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = NO;
+				DEAD_CODE_STRIPPING = YES;
 				DEBUG_INFORMATION_FORMAT = dwarf;
+				DEVELOPMENT_TEAM = XMH4AVFC78;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				ENABLE_TESTABILITY = YES;
 				ENABLE_USER_SCRIPT_SANDBOXING = YES;
@@ -847,6 +849,7 @@
 				MTL_FAST_MATH = YES;
 				ONLY_ACTIVE_ARCH = YES;
 				SDKROOT = macosx;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
 			};
@@ -886,7 +889,9 @@
 				CLANG_WARN_UNREACHABLE_CODE = YES;
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = NO;
+				DEAD_CODE_STRIPPING = YES;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				DEVELOPMENT_TEAM = XMH4AVFC78;
 				ENABLE_NS_ASSERTIONS = NO;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				ENABLE_USER_SCRIPT_SANDBOXING = YES;
@@ -903,6 +908,7 @@
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
 				SDKROOT = macosx;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_COMPILATION_MODE = wholemodule;
 			};
 			name = Release;
@@ -910,7 +916,6 @@
 		6AB83CDE2EDFADD400CE341C /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES = YES;
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = GolfTracker/GolfTracker.entitlements;
@@ -918,8 +923,9 @@
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
+				DEAD_CODE_STRIPPING = YES;
 				DEVELOPMENT_ASSET_PATHS = "\"GolfTracker/Preview Content\"";
-				DEVELOPMENT_TEAM = XMH4AVFC78;
+				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = GolfTracker/Info.plist;
@@ -944,7 +950,6 @@
 		6AB83CDF2EDFADD400CE341C /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES = YES;
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = GolfTracker/GolfTracker.entitlements;
@@ -952,8 +957,9 @@
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
+				DEAD_CODE_STRIPPING = YES;
 				DEVELOPMENT_ASSET_PATHS = "\"GolfTracker/Preview Content\"";
-				DEVELOPMENT_TEAM = XMH4AVFC78;
+				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = GolfTracker/Info.plist;
@@ -984,7 +990,6 @@
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_ASSET_PATHS = "\"GolfWatch Watch App/Preview Content\"";
-				DEVELOPMENT_TEAM = XMH4AVFC78;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = "GolfWatch Watch App/Info.plist";
@@ -1018,7 +1023,6 @@
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_ASSET_PATHS = "\"GolfWatch Watch App/Preview Content\"";
-				DEVELOPMENT_TEAM = XMH4AVFC78;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = "GolfWatch Watch App/Info.plist";

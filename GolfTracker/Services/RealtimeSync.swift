@@ -79,8 +79,12 @@ final class RealtimeSync {
         wireUnfilteredTable(channel, "round_holes")
         wireUnfilteredTable(channel, "holes")
 
-        await channel.subscribe()
-        dprint("📡 [RealtimeSync] subscribed for user \(userId)")
+        do {
+            try await channel.subscribeWithError()
+            dprint("📡 [RealtimeSync] subscribed for user \(userId)")
+        } catch {
+            dprint("📡 [RealtimeSync] subscribe failed: \(error.localizedDescription)")
+        }
     }
 
     private func teardown() async {
@@ -96,9 +100,10 @@ final class RealtimeSync {
     // MARK: - Subscription wiring
 
     private func wireUserKeyedTable(_ channel: RealtimeChannelV2, _ table: String, userId: String) {
-        let inserts = channel.postgresChange(InsertAction.self, table: table, filter: "user_id=eq.\(userId)")
-        let updates = channel.postgresChange(UpdateAction.self, table: table, filter: "user_id=eq.\(userId)")
-        let deletes = channel.postgresChange(DeleteAction.self, table: table, filter: "user_id=eq.\(userId)")
+        let pgFilter: RealtimePostgresFilter = .eq("user_id", value: userId)
+        let inserts = channel.postgresChange(InsertAction.self, table: table, filter: pgFilter)
+        let updates = channel.postgresChange(UpdateAction.self, table: table, filter: pgFilter)
+        let deletes = channel.postgresChange(DeleteAction.self, table: table, filter: pgFilter)
         subscriptions.append(Task { [weak self] in
             for await action in inserts { self?.apply(table: table, kind: .insert, record: action.record) }
         })

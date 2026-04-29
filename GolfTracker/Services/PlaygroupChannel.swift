@@ -139,7 +139,11 @@ final class PlaygroupChannel: ObservableObject {
         // the channel restarted (back out of round → re-enter).
         wireMembersChange(ch, playgroupId: playgroupId, userId: userId)
 
-        await ch.subscribe()
+        do {
+            try await ch.subscribeWithError()
+        } catch {
+            dprint("📡 [PlaygroupChannel] subscribe failed: \(error.localizedDescription)")
+        }
 
         // Initial pull for other-player strokes (postgres-changes only fires
         // on changes from now on; we need the existing rows too).
@@ -165,7 +169,7 @@ final class PlaygroupChannel: ObservableObject {
         for s in broadcastSubscriptions { s.cancel() }
         broadcastSubscriptions.removeAll()
         if let ch = channel {
-            try? await ch.untrack()
+            await ch.untrack()
             await ch.unsubscribe()
         }
         channel = nil
@@ -195,7 +199,7 @@ final class PlaygroupChannel: ObservableObject {
         guard Self.liveDotsEnabled else {
             // Make sure we're not still tracked from a previous session where
             // the user had it enabled.
-            try? await ch.untrack()
+            await ch.untrack()
             return
         }
         guard let loc = LocationManager.shared.location else { return }
@@ -205,7 +209,7 @@ final class PlaygroupChannel: ObservableObject {
             "lon": .double(loc.coordinate.longitude),
             "ts": .double(Date().timeIntervalSince1970)
         ]
-        try? await ch.track(state: payload)
+        await ch.track(state: payload)
     }
 
     private func handlePresenceChange(_ change: any PresenceAction) async {
@@ -254,21 +258,10 @@ final class PlaygroupChannel: ObservableObject {
     /// Triggers a member refetch + wires stroke subscriptions for any
     /// newly-present round_ids.
     private func wireMembersChange(_ ch: RealtimeChannelV2, playgroupId: UUID, userId: String) {
-        let inserts = ch.postgresChange(
-            InsertAction.self,
-            table: "playgroup_members",
-            filter: "playgroup_id=eq.\(playgroupId.uuidString)"
-        )
-        let deletes = ch.postgresChange(
-            DeleteAction.self,
-            table: "playgroup_members",
-            filter: "playgroup_id=eq.\(playgroupId.uuidString)"
-        )
-        let updates = ch.postgresChange(
-            UpdateAction.self,
-            table: "playgroup_members",
-            filter: "playgroup_id=eq.\(playgroupId.uuidString)"
-        )
+        let pgFilter: RealtimePostgresFilter = .eq("playgroup_id", value: playgroupId.uuidString)
+        let inserts = ch.postgresChange(InsertAction.self, table: "playgroup_members", filter: pgFilter)
+        let deletes = ch.postgresChange(DeleteAction.self, table: "playgroup_members", filter: pgFilter)
+        let updates = ch.postgresChange(UpdateAction.self, table: "playgroup_members", filter: pgFilter)
         subscriptions.append(Task { [weak self] in
             for await _ in inserts { await self?.refreshMembers(playgroupId: playgroupId, userId: userId) }
         })
@@ -326,9 +319,10 @@ final class PlaygroupChannel: ObservableObject {
 
     private func wireStrokesForRound(_ ch: RealtimeChannelV2, roundId: String) {
         wiredRoundIds.insert(roundId)
-        let inserts = ch.postgresChange(InsertAction.self, table: "strokes", filter: "round_id=eq.\(roundId)")
-        let updates = ch.postgresChange(UpdateAction.self, table: "strokes", filter: "round_id=eq.\(roundId)")
-        let deletes = ch.postgresChange(DeleteAction.self, table: "strokes", filter: "round_id=eq.\(roundId)")
+        let pgFilter: RealtimePostgresFilter = .eq("round_id", value: roundId)
+        let inserts = ch.postgresChange(InsertAction.self, table: "strokes", filter: pgFilter)
+        let updates = ch.postgresChange(UpdateAction.self, table: "strokes", filter: pgFilter)
+        let deletes = ch.postgresChange(DeleteAction.self, table: "strokes", filter: pgFilter)
         subscriptions.append(Task { [weak self] in
             for await action in inserts { await self?.applyStrokeChange(.insert, record: action.record) }
         })
@@ -569,7 +563,7 @@ final class PlaygroupChannel: ObservableObject {
     func broadcastTalkStart() async {
         guard let ch = channel, let uid = currentUserId else { return }
         let payload: JSONObject = ["sender_id": .string(uid)]
-        try? await ch.broadcast(event: "talk_start", message: payload)
+        await ch.broadcast(event: "talk_start", message: payload)
     }
 
     /// Send the recorded audio as a single binary broadcast on the playgroup
