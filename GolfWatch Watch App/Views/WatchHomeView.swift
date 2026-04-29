@@ -99,6 +99,12 @@ struct WatchHomeView: View {
                 }
             }
             .padding()
+            .onAppear {
+                // Catch any clubs/types/sets edited on the iPhone since we
+                // last had a round open. RealtimeSync is round-scoped so it
+                // wouldn't have streamed those edits to us in the meantime.
+                store.hydrateClubsFromSupabase()
+            }
             .navigationDestination(isPresented: $navigateToActiveRound) {
                 ActiveRoundView()
             }

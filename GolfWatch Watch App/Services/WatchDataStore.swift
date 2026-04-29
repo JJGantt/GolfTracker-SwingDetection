@@ -127,6 +127,96 @@ class WatchDataStore: ObservableObject {
         // Pick up our playgroup-assigned color (if any) so the GPS arrow renders
         // correctly on first launch even before the user opens MultiplayerView.
         refreshMyPlayerColor()
+        // Pull clubs/club_types/club_sets from the DB so the watch isn't
+        // stuck on the "Waiting for clubs to sync..." screen between rounds.
+        // RealtimeSync is round-scoped (intentional — keeps the WebSocket off
+        // when idle), so without an explicit hydrate path the watch never
+        // sees iPhone-side club edits unless the user enters a round.
+        hydrateClubsFromSupabase()
+        // Auth may not be ready at app launch (session arrives via WC from
+        // iPhone). Re-hydrate the moment we have a valid user.
+        WatchAuthSession.shared.onSessionChanged = { [weak self] session in
+            if session != nil { self?.hydrateClubsFromSupabase() }
+        }
+    }
+
+    /// One-shot fetch of the user's clubs/club_types/club_sets from Supabase
+    /// into local SwiftData. Idempotent — upserts by id, doesn't delete.
+    /// Called from `configure(container:)` at launch and from
+    /// `WatchHomeView.onAppear` so iPhone-side edits between rounds catch up.
+    func hydrateClubsFromSupabase() {
+        Task { [weak self] in
+            guard let self = self else { return }
+            guard let context = self.context else { return }
+            guard WatchAuthSession.shared.currentUserId != nil else { return }
+            let supabase = SupabaseManager.shared
+            do {
+                async let typesAsync: [ClubTypeDTO] = supabase.from("club_types").select().execute().value
+                async let clubsAsync: [ClubDTO] = supabase.from("clubs").select().execute().value
+                async let setsAsync: [ClubSetDTO] = supabase.from("club_sets").select().execute().value
+                let (types, clubs, sets) = try await (typesAsync, clubsAsync, setsAsync)
+                await MainActor.run {
+                    for t in types { Self.upsertClubType(t, into: context) }
+                    for c in clubs { Self.upsertClub(c, into: context) }
+                    for s in sets { Self.upsertClubSet(s, into: context) }
+                    try? context.save()
+                    self.objectWillChange.send()
+                    dprint("⌚ [WatchDataStore] hydrated \(types.count) types / \(clubs.count) clubs / \(sets.count) sets")
+                }
+            } catch {
+                dprint("⌚ [WatchDataStore] hydrate failed: \(error.localizedDescription)")
+            }
+        }
+    }
+
+    private static func upsertClubType(_ t: ClubTypeDTO, into context: ModelContext) {
+        let id = t.id
+        let descriptor = FetchDescriptor<ClubTypeData>(predicate: #Predicate { $0.id == id })
+        if let existing = (try? context.fetch(descriptor))?.first {
+            existing.name = t.name
+            existing.isDefault = t.is_default ?? false
+            existing.averageDistance = t.average_distance
+        } else {
+            context.insert(ClubTypeData(id: id, name: t.name, isDefault: t.is_default ?? false, averageDistance: t.average_distance))
+        }
+    }
+
+    private static func upsertClub(_ c: ClubDTO, into context: ModelContext) {
+        let id = c.id
+        let descriptor = FetchDescriptor<ClubData>(predicate: #Predicate { $0.id == id })
+        if let existing = (try? context.fetch(descriptor))?.first {
+            existing.name = c.name
+            existing.clubTypeId = c.club_type_id
+            existing.isDefault = c.is_default ?? false
+        } else {
+            context.insert(ClubData(id: id, name: c.name, clubTypeId: c.club_type_id, isDefault: c.is_default ?? false))
+        }
+    }
+
+    private static func upsertClubSet(_ s: ClubSetDTO, into context: ModelContext) {
+        let id = s.id
+        let descriptor = FetchDescriptor<ClubSet>(predicate: #Predicate { $0.id == id })
+        let dc = s.date_created.flatMap(Self.parseISO) ?? Date()
+        let dm = s.date_modified.flatMap(Self.parseISO) ?? Date()
+        if let existing = (try? context.fetch(descriptor))?.first {
+            existing.name = s.name
+            existing.isActive = s.is_active ?? false
+            existing.dateCreated = dc
+            existing.dateModified = dm
+        } else {
+            context.insert(ClubSet(id: id, name: s.name, typeSelections: [], isActive: s.is_active ?? false, dateCreated: dc, dateModified: dm))
+        }
+    }
+
+    private static let isoFormatter: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return f
+    }()
+    private static func parseISO(_ s: String) -> Date? {
+        if let d = isoFormatter.date(from: s) { return d }
+        let alt = ISO8601DateFormatter(); alt.formatOptions = [.withInternetDateTime]
+        return alt.date(from: s)
     }
 
     // MARK: - Current Round / Hole
@@ -686,4 +776,31 @@ class ClubPredictionManager {
         let closest = clubDistances.min { abs($0.average - yards) < abs($1.average - yards) }
         return closest?.index
     }
+}
+
+// MARK: - Hydrate DTOs
+
+/// Wire shapes for the one-shot hydrate fetch in `hydrateClubsFromSupabase`.
+/// Snake-case property names match the Postgres column names directly so we
+/// don't need a CodingKeys block.
+struct ClubTypeDTO: Decodable {
+    let id: UUID
+    let name: String
+    let is_default: Bool?
+    let average_distance: Int?
+}
+
+struct ClubDTO: Decodable {
+    let id: UUID
+    let name: String
+    let club_type_id: UUID
+    let is_default: Bool?
+}
+
+struct ClubSetDTO: Decodable {
+    let id: UUID
+    let name: String
+    let is_active: Bool?
+    let date_created: String?
+    let date_modified: String?
 }

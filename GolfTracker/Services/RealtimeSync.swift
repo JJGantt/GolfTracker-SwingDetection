@@ -151,6 +151,18 @@ final class RealtimeSync {
         default: break
         }
         try? context.save()
+        // Notify the platform store so views observing it (which use computed
+        // properties like currentRound that re-fetch on each access) actually
+        // re-render when these mutations land. Without this, the iPhone can
+        // change holes / record strokes and the watch's view won't update
+        // until the user navigates the watch UI manually.
+        Task { @MainActor in
+            #if os(watchOS)
+            WatchDataStore.shared.objectWillChange.send()
+            #else
+            DataStore.shared.objectWillChange.send()
+            #endif
+        }
     }
 
     private func applyRound(context: ModelContext, kind: ChangeKind, id: UUID, record: [String: AnyJSON]) {
