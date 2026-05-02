@@ -3,89 +3,84 @@ import CoreLocation
 import MapKit
 import Supabase
 
-/// Orchestrates the "start a round from here" flow for either device:
+/// Orchestrates the "start a round from here" flow on either device.
 ///
-/// 1. **Existing-course-first**: query the user's saved courses for any
-///    within ~500m of GPS. If exactly one match, prompt "Play <name>?" — if
-///    yes, start the round on that course immediately (cached OSM data, no
-///    Overpass query). If "different course", fall through to step 2.
-/// 2. Use OSM Overpass to fetch nearby `leisure=golf_course` candidates
-///    (MapKit fallback if OSM has nothing).
-/// 3. Pick a course (auto when isolated, picker when ambiguous).
-/// 4. Resolve OSM geometry for the chosen course (cache hit fast path).
-/// 5. Return the round-ready Resolution with tier classification.
+/// **Single-flow design** (post-migration 00026 — shared courses):
 ///
-/// Both the iPhone and the Apple Watch can drive this flow — it has no
-/// platform-specific dependencies beyond MapKit/CoreLocation/SDK, all of which
-/// are available on both.
+///   1. Query the shared `courses` table for any rows whose `center_lat/lon`
+///      is within `nearbyRadiusMeters` (~3 miles) of the user's GPS. This is
+///      THE primary resolution path — every course any user has played is in
+///      this table, so a "new" course only appears the first time anyone
+///      registers it.
+///   2. If the proximity query returns rows: present a picker (auto-pick if
+///      exactly one). On pick, build a Resolution from the row's cached
+///      `osm_polygons` blob + cached `external_course_id` (no Overpass call,
+///      no GolfCourseAPI call).
+///   3. If the proximity query returns nothing: fall through to OSM Overpass.
+///      User picks. We fetch geometry, search GolfCourseAPI for scorecard
+///      data, then INSERT one row into the shared `courses` table carrying
+///      everything (`center_lat`, `center_lon`, `osm_id`, `external_course_id`,
+///      `osm_polygons`) plus the per-hole rows. The next user at the same
+///      course hits step 1 instead.
+///
+/// MapKit is the last-resort fallback when OSM has zero matches — it has no
+/// polygon data, so the round starts as Tier `none` and we don't INSERT a
+/// shared row (we'd be persisting incomplete data).
 final class RoundResolver {
     static let shared = RoundResolver()
 
     private let supabase = SupabaseManager.shared
     private let osm = OSMCourseService.shared
 
-    /// How close (meters) a saved course's centroid needs to be for the
-    /// existing-course-first prompt to fire.
-    var existingCourseProximityMeters: Double = 500
+    /// Search radius for the shared-courses proximity query. 3 miles covers
+    /// resort-style multi-course campuses (Pinehurst, Bandon, Bethpage)
+    /// without false-positive hits at courses across town.
+    var nearbyRadiusMeters: Double = 4800
 
     private init() {}
 
     // MARK: - Types
 
-    /// Streamed status for a status string in the UI ("Locating course...", etc).
+    /// Streamed status string for the UI ("Locating…", etc).
     enum Step {
         case locating
-        case checkingExisting
-        /// User must confirm whether to play an existing course found nearby
-        /// (or pick "Different course" to fall through to OSM resolution).
-        case confirmingExisting(ExistingCourseMatch)
+        case searchingShared
         case searchingPOIs
-        case checkingDB
-        case picking([POICandidate])              // multiple options — user must choose
+        case picking([CourseCandidate])
         case loadingCourseData(courseName: String)
         case ready(Resolution)
         case failed(String)
     }
 
-    /// A saved-course match presented to the user as "Play <name>?"
-    struct ExistingCourseMatch: Hashable {
-        let courseId: UUID
-        let courseName: String
-        let centroid: CLLocationCoordinate2D
-        let distanceMeters: Double
-        /// Cached id from the prior GolfCourseAPI resolve. When non-nil,
-        /// the resolver can skip the Edge Function call on this round-start
-        /// and read tees straight from `course_tees`.
-        let externalCourseId: String?
-
-        static func == (lhs: ExistingCourseMatch, rhs: ExistingCourseMatch) -> Bool {
-            lhs.courseId == rhs.courseId
-        }
-        func hash(into hasher: inout Hasher) { hasher.combine(courseId) }
-    }
-
-    /// A golf course candidate. Backed by an OSM `leisure=golf_course` feature
-    /// (preferred) or a MapKit POI (fallback when OSM has nothing). Carries a
-    /// polygon when OSM-sourced, used for the second-pass geometry query.
-    struct POICandidate: Hashable {
+    /// A course the user can pick. May be backed by a row already in the
+    /// shared courses table, an OSM feature we'd register on confirmation, or
+    /// a MapKit POI fallback.
+    struct CourseCandidate: Hashable {
         let name: String
         let coordinate: CLLocationCoordinate2D
         let distanceMeters: Double
-        /// If non-nil, this candidate matched an existing Course in the user's
-        /// DB and we should reuse that course id instead of creating a new one.
-        let existingCourseId: UUID?
-        /// If non-nil, the matched existing Course already has its
-        /// GolfCourseAPI external id cached. resolveScorecard uses this to
-        /// skip the Edge Function call entirely.
-        let existingExternalCourseId: String?
-        /// OSM source data when available — drives the second-pass geometry
-        /// query. nil when this candidate came from the MapKit fallback.
-        let osmCandidate: OSMCourseCandidate?
+        let source: Source
 
-        static func == (lhs: POICandidate, rhs: POICandidate) -> Bool {
-            lhs.name == rhs.name &&
-            lhs.coordinate.latitude == rhs.coordinate.latitude &&
-            lhs.coordinate.longitude == rhs.coordinate.longitude
+        enum Source: Hashable {
+            /// Already in the shared courses table. Has cached polygon data
+            /// (when present) and external_course_id (when present).
+            case shared(courseId: UUID, externalCourseId: String?, osmId: Int64?)
+            /// Found via OSM. INSERT-on-pick.
+            case osm(OSMCourseCandidate)
+            /// MapKit fallback (OSM coverage gap). No polygon data, no INSERT
+            /// to shared courses.
+            case mapKit
+        }
+
+        static func == (lhs: CourseCandidate, rhs: CourseCandidate) -> Bool {
+            switch (lhs.source, rhs.source) {
+            case (.shared(let a, _, _), .shared(let b, _, _)):
+                return a == b
+            default:
+                return lhs.name == rhs.name &&
+                       lhs.coordinate.latitude == rhs.coordinate.latitude &&
+                       lhs.coordinate.longitude == rhs.coordinate.longitude
+            }
         }
 
         func hash(into hasher: inout Hasher) {
@@ -102,80 +97,232 @@ final class RoundResolver {
         let courseCoordinate: CLLocationCoordinate2D
         let osmData: OSMCourseData?
         let tier: OSMCourseData.Tier
+        /// True iff the course was already in the shared courses table when
+        /// this resolution started. Drives whether the caller skips the
+        /// course-row INSERT (it's already there).
         let isExistingCourse: Bool
-        /// GolfCourseAPI scorecard data, when matched. nil for courses the
-        /// API doesn't have. The tee picker reads `tees` from here; the
-        /// scorecard view reads per-hole yardage/handicap/par via
-        /// `GolfCourseAPIService.cachedHoles(forTeeId:)` once a tee is picked.
+        /// GolfCourseAPI scorecard. nil for courses the API doesn't have.
         let scorecardCourse: GCAPICourse?
     }
 
     // MARK: - Entry point
 
-    /// Resolves a round-ready course at the given location. Calls `progress`
-    /// with status updates throughout. If multiple legitimate POIs are within
-    /// a tight radius, calls `coursePicker` so the UI can ask the user which
-    /// one — the picker callback receives the candidate list and a selection
-    /// handler that takes the chosen candidate (or nil to cancel).
+    /// Resolve a round-ready course at `currentLocation`. Streams status via
+    /// `progress`. When more than one candidate is plausible, calls
+    /// `coursePicker` so the UI can ask the user which one (or nil to cancel).
     func resolve(
         at currentLocation: CLLocationCoordinate2D,
         progress: @escaping (Step) -> Void,
-        coursePicker: @escaping ([POICandidate], @escaping (POICandidate?) -> Void) -> Void,
-        existingCoursePrompt: @escaping (ExistingCourseMatch, @escaping (Bool) -> Void) -> Void = { _, cb in cb(false) },
+        coursePicker: @escaping ([CourseCandidate], @escaping (CourseCandidate?) -> Void) -> Void,
         completion: @escaping (Resolution?) -> Void
     ) {
-        // Step 1: existing-course-first proximity check. If we find exactly
-        // one saved course nearby, prompt the user to confirm before doing
-        // any OSM work.
-        progress(.checkingExisting)
-        findExistingCourseMatches(near: currentLocation) { [weak self] matches in
-            guard let self = self else { completion(nil); return }
-            ClientEventLogger.log("resolver.existingCourseCheck", detail: [
-                "matchCount": .integer(matches.count),
-                "firstMatchName": matches.first.map { .string($0.courseName) } ?? .null,
-                "firstMatchExternalId": matches.first.flatMap { $0.externalCourseId.map(AnyJSON.string) } ?? .null
+        progress(.searchingShared)
+        Task {
+            let shared = (try? await fetchSharedCoursesNear(currentLocation)) ?? []
+            ClientEventLogger.log("resolver.sharedQuery", detail: [
+                "matchCount": .integer(shared.count)
             ])
-            if matches.count == 1, let match = matches.first {
-                progress(.confirmingExisting(match))
-                existingCoursePrompt(match) { confirmed in
-                    ClientEventLogger.log("resolver.existingCoursePromptResult", detail: [
-                        "confirmed": .bool(confirmed)
-                    ])
-                    if confirmed {
-                        self.resolveExisting(match, progress: progress, completion: completion)
+            if !shared.isEmpty {
+                self.presentCandidates(shared, progress: progress, coursePicker: coursePicker, completion: completion)
+                return
+            }
+            // No shared course nearby — fall through to OSM.
+            self.resolveViaOSM(at: currentLocation, progress: progress, coursePicker: coursePicker, completion: completion)
+        }
+    }
+
+    // MARK: - Shared-courses proximity
+
+    private struct SharedCourseRow: Decodable {
+        let id: UUID
+        let name: String
+        let center_lat: Double?
+        let center_lon: Double?
+        let osm_id: Int64?
+        let external_course_id: String?
+        /// Encoded as JSONB on the server; decoded into OSMCourseData below.
+        let osm_polygons: OSMCourseData?
+    }
+
+    private func fetchSharedCoursesNear(_ coordinate: CLLocationCoordinate2D) async throws -> [CourseCandidate] {
+        // Coarse bounding box. lat: 1° ≈ 111km. lon scales by cos(lat).
+        let latDelta = nearbyRadiusMeters / 111_000.0
+        let lonDelta = nearbyRadiusMeters / (111_000.0 * max(cos(coordinate.latitude * .pi / 180), 0.01))
+        let minLat = coordinate.latitude - latDelta
+        let maxLat = coordinate.latitude + latDelta
+        let minLon = coordinate.longitude - lonDelta
+        let maxLon = coordinate.longitude + lonDelta
+
+        let rows: [SharedCourseRow] = try await supabase.from("courses")
+            .select("id,name,center_lat,center_lon,osm_id,external_course_id,osm_polygons")
+            .gte("center_lat", value: minLat)
+            .lte("center_lat", value: maxLat)
+            .gte("center_lon", value: minLon)
+            .lte("center_lon", value: maxLon)
+            .execute()
+            .value
+
+        let userLoc = CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude)
+        let candidates: [CourseCandidate] = rows.compactMap { row in
+            guard let lat = row.center_lat, let lon = row.center_lon else { return nil }
+            let dist = CLLocation(latitude: lat, longitude: lon).distance(from: userLoc)
+            guard dist <= nearbyRadiusMeters else { return nil }
+            return CourseCandidate(
+                name: row.name,
+                coordinate: CLLocationCoordinate2D(latitude: lat, longitude: lon),
+                distanceMeters: dist,
+                source: .shared(
+                    courseId: row.id,
+                    externalCourseId: row.external_course_id,
+                    osmId: row.osm_id
+                )
+            )
+        }
+        return candidates.sorted { $0.distanceMeters < $1.distanceMeters }
+    }
+
+    // MARK: - OSM fallback (miss path)
+
+    private func resolveViaOSM(
+        at currentLocation: CLLocationCoordinate2D,
+        progress: @escaping (Step) -> Void,
+        coursePicker: @escaping ([CourseCandidate], @escaping (CourseCandidate?) -> Void) -> Void,
+        completion: @escaping (Resolution?) -> Void
+    ) {
+        progress(.searchingPOIs)
+        osm.fetchCandidates(near: currentLocation) { [weak self] result in
+            guard let self = self else { completion(nil); return }
+            switch result {
+            case .success(let osmCandidates) where !osmCandidates.isEmpty:
+                let userLoc = CLLocation(latitude: currentLocation.latitude, longitude: currentLocation.longitude)
+                let candidates = osmCandidates.map { c -> CourseCandidate in
+                    let cLoc = CLLocation(latitude: c.centroid.latitude, longitude: c.centroid.longitude)
+                    return CourseCandidate(
+                        name: c.name,
+                        coordinate: c.centroid.coordinate,
+                        distanceMeters: cLoc.distance(from: userLoc),
+                        source: .osm(c)
+                    )
+                }
+                .sorted { $0.distanceMeters < $1.distanceMeters }
+                self.presentCandidates(candidates, progress: progress, coursePicker: coursePicker, completion: completion)
+            default:
+                // OSM empty or errored — last-resort MapKit.
+                self.searchMapKitPOIs(near: currentLocation) { mapkit in
+                    if mapkit.isEmpty {
+                        progress(.failed("No golf course found nearby"))
+                        completion(nil)
                     } else {
-                        self.resolveViaOSM(at: currentLocation, progress: progress, coursePicker: coursePicker, completion: completion)
+                        self.presentCandidates(mapkit, progress: progress, coursePicker: coursePicker, completion: completion)
                     }
                 }
-            } else {
-                self.resolveViaOSM(at: currentLocation, progress: progress, coursePicker: coursePicker, completion: completion)
             }
         }
     }
 
-    /// Fast path — saved course within proximity. Skip OSM entirely; reuse
-    /// whatever cached geometry the existing course has. Also fetch GolfCourseAPI
-    /// scorecard data so the tee picker can populate. If we've resolved this
-    /// course before AND stored the external_course_id on the row, skip the
-    /// Edge Function call entirely and read course_tees direct from cache.
-    private func resolveExisting(_ match: ExistingCourseMatch,
-                                 progress: @escaping (Step) -> Void,
-                                 completion: @escaping (Resolution?) -> Void) {
-        progress(.loadingCourseData(courseName: match.courseName))
-        osm.fetchFromCache(near: match.centroid) { [weak self] osmData in
-            let tier = osmData?.tier ?? .none
-            self?.resolveScorecard(
-                courseName: match.courseName,
-                near: match.centroid,
-                knownExternalCourseId: match.externalCourseId,
-                localCourseId: match.courseId
-            ) { scorecard in
+    private func presentCandidates(_ candidates: [CourseCandidate],
+                                   progress: @escaping (Step) -> Void,
+                                   coursePicker: @escaping ([CourseCandidate], @escaping (CourseCandidate?) -> Void) -> Void,
+                                   completion: @escaping (Resolution?) -> Void) {
+        guard !candidates.isEmpty else {
+            progress(.failed("No golf course found nearby"))
+            completion(nil)
+            return
+        }
+        if candidates.count == 1, let only = candidates.first {
+            self.continueWith(only, progress: progress, completion: completion)
+            return
+        }
+        progress(.picking(candidates))
+        coursePicker(candidates) { [weak self] chosen in
+            guard let self = self, let chosen = chosen else { completion(nil); return }
+            self.continueWith(chosen, progress: progress, completion: completion)
+        }
+    }
+
+    // MARK: - Build resolution from a picked candidate
+
+    private func continueWith(_ candidate: CourseCandidate,
+                              progress: @escaping (Step) -> Void,
+                              completion: @escaping (Resolution?) -> Void) {
+        progress(.loadingCourseData(courseName: candidate.name))
+
+        switch candidate.source {
+        case .shared(let courseId, let externalId, let osmId):
+            resolveExistingShared(
+                courseId: courseId,
+                courseName: candidate.name,
+                coordinate: candidate.coordinate,
+                externalCourseId: externalId,
+                osmId: osmId,
+                progress: progress,
+                completion: completion
+            )
+        case .osm(let osmCandidate):
+            resolveAndRegisterOSM(
+                osmCandidate: osmCandidate,
+                userPickedName: candidate.name,
+                userPickedCoord: candidate.coordinate,
+                progress: progress,
+                completion: completion
+            )
+        case .mapKit:
+            // No polygon data, no scorecard search proximity. Start a Tier-none
+            // round and don't write to shared courses (we'd be persisting an
+            // incomplete record).
+            resolveScorecard(courseName: candidate.name, near: candidate.coordinate, knownExternalCourseId: nil) { scorecard in
                 let resolution = Resolution(
-                    courseId: match.courseId,
-                    courseName: match.courseName,
-                    courseCoordinate: match.centroid,
+                    courseId: UUID(),
+                    courseName: candidate.name,
+                    courseCoordinate: candidate.coordinate,
+                    osmData: nil,
+                    tier: .none,
+                    isExistingCourse: false,
+                    scorecardCourse: scorecard
+                )
+                progress(.ready(resolution))
+                completion(resolution)
+            }
+        }
+    }
+
+    /// Existing shared course pick. Pull cached osm_polygons, optionally
+    /// pull cached scorecard via cached external_course_id. No Overpass, no
+    /// Edge Function call when both caches are populated.
+    private func resolveExistingShared(courseId: UUID,
+                                       courseName: String,
+                                       coordinate: CLLocationCoordinate2D,
+                                       externalCourseId: String?,
+                                       osmId: Int64?,
+                                       progress: @escaping (Step) -> Void,
+                                       completion: @escaping (Resolution?) -> Void) {
+        Task {
+            // Re-fetch the row to get fresh osm_polygons (we already have it
+            // from the proximity query, but a single targeted fetch keeps
+            // this code path simple — and the row is small).
+            let osmData: OSMCourseData? = await {
+                do {
+                    let rows: [SharedCourseRow] = try await self.supabase.from("courses")
+                        .select("id,name,center_lat,center_lon,osm_id,external_course_id,osm_polygons")
+                        .eq("id", value: courseId.uuidString)
+                        .limit(1)
+                        .execute()
+                        .value
+                    return rows.first?.osm_polygons
+                } catch {
+                    dprint("[RoundResolver] re-fetch shared course failed: \(error)")
+                    return nil
+                }
+            }()
+            _ = osmId  // currently unused; kept on the candidate for future polygon-refresh logic.
+
+            self.resolveScorecard(courseName: courseName, near: coordinate, knownExternalCourseId: externalCourseId) { scorecard in
+                let resolution = Resolution(
+                    courseId: courseId,
+                    courseName: courseName,
+                    courseCoordinate: coordinate,
                     osmData: osmData,
-                    tier: tier,
+                    tier: osmData?.tier ?? .none,
                     isExistingCourse: true,
                     scorecardCourse: scorecard
                 )
@@ -185,194 +332,53 @@ final class RoundResolver {
         }
     }
 
-    /// Row shape for the proximity check — we need each course's hole coords
-    /// to compute a centroid for distance comparison.
-    private struct CourseProximityRow: Decodable {
-        let id: UUID
-        let name: String
-        let external_course_id: String?
-        let holes: [HoleCoord]
-        struct HoleCoord: Decodable {
-            let latitude: Double?
-            let longitude: Double?
-        }
-    }
-
-    /// Pull every saved course for the user, compute each one's centroid
-    /// from its holes, and return the ones within `existingCourseProximityMeters`.
-    private func findExistingCourseMatches(near coordinate: CLLocationCoordinate2D,
-                                           completion: @escaping ([ExistingCourseMatch]) -> Void) {
-        Task {
-            do {
-                let rows: [CourseProximityRow] = try await supabase.from("courses")
-                    .select("id,name,external_course_id,holes(latitude,longitude)")
-                    .execute()
-                    .value
-                let userLoc = CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude)
-                let matches: [ExistingCourseMatch] = rows.compactMap { row in
-                    let coords = row.holes.compactMap { hc -> CLLocationCoordinate2D? in
-                        guard let lat = hc.latitude, let lon = hc.longitude else { return nil }
-                        return CLLocationCoordinate2D(latitude: lat, longitude: lon)
-                    }
-                    guard !coords.isEmpty else { return nil }
-                    let centLat = coords.map(\.latitude).reduce(0, +) / Double(coords.count)
-                    let centLon = coords.map(\.longitude).reduce(0, +) / Double(coords.count)
-                    let centroid = CLLocationCoordinate2D(latitude: centLat, longitude: centLon)
-                    let dist = CLLocation(latitude: centLat, longitude: centLon).distance(from: userLoc)
-                    guard dist <= self.existingCourseProximityMeters else { return nil }
-                    return ExistingCourseMatch(
-                        courseId: row.id,
-                        courseName: row.name,
-                        centroid: centroid,
-                        distanceMeters: dist,
-                        externalCourseId: row.external_course_id
-                    )
-                }
-                completion(matches.sorted { $0.distanceMeters < $1.distanceMeters })
-            } catch {
-                dprint("[RoundResolver] existing-course proximity check failed: \(error)")
-                completion([])
-            }
-        }
-    }
-
-    private func resolveViaOSM(
-        at currentLocation: CLLocationCoordinate2D,
-        progress: @escaping (Step) -> Void,
-        coursePicker: @escaping ([POICandidate], @escaping (POICandidate?) -> Void) -> Void,
-        completion: @escaping (Resolution?) -> Void
-    ) {
-        progress(.searchingPOIs)
-        // First pass: ask OSM for nearby named golf courses. Each result has a
-        // bounding polygon for the second-pass geometry query.
-        osm.fetchCandidates(near: currentLocation) { [weak self] result in
-            guard let self = self else { completion(nil); return }
-
-            switch result {
-            case .failure(let err):
-                dprint("[RoundResolver] OSM candidate fetch failed (\(err)) — falling back to MapKit")
-                self.searchMapKitPOIs(near: currentLocation) { mapkitPOIs in
-                    self.continueAfterCandidates(mapkitPOIs, progress: progress, coursePicker: coursePicker, completion: completion)
-                }
-            case .success(let osmCandidates):
-                if osmCandidates.isEmpty {
-                    // OSM coverage gap. Use MapKit as the safety net.
-                    dprint("[RoundResolver] OSM had no candidates — falling back to MapKit")
-                    self.searchMapKitPOIs(near: currentLocation) { mapkitPOIs in
-                        self.continueAfterCandidates(mapkitPOIs, progress: progress, coursePicker: coursePicker, completion: completion)
-                    }
-                } else {
-                    let userLoc = CLLocation(latitude: currentLocation.latitude, longitude: currentLocation.longitude)
-                    let pois = osmCandidates.map { c -> POICandidate in
-                        let cLoc = CLLocation(latitude: c.centroid.latitude, longitude: c.centroid.longitude)
-                        return POICandidate(
-                            name: c.name,
-                            coordinate: c.centroid.coordinate,
-                            distanceMeters: cLoc.distance(from: userLoc),
-                            existingCourseId: nil,
-                            existingExternalCourseId: nil,
-                            osmCandidate: c
-                        )
-                    }
-                    self.continueAfterCandidates(pois, progress: progress, coursePicker: coursePicker, completion: completion)
-                }
-            }
-        }
-    }
-
-    private func continueAfterCandidates(_ pois: [POICandidate],
-                                         progress: @escaping (Step) -> Void,
-                                         coursePicker: @escaping ([POICandidate], @escaping (POICandidate?) -> Void) -> Void,
-                                         completion: @escaping (Resolution?) -> Void) {
-        guard !pois.isEmpty else {
-            progress(.failed("No golf course found nearby"))
-            completion(nil)
-            return
-        }
-        progress(.checkingDB)
-        matchExistingCourses(for: pois) { [weak self] matched in
-            guard let self = self else { completion(nil); return }
-            let candidates = matched.sorted { $0.distanceMeters < $1.distanceMeters }
-            let isolated = self.isClearWinner(candidates)
-            if isolated, let only = candidates.first {
-                self.continueWith(only, progress: progress, completion: completion)
-            } else {
-                progress(.picking(candidates))
-                coursePicker(candidates) { chosen in
-                    guard let chosen = chosen else { completion(nil); return }
-                    self.continueWith(chosen, progress: progress, completion: completion)
-                }
-            }
-        }
-    }
-
-    /// Auto-pick when one POI is dramatically closer than its peers (e.g. solo
-    /// muni courses where the next-nearest is miles away). Threshold: any peer
-    /// within 800m of the nearest forces the picker (resort/state-park case).
-    private func isClearWinner(_ candidates: [POICandidate]) -> Bool {
-        guard let first = candidates.first else { return false }
-        guard candidates.count > 1 else { return true }
-        let runnerUp = candidates[1]
-        return runnerUp.distanceMeters - first.distanceMeters > 800
-    }
-
-    private func continueWith(_ candidate: POICandidate,
-                              progress: @escaping (Step) -> Void,
-                              completion: @escaping (Resolution?) -> Void) {
-        progress(.loadingCourseData(courseName: candidate.name))
-
-        // OSM-sourced candidates do the second-pass polygon-scoped geometry
-        // query. MapKit fallback candidates skip OSM geometry entirely (we
-        // have no polygon to scope to) and the round starts as Tier `none`.
-        let resolvedCourseId = candidate.existingCourseId ?? UUID()
-        guard let osmCandidate = candidate.osmCandidate else {
-            // MapKit-only fallback path. Still try GolfCourseAPI for scorecard
-            // data — name + location alone might match.
-            resolveScorecard(
-                courseName: candidate.name,
-                near: candidate.coordinate,
-                knownExternalCourseId: candidate.existingExternalCourseId,
-                localCourseId: resolvedCourseId
-            ) { scorecard in
-                let resolution = Resolution(
-                    courseId: resolvedCourseId,
-                    courseName: candidate.name,
-                    courseCoordinate: candidate.coordinate,
-                    osmData: nil,
-                    tier: .none,
-                    isExistingCourse: candidate.existingCourseId != nil,
-                    scorecardCourse: scorecard
-                )
-                progress(.ready(resolution))
-                completion(resolution)
-            }
-            return
-        }
+    /// OSM-discovered course not yet in shared courses. Fetch geometry, find
+    /// scorecard, then INSERT one shared courses row + its hole rows.
+    private func resolveAndRegisterOSM(osmCandidate: OSMCourseCandidate,
+                                       userPickedName: String,
+                                       userPickedCoord: CLLocationCoordinate2D,
+                                       progress: @escaping (Step) -> Void,
+                                       completion: @escaping (Resolution?) -> Void) {
         osm.fetchCourseGeometry(for: osmCandidate) { [weak self] result in
+            guard let self = self else { completion(nil); return }
             let osmData: OSMCourseData?
             let tier: OSMCourseData.Tier
             switch result {
-            case .success(let d):
-                osmData = d
-                tier = d.tier
-            case .failure(let err):
-                dprint("[RoundResolver] OSM geometry fetch failed: \(err) — round starts with no OSM data")
-                osmData = nil
-                tier = .none
+            case .success(let d): osmData = d; tier = d.tier
+            case .failure(let e):
+                dprint("[RoundResolver] OSM geometry fetch failed: \(e)")
+                osmData = nil; tier = .none
             }
-            self?.resolveScorecard(
-                courseName: candidate.name,
-                near: candidate.coordinate,
-                knownExternalCourseId: candidate.existingExternalCourseId,
-                localCourseId: resolvedCourseId
-            ) { scorecard in
+            self.resolveScorecard(courseName: userPickedName, near: userPickedCoord, knownExternalCourseId: nil) { scorecard in
+                // Compute centroid: prefer OSM-derived holes, fall back to
+                // the candidate's polygon centroid.
+                let centroid: CLLocationCoordinate2D = {
+                    if let osm = osmData, !osm.holes.isEmpty {
+                        let lats = osm.holes.map { $0.greenPoint.latitude }
+                        let lons = osm.holes.map { $0.greenPoint.longitude }
+                        return CLLocationCoordinate2D(
+                            latitude: lats.reduce(0, +) / Double(lats.count),
+                            longitude: lons.reduce(0, +) / Double(lons.count)
+                        )
+                    }
+                    return osmCandidate.centroid.coordinate
+                }()
+                let newCourseId = UUID()
+                self.insertSharedCourse(
+                    id: newCourseId,
+                    name: userPickedName,
+                    centroid: centroid,
+                    osmId: osmCandidate.osmId,
+                    externalCourseId: scorecard.map { String($0.id) },
+                    osmData: osmData
+                )
                 let resolution = Resolution(
-                    courseId: resolvedCourseId,
-                    courseName: candidate.name,
-                    courseCoordinate: candidate.coordinate,
+                    courseId: newCourseId,
+                    courseName: userPickedName,
+                    courseCoordinate: centroid,
                     osmData: osmData,
                     tier: tier,
-                    isExistingCourse: candidate.existingCourseId != nil,
+                    isExistingCourse: false,
                     scorecardCourse: scorecard
                 )
                 progress(.ready(resolution))
@@ -381,24 +387,114 @@ final class RoundResolver {
         }
     }
 
-    /// Look up the picked course in GolfCourseAPI. If we already know the
-    /// external_course_id (passed in from a saved Course row), skip the
-    /// Edge Function call entirely — `course_tees` is the source of truth
-    /// once it's been populated. Otherwise fall back to a name search and
-    /// pick the closest match by GPS, then persist the external id back to
-    /// the local Course so future rounds at the same course skip the API.
+    /// One-shot INSERT of a shared courses row carrying everything resolved
+    /// for this physical course. Idempotent on `osm_id` (unique index from
+    /// migration 00026), so two users registering the same course at the same
+    /// time collapse to one row.
+    private func insertSharedCourse(id: UUID,
+                                    name: String,
+                                    centroid: CLLocationCoordinate2D,
+                                    osmId: Int64,
+                                    externalCourseId: String?,
+                                    osmData: OSMCourseData?) {
+        struct Row: Encodable {
+            let id: String
+            let name: String
+            let center_lat: Double
+            let center_lon: Double
+            let osm_id: Int64
+            let external_course_id: String?
+            let osm_polygons: OSMCourseData?
+        }
+        let row = Row(
+            id: id.uuidString,
+            name: name,
+            center_lat: centroid.latitude,
+            center_lon: centroid.longitude,
+            osm_id: osmId,
+            external_course_id: externalCourseId,
+            osm_polygons: osmData
+        )
+        Task {
+            do {
+                try await supabase.from("courses")
+                    .upsert(row, onConflict: "osm_id")
+                    .execute()
+                ClientEventLogger.log("resolver.sharedCourseInserted", detail: [
+                    "courseId": .string(id.uuidString),
+                    "osmId": .integer(Int(osmId)),
+                    "externalCourseId": externalCourseId.map(AnyJSON.string) ?? .null
+                ])
+                if let osmData = osmData {
+                    await self.insertHolesIfMissing(courseId: id, osmData: osmData)
+                }
+            } catch {
+                ClientEventLogger.log("resolver.sharedCourseInsertFailed", detail: [
+                    "error": .string("\(error)")
+                ])
+            }
+        }
+    }
+
+    /// Insert per-hole rows into the shared `holes` table, but only when none
+    /// exist yet for this course — avoids duplicating rows on re-resolution
+    /// (osm_id uniqueness collapses the parent INSERT, but holes have no
+    /// natural cross-resolution key, so we gate on emptiness instead).
+    /// Skips holes whose `ref` doesn't parse cleanly — Tier `partial`
+    /// courses (Bethpage umbrellas, Pinehurst overlaps) yield zero rows
+    /// rather than messy half-mapped data.
+    private func insertHolesIfMissing(courseId: UUID, osmData: OSMCourseData) async {
+        struct ExistingRow: Decodable { let id: UUID }
+        struct HoleRow: Encodable {
+            let id: String
+            let course_id: String
+            let number: Int
+            let latitude: Double
+            let longitude: Double
+            let par: Int?
+        }
+        do {
+            let existing: [ExistingRow] = try await supabase.from("holes")
+                .select("id")
+                .eq("course_id", value: courseId.uuidString)
+                .limit(1)
+                .execute()
+                .value
+            if !existing.isEmpty { return }
+
+            let rows: [HoleRow] = osmData.holes.compactMap { h in
+                guard let ref = h.ref, let n = Int(ref) else { return nil }
+                return HoleRow(
+                    id: UUID().uuidString,
+                    course_id: courseId.uuidString,
+                    number: n,
+                    latitude: h.greenPoint.latitude,
+                    longitude: h.greenPoint.longitude,
+                    par: h.par
+                )
+            }
+            guard !rows.isEmpty else { return }
+            try await supabase.from("holes").insert(rows).execute()
+            ClientEventLogger.log("resolver.sharedHolesInserted", detail: [
+                "courseId": .string(courseId.uuidString),
+                "count": .integer(rows.count)
+            ])
+        } catch {
+            ClientEventLogger.log("resolver.sharedHolesInsertFailed", detail: [
+                "error": .string("\(error)")
+            ])
+        }
+    }
+
+    // MARK: - Scorecard (GolfCourseAPI)
+
+    /// Returns scorecard data (tee list, per-hole pars/yards). Fast path uses
+    /// the cached `course_tees` rows when we already know external_course_id.
     private func resolveScorecard(courseName: String,
                                   near coordinate: CLLocationCoordinate2D,
-                                  knownExternalCourseId: String? = nil,
-                                  localCourseId: UUID? = nil,
+                                  knownExternalCourseId: String?,
                                   completion: @escaping (GCAPICourse?) -> Void) {
-        // Fast path: we already know the external id. Build a stub
-        // GCAPICourse from the cached tees so the tee picker still works
-        // without invoking the Edge Function.
         if let externalId = knownExternalCourseId {
-            ClientEventLogger.log("resolver.scorecard.fastPathTry", detail: [
-                "externalCourseId": .string(externalId)
-            ])
             Task {
                 do {
                     let cached = try await GolfCourseAPIService.shared.cachedTees(forExternalCourseId: externalId)
@@ -410,33 +506,20 @@ final class RoundResolver {
                         completion(stub)
                         return
                     }
-                    ClientEventLogger.log("resolver.scorecard.fastPathFell.emptyCache")
                 } catch {
-                    ClientEventLogger.log("resolver.scorecard.fastPathFell.error", detail: [
-                        "error": .string("\(error)")
-                    ])
+                    dprint("[RoundResolver] cached tees fetch failed: \(error)")
                 }
-                // Cache miss/error — search to recover the real id.
-                await self.searchAndPersist(courseName: courseName, near: coordinate, localCourseId: localCourseId, completion: completion)
+                // Cache miss — fall through to a search.
+                await self.searchScorecard(courseName: courseName, near: coordinate, completion: completion)
             }
             return
         }
-        ClientEventLogger.log("resolver.scorecard.searchPath", detail: [
-            "reason": .string("noKnownExternalId"),
-            "courseName": .string(courseName)
-        ])
-        Task {
-            await searchAndPersist(courseName: courseName, near: coordinate, localCourseId: localCourseId, completion: completion)
-        }
+        Task { await searchScorecard(courseName: courseName, near: coordinate, completion: completion) }
     }
 
-    /// Hits the Edge Function (which calls the paid API) and, on success,
-    /// records the matched external_course_id back to the local Course row
-    /// so future round-starts at this course can skip the API.
-    private func searchAndPersist(courseName: String,
-                                  near coordinate: CLLocationCoordinate2D,
-                                  localCourseId: UUID?,
-                                  completion: @escaping (GCAPICourse?) -> Void) async {
+    private func searchScorecard(courseName: String,
+                                 near coordinate: CLLocationCoordinate2D,
+                                 completion: @escaping (GCAPICourse?) -> Void) async {
         do {
             let candidates = try await GolfCourseAPIService.shared.search(query: courseName)
             let userLoc = CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude)
@@ -447,43 +530,17 @@ final class RoundResolver {
                         .distance(from: userLoc)
                     return (c, dist)
                 }
-                .filter { $0.1 <= 1000 }
+                .filter { $0.1 <= 1500 }
                 .min(by: { $0.1 < $1.1 })?.0
-            if let best = best {
-                ClientEventLogger.log("resolver.scorecard.searchMatched", detail: [
-                    "externalCourseId": .integer(best.id),
-                    "name": .string(best.displayName)
-                ])
-                if let courseId = localCourseId {
-                    Task {
-                        struct Patch: Encodable { let id: String; let external_course_id: String }
-                        let body = Patch(id: courseId.uuidString, external_course_id: "\(best.id)")
-                        do {
-                            try await self.supabase.from("courses").upsert(body, onConflict: "id").execute()
-                            ClientEventLogger.log("resolver.scorecard.externalIdPersisted", detail: [
-                                "courseId": .string(courseId.uuidString),
-                                "externalCourseId": .integer(best.id)
-                            ])
-                        } catch {
-                            ClientEventLogger.log("resolver.scorecard.externalIdPersistFailed", detail: [
-                                "error": .string("\(error)")
-                            ])
-                        }
-                    }
-                }
-            } else {
-                ClientEventLogger.log("resolver.scorecard.searchNoMatch")
-            }
+            ClientEventLogger.log(best == nil ? "resolver.scorecard.searchNoMatch" : "resolver.scorecard.searchMatched",
+                                  detail: best.map { ["externalCourseId": .integer($0.id)] } ?? [:])
             completion(best)
         } catch {
-            dprint("[RoundResolver] GolfCourseAPI lookup failed: \(error.localizedDescription)")
+            dprint("[RoundResolver] GolfCourseAPI search failed: \(error)")
             completion(nil)
         }
     }
 
-    /// Build a minimal GCAPICourse from cached tee rows so the tee picker
-    /// has data without round-tripping the Edge Function. Used when we
-    /// already know the external_course_id.
     private static func makeStubCourse(externalId: String, name: String, coord: CLLocationCoordinate2D, cachedTees: [CachedCourseTee]) -> GCAPICourse? {
         guard !cachedTees.isEmpty, let intId = Int(externalId) else { return nil }
         let teeBoxes: [GCAPITeeBox] = cachedTees.map { t in
@@ -518,19 +575,16 @@ final class RoundResolver {
         )
     }
 
-    // MARK: - MapKit fallback POI search (used only when OSM is empty)
+    // MARK: - MapKit fallback (used only when OSM is empty)
 
     private func searchMapKitPOIs(near coordinate: CLLocationCoordinate2D,
-                                  completion: @escaping ([POICandidate]) -> Void) {
+                                  completion: @escaping ([CourseCandidate]) -> Void) {
         let req = MKLocalSearch.Request()
         req.region = MKCoordinateRegion(
             center: coordinate,
             latitudinalMeters: 3000,
             longitudinalMeters: 3000
         )
-        // POI category .golf requires watchOS 11+. On older watchOS we rely on
-        // the natural language query alone — Apple Maps still ranks golf POIs
-        // first when the query is "golf" + the region is centered on a course.
         if #available(iOS 18.0, watchOS 11.0, *) {
             req.pointOfInterestFilter = MKPointOfInterestFilter(including: [.golf])
         }
@@ -539,69 +593,18 @@ final class RoundResolver {
 
         MKLocalSearch(request: req).start { response, _ in
             let center = CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude)
-            let pois = response?.mapItems.map { item -> POICandidate in
+            let pois = (response?.mapItems ?? []).map { item -> CourseCandidate in
                 let c = item.placemark.coordinate
                 let dist = CLLocation(latitude: c.latitude, longitude: c.longitude).distance(from: center)
-                return POICandidate(
+                return CourseCandidate(
                     name: item.name ?? "Unknown course",
                     coordinate: c,
                     distanceMeters: dist,
-                    existingCourseId: nil,
-                    existingExternalCourseId: nil,
-                    osmCandidate: nil
+                    source: .mapKit
                 )
-            } ?? []
-            // Drop POIs further than 1500m — anything beyond that is a different facility.
-            let filtered = pois.filter { $0.distanceMeters <= 1500 }
-            completion(filtered)
-        }
-    }
-
-    // MARK: - Existing-course proximity match
-
-    /// Row shape returned from `courses` for the proximity-match query.
-    private struct CourseRow: Decodable {
-        let id: UUID
-        let name: String
-    }
-
-    /// For each MapKit POI candidate, see if the user already has a course in
-    /// Supabase whose name matches OR whose holes are near this location. If
-    /// matched, attach the existing course id so we reuse it instead of
-    /// creating a duplicate.
-    private func matchExistingCourses(for pois: [POICandidate],
-                                      completion: @escaping ([POICandidate]) -> Void) {
-        Task {
-            do {
-                struct CourseRowWithExternal: Decodable {
-                    let id: UUID
-                    let name: String
-                    let external_course_id: String?
-                }
-                let rows: [CourseRowWithExternal] = try await supabase.from("courses")
-                    .select("id,name,external_course_id")
-                    .execute()
-                    .value
-                let matched: [POICandidate] = pois.map { poi in
-                    let existing = rows.first { row in
-                        let a = row.name.lowercased()
-                        let b = poi.name.lowercased()
-                        return a == b || a.contains(b) || b.contains(a)
-                    }
-                    return POICandidate(
-                        name: poi.name,
-                        coordinate: poi.coordinate,
-                        distanceMeters: poi.distanceMeters,
-                        existingCourseId: existing?.id,
-                        existingExternalCourseId: existing?.external_course_id,
-                        osmCandidate: poi.osmCandidate
-                    )
-                }
-                completion(matched)
-            } catch {
-                dprint("[RoundResolver] DB course match failed: \(error)")
-                completion(pois)
             }
+            completion(pois.filter { $0.distanceMeters <= 1500 }
+                          .sorted { $0.distanceMeters < $1.distanceMeters })
         }
     }
 }

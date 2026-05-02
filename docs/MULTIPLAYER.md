@@ -434,6 +434,37 @@ This is the build sequence we agreed on, top to bottom:
 - Shared round-level features beyond live positions + stroke markers + scorecard
 - Visualizing per-hole tee changes on the scorecard
 
+## Sync architecture for multiplayer (real-world constraints)
+
+The original implementation subscribed to Supabase Realtime over a WebSocket on both phone and watch. That doesn't survive contact with the actual deployment environment:
+
+**Hard constraints we discovered the hard way:**
+
+- **Non-LTE Apple Watches cannot open WebSockets.** The phone-paired Bluetooth tether proxies `URLSession` HTTPS requests for the watch (OS-level mechanism, not app-level), but it does **not** proxy `URLSessionWebSocketTask`. WebSocket attempts on a non-LTE watch fail with `NSURLErrorDomain Code=-1009 "The Internet connection appears to be offline"` even when the phone has perfect signal.
+- **iPhone "Always" location authorization is unrealistic UX-wise.** Without Always + active location updates + the `location` background mode, iOS suspends the GolfTracker app on the phone within seconds of backgrounding (= phone in pocket during a round, which is most of the time). Suspended app = no WebSocket, no polling, no anything. We ask for Always in Info.plist but iOS hides it from the first-time prompt; most users grant only "While Using App" and never see the upgrade prompt.
+- **Conclusion: the phone cannot reliably hold a long-lived connection during a round.**
+
+**The architecture that fits these constraints:**
+
+- **Watch polls the database directly.** HTTPS via the phone-tether proxy. Works while the phone app is suspended (the OS handles proxying, not our app). Watch polls every 10–15 s for delta state during an active multiplayer round.
+- **Phone is irrelevant for multiplayer sync.** The phone's WebSocket subscription stays in place when the app is foreground (snappy UX while looking at the phone) but nothing depends on it for correctness.
+- **Polling is multiplayer-only.** Single-player sessions don't poll — the watch's local SwiftData copy of the round is authoritative because nobody else is writing it. SupabaseSync mirrors local writes to the DB for backup / cross-device, but no incoming traffic is needed.
+
+**Tactics to keep watch polling cheap:**
+
+- Conditional polling: `WHERE updated_at > <last_seen>` — most ticks return zero rows, ~200-byte response.
+- Tight scope: poll only the active round + strokes for the current hole + active playgroup members. Course/club data doesn't change mid-round and isn't repolled.
+- Adaptive interval: 10 s during active multiplayer, paused entirely solo. Pause when watch is `inactive` or `background` (`WKExtension.applicationState`).
+- Single endpoint: one PostgREST query that returns all per-tick deltas as a combined response. One round-trip per tick, not N.
+
+**WebSocket: kept as an enhancement, gated to LTE watches.** The reconnect helper (`RealtimeReconnect.subscribePersistently`) stays in place. LTE watches that can hold their own connection use it; the path is already wired and tested. Non-LTE watches never reach the WebSocket code path.
+
+**What we lose under polling-only:**
+
+- Sub-second push features. Specifically: walkie-talkie pre-alert ("X is talking…"), walkie-talkie audio streaming. These need true push; polling can't deliver them.
+
+**Decision: walkie-talkie is gated to LTE watches.** Keep the existing `WalkieTalkie` + `PlaygroupChannel` broadcast wiring, but only activate it when the watch has independent connectivity. For the common case (non-LTE watch on the course), no walkie-talkie. The feature was always "nice to have," and the alternative — forcing every user onto an LTE-watch-only sync architecture — isn't worth it.
+
 ## Open / TODO before implementation
 
 - Color palette specifics — exact ~6 hex values for player assignment (one per player slot in a playgroup)

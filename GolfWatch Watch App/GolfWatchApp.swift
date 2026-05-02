@@ -26,6 +26,15 @@ struct GolfTrackerWatchApp: App {
     }()
 
     init() {
+        // Build-deploy marker. Bump the buildTag string here on any code
+        // change you want to verify actually shipped to the watch — the
+        // log row's `buildTag` will change accordingly. Use to confirm a
+        // rebuild reached the device versus an old install lingering.
+        ClientEventLogger.log("watch.build.launched", detail: [
+            "buildTag": .string("putt-display-rev25"),
+            "compiledAt": .string("2026-05-01T16:00Z")
+        ])
+
         // configure() needs to happen before singletons access the container.
         WatchDataStore.shared.configure(container: modelContainer)
         RealtimeSync.shared.configure(container: modelContainer)

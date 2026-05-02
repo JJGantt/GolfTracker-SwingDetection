@@ -31,6 +31,10 @@ final class TestModeService: ObservableObject {
     /// GolfWatchApp.init and WatchAuthSession.onSessionChanged fired
     /// simultaneously).
     private var bootstrapTask: Task<Void, Never>?
+    /// One-time observer of the Realtime socket's status stream. Logs every
+    /// transition so we can correlate watch-side socket teardowns with the
+    /// underlying cause (backgrounding, network loss, server close, etc.).
+    private var socketStatusTask: Task<Void, Never>?
 
     private init() {}
 
@@ -72,7 +76,16 @@ final class TestModeService: ObservableObject {
             return
         }
         await refreshFromDB()
+        // The Realtime path doesn't work on the watch — non-LTE watches
+        // can't open WebSockets through the Bluetooth phone tether (see
+        // docs/MULTIPLAYER.md). On the phone the Realtime subscription is
+        // valuable for cross-device test-mode + dev visibility; on the
+        // watch we get all our updates over WatchConnectivity from the
+        // phone (see TestModeService.applyState's WC mirror call) and the
+        // initial state from refreshFromDB() above.
+        #if os(iOS)
         await subscribeToChanges()
+        #endif
         ClientEventLogger.log("testmode.bootstrap.done")
     }
 
@@ -107,17 +120,45 @@ final class TestModeService: ObservableObject {
         }
     }
 
+    private func startSocketStatusObserver() {
+        // Idempotent — only spawn one observer per process.
+        if socketStatusTask != nil { return }
+        let stream = supabase.realtime.statusChange
+        socketStatusTask = Task {
+            for await status in stream {
+                ClientEventLogger.log("testmode.socket.status", detail: [
+                    "status": .string("\(status)")
+                ])
+            }
+        }
+    }
+
     private func subscribeToChanges() async {
         guard let uid = currentUserId() else { return }
+
+        // Tap the realtime client's status stream once so we observe socket
+        // state transitions for ongoing diagnostics (especially after
+        // backgrounding, OS-induced socket teardown, etc).
+        startSocketStatusObserver()
+
         // Explicitly connect the Realtime socket BEFORE subscribing.
         // Without this, the watch's first subscribe routinely failed with
         // Swift.CancellationError — the SDK's runOneSubscribeAttempt calls
         // ensureSocketConnected() and bails immediately if the WebSocket
         // isn't up yet. On watchOS the auto-connect was racing the first
         // subscribe call. await connect() returns once the socket is open.
-        ClientEventLogger.log("testmode.subscribe.connecting")
+        ClientEventLogger.log("testmode.subscribe.connecting", detail: [
+            "socketStatusBefore": .string("\(supabase.realtime.status)"),
+            "hasAccessToken": .bool((try? await supabase.auth.session.accessToken) != nil)
+        ])
         await supabase.realtime.connect()
-        ClientEventLogger.log("testmode.subscribe.connected")
+        // The SDK's connect() swallows internal errors and just sets the
+        // socket status to .disconnected. So this log doesn't actually
+        // confirm the socket came up — it just confirms connect() returned.
+        // Capture the real status so we can tell.
+        ClientEventLogger.log("testmode.subscribe.connected", detail: [
+            "socketStatus": .string("\(supabase.realtime.status)")
+        ])
 
         let ch = supabase.realtime.channel("user_test_state:\(uid)")
         channel = ch
@@ -131,15 +172,15 @@ final class TestModeService: ObservableObject {
             }
             ClientEventLogger.log("testmode.subscribe.streamLoop.exit")
         }
-        ClientEventLogger.log("testmode.subscribe.start")
-        do {
-            try await ch.subscribeWithError()
-            ClientEventLogger.log("testmode.subscribe.ok")
-        } catch {
-            ClientEventLogger.log("testmode.subscribe.failed", detail: [
-                "error": .string(error.localizedDescription)
-            ])
-        }
+        // Persistent subscribe with retry/backoff. The bare
+        // `subscribeWithError` call routinely failed on watchOS with
+        // Swift.CancellationError when the WebSocket got killed by the OS
+        // backgrounding the app — and without a retry loop, the watch sat
+        // there with a dead subscription forever. RealtimeReconnect handles
+        // that: retries with exponential backoff (1s → 30s cap), watches
+        // statusChange and re-subscribes when the channel state leaves
+        // .subscribed, exits cleanly when the parent task is cancelled.
+        await ch.subscribePersistently(label: "testmode")
     }
 
     private func handleChange(_ action: AnyAction) async {
@@ -188,6 +229,27 @@ final class TestModeService: ObservableObject {
         } else {
             LocationManager.shared.setTestModeEnabled(false)
         }
+        // Mirror to the watch via WatchConnectivity. The Realtime path on
+        // the watch can't deliver this (non-LTE watches can't open
+        // WebSockets — see docs/MULTIPLAYER.md), so the phone is the
+        // authoritative push channel for test-mode location during dev.
+        #if os(iOS)
+        WatchConnectivityManager.shared.sendTestModeState(
+            enabled: enabled, lat: lat, lon: lon
+        )
+        #endif
+    }
+
+    /// Entry point invoked by `WatchConnectivityManager` when a test-mode
+    /// state payload arrives from the phone. Re-uses the same applyState
+    /// pipeline as the (defunct on watch) Realtime path.
+    func applyFromWatchConnectivity(enabled: Bool, lat: Double?, lon: Double?) {
+        ClientEventLogger.log("testmode.wc.received", detail: [
+            "enabled": .bool(enabled),
+            "lat": lat.map { .double($0) } ?? .null,
+            "lon": lon.map { .double($0) } ?? .null
+        ])
+        applyState(enabled: enabled, lat: lat, lon: lon)
     }
 
     // MARK: - Writes (called from iPhone TestModeView)
@@ -196,6 +258,15 @@ final class TestModeService: ObservableObject {
     /// update both this device and any other device the same user is on.
     func setEnabled(_ enabled: Bool) async {
         guard let uid = currentUserId() else { return }
+        // Apply local state immediately so the UI reflects the toggle the
+        // moment the user taps. Without this, the toggle just sits there
+        // until the Realtime echo round-trips from Supabase (1-3s in good
+        // conditions, longer if the WebSocket is flaky), making it look
+        // like clicking did nothing. The Realtime echo arrives later and
+        // applies the same state — a harmless no-op.
+        await MainActor.run {
+            applyState(enabled: enabled, lat: simulatedCoord?.latitude, lon: simulatedCoord?.longitude)
+        }
         struct Row: Encodable {
             let user_id: String
             let enabled: Bool
@@ -223,6 +294,10 @@ final class TestModeService: ObservableObject {
     /// flips it on as a convenience — tapping the map should "just work."
     func setSimulatedCoord(_ coord: CLLocationCoordinate2D) async {
         guard let uid = currentUserId() else { return }
+        // Optimistic local apply — see setEnabled comment for rationale.
+        await MainActor.run {
+            applyState(enabled: true, lat: coord.latitude, lon: coord.longitude)
+        }
         struct Row: Encodable {
             let user_id: String
             let enabled: Bool

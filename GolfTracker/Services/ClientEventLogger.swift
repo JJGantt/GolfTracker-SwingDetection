@@ -15,9 +15,23 @@ import Supabase
 /// tight loops), prefer using it sparingly — it's an investigative tool,
 /// not a permanent telemetry pipeline.
 enum ClientEventLogger {
-    /// Set to false to disable all logging (e.g. once an investigation is done).
-    /// Compiled rather than runtime-toggled so off-mode is truly zero cost.
-    static let enabled: Bool = true
+    /// Runtime toggle backed by UserDefaults. Default OFF — turn on via
+    /// the iOS Settings → Developer section (long-press the Settings title
+    /// to reveal). Toggling on iPhone syncs to the watch via
+    /// WatchConnectivity. Off-mode is cheap: just a UserDefaults read +
+    /// guard return; no Task spawn, no detail-dict evaluation.
+    static let userDefaultsKey = "clientEventLoggerEnabled"
+
+    static var enabled: Bool {
+        UserDefaults.standard.bool(forKey: userDefaultsKey)
+    }
+
+    /// Set the toggle locally and persist it to UserDefaults. iOS callers
+    /// also forward to the watch via WatchConnectivity (handled at the
+    /// settings UI layer, not here).
+    static func setEnabled(_ value: Bool) {
+        UserDefaults.standard.set(value, forKey: userDefaultsKey)
+    }
 
     /// Single device label set at compile time per target so we don't have
     /// to think about it at every call site.

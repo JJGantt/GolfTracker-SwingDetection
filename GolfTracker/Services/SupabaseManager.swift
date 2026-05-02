@@ -20,7 +20,17 @@ final class SupabaseManager {
         let url = URL(string: "https://oumnicnvayqrbfbljgyl.supabase.co")!
         let key = "sb_publishable_i0loB-AZw2qGokBJzHGSKA_VGgAgjBi"
         self.projectURL = url
-        self.client = Supabase.SupabaseClient(supabaseURL: url, supabaseKey: key)
+
+        // Plumb the SDK's internal log messages into our ClientEventLogger
+        // so we can see WebSocket connection failures, channel join errors,
+        // auth refresh issues, etc. — all of which the SDK currently swallows.
+        // Especially important on watchOS where `realtime.connect()` silently
+        // fails and our only signal is the post-condition `.disconnected`
+        // status; the SDK's error-level logs are the source of truth.
+        let options = SupabaseClientOptions(
+            global: .init(logger: ForwardingSupabaseLogger())
+        )
+        self.client = Supabase.SupabaseClient(supabaseURL: url, supabaseKey: key, options: options)
     }
 
     // Convenience accessors — same shape across both targets.
@@ -30,6 +40,24 @@ final class SupabaseManager {
 
     /// Postgrest query builder for a table. e.g. `manager.from("rounds").select()`
     func from(_ table: String) -> PostgrestQueryBuilder { client.from(table) }
+}
+
+// MARK: - SDK log forwarder
+
+/// Forwards SDK-internal log messages (debug/warning/error) into our
+/// ClientEventLogger pipeline. We only care about WARNING and ERROR for
+/// remote logging — debug/verbose are too noisy. This is how we get
+/// visibility into errors the SDK swallows internally (silent socket
+/// connect failures, channel join rejections, auth refresh issues, etc.).
+struct ForwardingSupabaseLogger: SupabaseLogger {
+    func log(message: SupabaseLogMessage) {
+        guard message.level == .warning || message.level == .error else { return }
+        ClientEventLogger.log("sdk.\(message.level)", detail: [
+            "system": .string(message.system),
+            "message": .string(message.message),
+            "fn": .string("\(message.function):\(message.line)")
+        ])
+    }
 }
 
 // MARK: - Bridge from SDK Session to our wire-format AuthSession

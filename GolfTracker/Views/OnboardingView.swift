@@ -3,7 +3,10 @@ import CoreLocation
 
 struct OnboardingView: View {
     @Binding var hasSeenOnboarding: Bool
-    private let locationManager = LocationManager.shared
+    // Observed so the view re-renders when authorizationStatus flips after
+    // the system permission dialog. Plain `let` capture meant the row was
+    // stuck on "Open Settings" until the next app launch re-read the status.
+    @ObservedObject private var locationManager = LocationManager.shared
     @State private var didRequestLocation = false
 
     var body: some View {

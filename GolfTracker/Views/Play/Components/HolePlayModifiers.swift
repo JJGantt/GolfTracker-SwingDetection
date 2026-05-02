@@ -19,7 +19,7 @@ struct NavigationModifier: ViewModifier {
 struct HoleEditingModifier: ViewModifier {
     @Binding var showingMoveHoleConfirmation: Bool
     let currentHole: Hole?
-    let locationManager: LocationManager
+    @ObservedObject var locationManager: LocationManager
     @Binding var temporaryPosition: CLLocationCoordinate2D?
     @Binding var isMovingHoleManually: Bool
     let store: DataStore

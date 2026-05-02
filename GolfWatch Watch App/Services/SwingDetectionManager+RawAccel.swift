@@ -40,7 +40,14 @@ extension SwingDetectionManager {
         setupEndTimeoutTimer?.invalidate()
         setupEndTimeoutTimer = nil
         syncRawAccelHardwareState()
-        cLog("[800Hz_PUTT_START]")
+        ClientEventLogger.log("rawAccel.putt.start", detail: [
+            "isPutterSelected": .bool(isPutterSelected),
+            "selectedClubType": selectedClubTypeName.map { .string($0) } ?? .null,
+            "workoutSessionState": .string("\(WorkoutManager.shared.session?.state.rawValue ?? -1)"),
+            "canStartRawAccelNow": .bool(canStartRawAccelNow),
+            "shouldRunRawAccelHardware": .bool(shouldRunRawAccelHardware)
+        ])
+        dprint("[800Hz_PUTT_START]")
     }
 
     func stopBatchedAccelForPutt() {
@@ -49,11 +56,19 @@ extension SwingDetectionManager {
         setupEndTimeoutTimer?.invalidate()
         setupEndTimeoutTimer = nil
         syncRawAccelHardwareState()
-        cLog("[800Hz_PUTT_STOP]")
+        dprint("[800Hz_PUTT_STOP]")
     }
 
     func onUnifSetupStarted() {
-        guard isPutterSelected else { return }
+        ClientEventLogger.log("rawAccel.setupStarted", detail: [
+            "isPutterSelected": .bool(isPutterSelected),
+            "selectedClubType": selectedClubTypeName.map { .string($0) } ?? .null,
+            "workoutSessionState": .string("\(WorkoutManager.shared.session?.state.rawValue ?? -1)")
+        ])
+        guard isPutterSelected else {
+            ClientEventLogger.log("rawAccel.setupStarted.bail.notPutter")
+            return
+        }
         setupEndTimeoutTimer?.invalidate()
         setupEndTimeoutTimer = nil
         startBatchedAccelForPutt()
@@ -76,12 +91,6 @@ extension SwingDetectionManager {
     }
 
     var canStartRawAccelNow: Bool {
-        if isRecording {
-            return true
-        }
-        if isDataCollectionMode {
-            return true
-        }
         if !CMBatchedSensorManager.isAccelerometerSupported {
             return true
         }
@@ -89,14 +98,8 @@ extension SwingDetectionManager {
     }
 
     var shouldRunRawAccelHardware: Bool {
-        if isRecording {
-            return true
-        }
         guard isMonitoring, rawAccelRunningForCapture else {
             return false
-        }
-        if isDataCollectionMode && dataCollectionHighFreq {
-            return true
         }
         switch detectionMode {
         case .unifDetect:
@@ -108,9 +111,17 @@ extension SwingDetectionManager {
 
     func syncRawAccelHardwareState() {
         let shouldRun = shouldRunRawAccelHardware
+        let canStart = canStartRawAccelNow
 
         if shouldRun {
-            guard canStartRawAccelNow else { return }
+            guard canStart else {
+                ClientEventLogger.log("rawAccel.sync.bail.canStartFalse", detail: [
+                    "workoutSessionState": .string("\(WorkoutManager.shared.session?.state.rawValue ?? -1)"),
+                    "isMonitoring": .bool(isMonitoring),
+                    "isAccelerometerSupported": .bool(CMBatchedSensorManager.isAccelerometerSupported)
+                ])
+                return
+            }
             ensureBatchedAccelRunning()
         } else {
             forceStopBatchedAccel()
@@ -140,7 +151,7 @@ extension SwingDetectionManager {
                         batchCount += 1
                         // Log only first batch to confirm stream is running
                         if batchCount == 1, let first = batch.first, let last = batch.last {
-                            self.cLog("[BATCH_START samples=\(batch.count) t=[\(self.f3(first.timestamp)),\(self.f3(last.timestamp))]]")
+                            dprint("⌚ [BATCH_START samples=\(batch.count) t=[\(self.f3(first.timestamp)),\(self.f3(last.timestamp))]]")
                             DispatchQueue.main.async { self.rawAccelAuthOK = true }
                             self.rawAccelMissingWarned = false
                         }
@@ -181,11 +192,8 @@ extension SwingDetectionManager {
         latestRawAccelTime = t
         let mag = sqrt(x * x + y * y + z * z)
         let dp = RawAccelDataPoint(sensorTime: t, rawAccelX: x, rawAccelY: y, rawAccelZ: z, rawAccelMag: mag)
-        if isRecording && t >= recordingStartSensorTime && t <= recordingStopSensorTime {
-            rawAccelDataPoints.append(dp)
-        }
-        // Rolling 3-min raw accel buffer (disabled during manual recording)
-        if isMonitoring && !isRecording {
+        // Rolling 3-min raw accel buffer — fed continuously while monitoring.
+        if isMonitoring {
             rollingBufferLock.lock()
             rollingRawAccelBuffer.append(dp)
             let cutoff = t - rollingBufferDuration
@@ -205,9 +213,9 @@ extension SwingDetectionManager {
         }
     }
 
-    /// Stop the raw accelerometer only when neither monitoring nor recording needs it.
+    /// Stop the raw accelerometer when monitoring is no longer active.
     func stopBatchedAccelIfUnneeded() {
-        guard isBatchedAccelRunning, !isMonitoring, !isRecording else { return }
+        guard isBatchedAccelRunning, !isMonitoring else { return }
         forceStopBatchedAccel()
     }
 

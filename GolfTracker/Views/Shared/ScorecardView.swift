@@ -88,12 +88,12 @@ struct ScorecardView: View {
     @ViewBuilder
     private var headerRow: some View {
         HStack(spacing: 0) {
-            cell("Hole", weight: .semibold).frame(width: cellWidth(.hole))
-            cell("Par", weight: .semibold).frame(width: cellWidth(.par))
-            if showsYardage, let teeName = teeName {
-                cell(teeName, weight: .semibold).frame(width: cellWidth(.yardage))
+            cell("H", weight: .semibold).frame(width: cellWidth(.hole))
+            cell("P", weight: .semibold).frame(width: cellWidth(.par))
+            if showsYardage {
+                cell("Y", weight: .semibold).frame(width: cellWidth(.yardage))
             }
-            cell("Score", weight: .semibold, alignment: .trailing).frame(maxWidth: .infinity, alignment: .trailing)
+            cell("S", weight: .semibold, alignment: .trailing).frame(maxWidth: .infinity, alignment: .trailing)
         }
         .padding(.vertical, 4)
         .background(Color.secondary.opacity(0.12))
@@ -117,7 +117,8 @@ struct ScorecardView: View {
 
     @ViewBuilder
     private func holeRow(_ hole: Hole) -> some View {
-        let strokeCount = round.strokes.filter { $0.holeNumber == hole.number && !$0.isPenalty }.count
+        // Penalty strokes count toward the score (one penalty = +1).
+        let strokeCount = round.strokes.filter { $0.holeNumber == hole.number }.count
         let par = teeHoles?[hole.number]?.par ?? hole.par
         let yardage = teeHoles?[hole.number]?.yardage
         let isCompleted = round.isHoleCompleted(hole.number)
@@ -144,7 +145,7 @@ struct ScorecardView: View {
             ? holes.compactMap { teeHoles?[$0.number]?.yardage }.reduce(0, +)
             : 0
         let strokeTotal = round.strokes
-            .filter { s in holes.contains(where: { $0.number == s.holeNumber }) && !s.isPenalty }
+            .filter { s in holes.contains(where: { $0.number == s.holeNumber }) }
             .count
 
         HStack(spacing: 0) {
@@ -195,6 +196,8 @@ struct ScorecardView: View {
         Text(text)
             .font(.caption)
             .fontWeight(weight)
+            .lineLimit(1)
+            .minimumScaleFactor(0.7)
             .frame(maxWidth: .infinity, alignment: alignment)
             .padding(.horizontal, 4)
     }
@@ -204,10 +207,13 @@ struct ScorecardView: View {
     @ViewBuilder
     private var multiHeaderRow: some View {
         HStack(spacing: 0) {
-            cell("Hole", weight: .semibold).frame(width: cellWidth(.hole))
-            cell("Par", weight: .semibold).frame(width: cellWidth(.par))
-            ForEach(distinctTees, id: \.teeId) { tee in
-                cell(tee.teeName, weight: .semibold).frame(width: cellWidth(.yardage))
+            cell("H", weight: .semibold).frame(width: cellWidth(.hole))
+            cell("P", weight: .semibold).frame(width: cellWidth(.par))
+            // Per-tee yardage columns — placeholder "Y" header for now.
+            // Distinguishing tees here will land with the multiplayer
+            // scorecard polish pass (see docs/MULTIPLAYER.md).
+            ForEach(distinctTees, id: \.teeId) { _ in
+                cell("Y", weight: .semibold).frame(width: cellWidth(.yardage))
             }
             ForEach(players) { p in
                 playerHeaderCell(p).frame(width: cellWidth(.score))
@@ -318,9 +324,12 @@ struct ScorecardView: View {
         // calls layout once per width; these are approximate target widths.
         #if os(watchOS)
         switch column {
-        case .hole: return 28
-        case .par: return 26
-        case .yardage: return 36
+        case .hole: return 24
+        case .par: return 22
+        // Yardage holds 3-digit hole yardages (~"367") and 4-digit
+        // front/back subtotals (~"3300"); needs more room than the
+        // single-letter columns.
+        case .yardage: return 44
         case .score: return 32
         }
         #else

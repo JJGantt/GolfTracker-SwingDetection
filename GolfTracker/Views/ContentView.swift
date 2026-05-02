@@ -9,7 +9,6 @@ import SwiftUI
 
 struct ContentView: View {
     @EnvironmentObject var store: DataStore
-    @EnvironmentObject var motionDataHandler: MotionDataHandler
     @ObservedObject private var auth = AuthManager.shared
     @AppStorage("hasSeenOnboarding") private var hasSeenOnboarding = false
 
@@ -84,11 +83,6 @@ struct ContentView: View {
                     Label("Rounds", systemImage: "list.bullet.clipboard")
                 }
 
-            TestFilesView()
-                .tabItem {
-                    Label("Tests", systemImage: "waveform")
-                }
-
             SettingsView()
                 .tabItem {
                     Label("Settings", systemImage: "gearshape.fill")
@@ -100,5 +94,4 @@ struct ContentView: View {
 #Preview {
     ContentView()
         .environmentObject(DataStore())
-        .environmentObject(MotionDataHandler())
 }

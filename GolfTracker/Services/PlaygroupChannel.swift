@@ -60,6 +60,9 @@ final class PlaygroupChannel: ObservableObject {
     private var channel: RealtimeChannelV2?
     private var presenceTask: Task<Void, Never>?
     private var subscriptions: [Task<Void, Never>] = []
+    /// Long-lived task that drives the channel's persistent subscribe loop
+    /// (retry/backoff/reconnect via RealtimeReconnect).
+    private var subscribeLoopTask: Task<Void, Never>?
     private var broadcastSubscriptions: [RealtimeSubscription] = []
     private var currentUserId: String?
     /// Round ids we've already wired stroke postgres-changes for. Tracked
@@ -139,10 +142,10 @@ final class PlaygroupChannel: ObservableObject {
         // the channel restarted (back out of round → re-enter).
         wireMembersChange(ch, playgroupId: playgroupId, userId: userId)
 
-        do {
-            try await ch.subscribeWithError()
-        } catch {
-            dprint("📡 [PlaygroupChannel] subscribe failed: \(error.localizedDescription)")
+        // Persistent subscribe with retry/backoff via RealtimeReconnect.
+        // Cancelled by teardown(); loops on socket loss / backgrounding.
+        subscribeLoopTask = Task {
+            await ch.subscribePersistently(label: "playgroupChannel")
         }
 
         // Initial pull for other-player strokes (postgres-changes only fires
@@ -164,6 +167,8 @@ final class PlaygroupChannel: ObservableObject {
         presenceTask = nil
         talkAlertClearTask?.cancel()
         talkAlertClearTask = nil
+        subscribeLoopTask?.cancel()
+        subscribeLoopTask = nil
         for s in subscriptions { s.cancel() }
         subscriptions.removeAll()
         for s in broadcastSubscriptions { s.cancel() }

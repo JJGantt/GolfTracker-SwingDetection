@@ -10,6 +10,11 @@ struct SettingsView: View {
     @State private var isDeleting = false
     @State private var deleteError: String?
     @AppStorage(PlaygroupChannel.liveDotsEnabledKey) private var liveDotsEnabled = true
+    @AppStorage(ClientEventLogger.userDefaultsKey) private var debugLoggingEnabled = false
+    @AppStorage("autoAdvanceGreenLeftThresholdYards") private var greenLeftThresholdYards: Double = 10
+    @AppStorage("greenPutterMarginYards") private var greenPutterMarginYards: Double = 2
+    @AppStorage("ignorePracticeRadius") private var ignorePracticeRadius: Double = 20
+    @AppStorage("practiceStepGateThreshold") private var practiceStepGateThreshold: Int = 10
 
     @State private var currentName: String = ""
     /// Hidden developer section, revealed by long-pressing the Settings
@@ -86,18 +91,67 @@ struct SettingsView: View {
                         } label: {
                             Label("Test Mode (GPS sim)", systemImage: "scope")
                         }
+                        Toggle("Debug logging", isOn: $debugLoggingEnabled)
+                            .onChange(of: debugLoggingEnabled) { _, newValue in
+                                // Mirror to the watch — both devices' loggers
+                                // read the same UserDefaults key, but watch's
+                                // UserDefaults is local, so we ship the value
+                                // over WC.
+                                WatchConnectivityManager.shared.sendDebugLoggingEnabled(newValue)
+                            }
+                        Text("Forwards `client_events` rows for diagnostics. Off by default; only turn on while actively investigating an issue.")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+
+                        Stepper(value: $greenLeftThresholdYards, in: 5...60, step: 5) {
+                            Text("Auto-advance: \(Int(greenLeftThresholdYards)) yd from green edge")
+                                .font(.caption)
+                        }
+                        .onChange(of: greenLeftThresholdYards) { _, newValue in
+                            WatchConnectivityManager.shared.sendDevParam(key: "autoAdvanceGreenLeftThresholdYards", doubleValue: newValue)
+                        }
+
+                        Stepper(value: $greenPutterMarginYards, in: 0...20, step: 1) {
+                            Text("Putter switch margin: \(Int(greenPutterMarginYards)) yd")
+                                .font(.caption)
+                        }
+                        .onChange(of: greenPutterMarginYards) { _, newValue in
+                            WatchConnectivityManager.shared.sendDevParam(key: "greenPutterMarginYards", doubleValue: newValue)
+                        }
+                        Text("When green polygon is available, switching to putter fires inside the polygon OR within this margin of its edge. Yardage-based switch is bypassed in that case. Set 0 to require strict polygon containment.")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+
+                        Stepper(value: $ignorePracticeRadius, in: 5...60, step: 5) {
+                            Text("Practice radius: \(Int(ignorePracticeRadius)) yd")
+                                .font(.caption)
+                        }
+                        .onChange(of: ignorePracticeRadius) { _, newValue in
+                            WatchConnectivityManager.shared.sendDevParam(key: "ignorePracticeRadius", doubleValue: newValue)
+                        }
+
+                        Stepper(value: $practiceStepGateThreshold, in: 1...500) {
+                            Text("Practice step gate: \(practiceStepGateThreshold) steps")
+                                .font(.caption)
+                        }
+                        .onChange(of: practiceStepGateThreshold) { _, newValue in
+                            WatchConnectivityManager.shared.sendDevParam(key: "practiceStepGateThreshold", intValue: newValue)
+                        }
+                        Text("Practice radius + step gate together decide whether a new swing replaces the previous (practice swing) instead of adding a new stroke. Step threshold = arbitrarily high to disable.")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
                     }
                 }
 
-                Section("Credits") {
+                Section {
+                    EmptyView()
+                } footer: {
                     Link(destination: URL(string: "https://www.openstreetmap.org/copyright")!) {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("Map data © OpenStreetMap contributors")
-                            Text("Course geometry sourced from OpenStreetMap (ODbL)")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                        }
+                        Text("Map data © OpenStreetMap contributors")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
                     }
+                    .frame(maxWidth: .infinity, alignment: .center)
                 }
             }
             .navigationTitle("Settings")

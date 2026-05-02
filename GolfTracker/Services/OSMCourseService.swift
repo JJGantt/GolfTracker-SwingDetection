@@ -1,6 +1,5 @@
 import Foundation
 import CoreLocation
-import Supabase
 
 // MARK: - Models
 
@@ -33,8 +32,13 @@ struct OSMPolygon: Codable, Hashable, Identifiable {
         for i in 0..<points.count {
             let xi = points[i].longitude, yi = points[i].latitude
             let xj = points[j].longitude, yj = points[j].latitude
+            // Standard ray-casting. The straddle precondition guarantees
+            // `(yj - yi) != 0` so no division-by-zero guard is needed.
+            // The previous `max((yj - yi), 1.0e-12)` clamp corrupted edges
+            // with negative latitude deltas (clockwise winding) — see the
+            // matching note in `HoleDetectionBlob.contains`.
             let intersects = ((yi > y) != (yj > y)) &&
-                (x < ((xj - xi) * (y - yi) / max((yj - yi), 1.0e-12)) + xi)
+                (x < (xj - xi) * (y - yi) / (yj - yi) + xi)
             if intersects { inside.toggle() }
             j = i
         }
@@ -109,21 +113,21 @@ struct OSMCourseData: Codable, Hashable {
 
 // MARK: - Service
 
-/// Hand-rolled Overpass + Supabase cache client. Both phone and watch can call
-/// `resolve(near:)` directly — no WatchConnectivity hop required.
+/// Hand-rolled Overpass client. Both phone and watch can call directly — no
+/// WatchConnectivity hop required.
 ///
-/// Cache strategy: bucket the GPS center to 0.01° (~1.1km) so users at the same
-/// course collide on the same cache entry. Bucket lookup is O(1) on a unique
-/// index. On miss, fetch from Overpass and upsert.
+/// **Caching note**: there is no separate cache table any more. Polygon data
+/// for a registered course is persisted on the shared `courses.osm_polygons`
+/// JSONB column (see migration 00026). RoundResolver reads it directly from
+/// the row when the user picks an existing shared course, so this service
+/// only sees Overpass calls for courses that haven't been registered yet.
 final class OSMCourseService {
     static let shared = OSMCourseService()
 
     private let overpassEndpoint = "https://overpass-api.de/api/interpreter"
     private let defaultRadiusMeters: Double = 1500
-    private let cacheTTL: TimeInterval = 60 * 60 * 24 * 90  // 90 days
 
     private let session: URLSession
-    private let supabase = SupabaseManager.shared
 
     private init() {
         let config = URLSessionConfiguration.default
@@ -132,19 +136,7 @@ final class OSMCourseService {
         self.session = URLSession(configuration: config)
     }
 
-    private func currentUserId() -> String? {
-        #if os(watchOS)
-        return WatchAuthSession.shared.session?.userId
-        #else
-        return AuthManager.shared.currentUserId
-        #endif
-    }
-
     // MARK: - High-level resolve (two-pass: candidates → picked course geometry)
-
-    private func isExpired(_ data: OSMCourseData) -> Bool {
-        Date().timeIntervalSince(data.fetchedAt) > cacheTTL
-    }
 
     /// First pass — fetch named `leisure=golf_course` features near the GPS
     /// point. Returns a candidate list for the resolver/picker to choose from.
@@ -201,65 +193,44 @@ final class OSMCourseService {
             "osmId": .integer(Int(candidate.osmId)),
             "name": .string(candidate.name)
         ])
-        fetchFromCache(osmId: candidate.osmId) { [weak self] cached in
-            guard let self = self else { return }
-            if let cached = cached, !self.isExpired(cached) {
-                ClientEventLogger.log("osm.fetchGeometry.cacheHit", detail: [
-                    "osmId": .integer(Int(candidate.osmId))
-                ])
-                completion(.success(cached))
-                return
-            }
-            ClientEventLogger.log("osm.fetchGeometry.cacheMiss", detail: [
-                "osmId": .integer(Int(candidate.osmId)),
-                "expired": .bool(cached != nil)
-            ])
-            // Build a poly:"lat lon lat lon ..." filter from the candidate's
-            // bounding polygon. Overpass docs use whitespace-separated lat/lon.
-            let polyString = candidate.polygon
-                .map { "\($0.latitude) \($0.longitude)" }
-                .joined(separator: " ")
-            let query = """
-            [out:json][timeout:25];
-            (
-              way["golf"="hole"](poly:"\(polyString)");
-              way["golf"="green"](poly:"\(polyString)");
-              way["golf"="tee"](poly:"\(polyString)");
-              way["golf"="fairway"](poly:"\(polyString)");
-              way["golf"="bunker"](poly:"\(polyString)");
-            );
-            out tags geom;
-            """
-            self.executeOverpass(query: query) { [weak self] result in
-                switch result {
-                case .failure(let e): completion(.failure(e))
-                case .success(let data):
-                    do {
-                        let parsed = try Self.parseCourseGeometry(
-                            data: data,
-                            center: candidate.centroid.coordinate,
-                            radiusMeters: self?.defaultRadiusMeters ?? 1500
-                        )
-                        completion(.success(parsed))
-                        // Fire-and-forget cache write keyed by OSM id.
-                        ClientEventLogger.log("osm.fetchGeometry.upsertStart", detail: [
-                            "osmId": .integer(Int(candidate.osmId)),
-                            "holeCount": .integer(parsed.holes.count),
-                            "greenCount": .integer(parsed.greens.count)
-                        ])
-                        self?.upsertCache(parsed, osmId: candidate.osmId) { ok in
-                            ClientEventLogger.log(
-                                ok ? "osm.fetchGeometry.upsertOk" : "osm.fetchGeometry.upsertFailed",
-                                detail: ["osmId": .integer(Int(candidate.osmId))]
-                            )
-                        }
-                    } catch {
-                        ClientEventLogger.log("osm.fetchGeometry.parseFailed", detail: [
-                            "osmId": .integer(Int(candidate.osmId)),
-                            "error": .string("\(error)")
-                        ])
-                        completion(.failure(error))
-                    }
+        // Build a poly:"lat lon lat lon ..." filter from the candidate's
+        // bounding polygon. Overpass docs use whitespace-separated lat/lon.
+        let polyString = candidate.polygon
+            .map { "\($0.latitude) \($0.longitude)" }
+            .joined(separator: " ")
+        let query = """
+        [out:json][timeout:25];
+        (
+          way["golf"="hole"](poly:"\(polyString)");
+          way["golf"="green"](poly:"\(polyString)");
+          way["golf"="tee"](poly:"\(polyString)");
+          way["golf"="fairway"](poly:"\(polyString)");
+          way["golf"="bunker"](poly:"\(polyString)");
+        );
+        out tags geom;
+        """
+        executeOverpass(query: query) { [weak self] result in
+            switch result {
+            case .failure(let e): completion(.failure(e))
+            case .success(let data):
+                do {
+                    let parsed = try Self.parseCourseGeometry(
+                        data: data,
+                        center: candidate.centroid.coordinate,
+                        radiusMeters: self?.defaultRadiusMeters ?? 1500
+                    )
+                    ClientEventLogger.log("osm.fetchGeometry.ok", detail: [
+                        "osmId": .integer(Int(candidate.osmId)),
+                        "holeCount": .integer(parsed.holes.count),
+                        "greenCount": .integer(parsed.greens.count)
+                    ])
+                    completion(.success(parsed))
+                } catch {
+                    ClientEventLogger.log("osm.fetchGeometry.parseFailed", detail: [
+                        "osmId": .integer(Int(candidate.osmId)),
+                        "error": .string("\(error)")
+                    ])
+                    completion(.failure(error))
                 }
             }
         }
@@ -322,6 +293,27 @@ final class OSMCourseService {
                             })
                         }
                     }
+                }
+                // Fallback: many course relations come back from Overpass with
+                // no inlined member geometry under `out tags geom;`. The
+                // relation still carries a `bounds` rect — use it as a
+                // 4-corner polygon. Coarse but the second-pass
+                // `(poly:"...")` query just needs an enclosing region, and
+                // Wekiva GC (relation 4052767) is an example of one that
+                // arrives in this shape. Without this fallback the candidate
+                // was silently dropped and we fell through to MapKit /
+                // manual mode.
+                if polygon.isEmpty, let bounds = el["bounds"] as? [String: Any],
+                   let minLat = bounds["minlat"] as? Double,
+                   let minLon = bounds["minlon"] as? Double,
+                   let maxLat = bounds["maxlat"] as? Double,
+                   let maxLon = bounds["maxlon"] as? Double {
+                    polygon = [
+                        MapPoint(latitude: minLat, longitude: minLon),
+                        MapPoint(latitude: minLat, longitude: maxLon),
+                        MapPoint(latitude: maxLat, longitude: maxLon),
+                        MapPoint(latitude: maxLat, longitude: minLon),
+                    ]
                 }
             }
             guard polygon.count >= 3 else { continue }
@@ -406,126 +398,6 @@ final class OSMCourseService {
         )
     }
 
-    // MARK: - Supabase cache
-
-    /// Cache row by OSM course id. We embed osmId into gps_bucket_lat as a
-    /// negative-sentinel sigil so we don't need a new column on osm_course_data:
-    /// the schema's UNIQUE(gps_bucket_lat, gps_bucket_lon) suffices when we use
-    /// (osmId-derived) keys outside the real lat/lon range.
-    private func cacheKey(forOsmId id: Int64) -> (lat: Double, lon: Double) {
-        // OSM ids are always positive integers up to ~10^11. Stuff them into
-        // both columns: bucket_lat = -1 (sentinel for "OSM keyed"), bucket_lon = id.
-        // Real coordinates are always lat ∈ [-90,90], so -1 lat collides with
-        // nothing real, and lon = (e.g.) 286113630 is wildly outside [-180,180].
-        return (lat: -1.0, lon: Double(id))
-    }
-
-    private func bucketKey(for coordinate: CLLocationCoordinate2D) -> (lat: Double, lon: Double) {
-        // Round to 0.01° (~1.1km) — used by the first-pass query when we don't
-        // yet know an OSM course id (vestigial; kept for back-compat).
-        let lat = (coordinate.latitude * 100).rounded() / 100
-        let lon = (coordinate.longitude * 100).rounded() / 100
-        return (lat, lon)
-    }
-
-    /// Row shape we read out of `osm_course_data`. Only `data` is decoded into
-    /// `OSMCourseData`; the rest of the columns are managed by the migration.
-    private struct CacheRow: Decodable {
-        let data: OSMCourseData
-    }
-
-    func fetchFromCache(near coordinate: CLLocationCoordinate2D,
-                        completion: @escaping (OSMCourseData?) -> Void) {
-        let bucket = bucketKey(for: coordinate)
-        fetchFromCache(bucketLat: bucket.lat, bucketLon: bucket.lon, completion: completion)
-    }
-
-    func fetchFromCache(osmId: Int64,
-                        completion: @escaping (OSMCourseData?) -> Void) {
-        let key = cacheKey(forOsmId: osmId)
-        fetchFromCache(bucketLat: key.lat, bucketLon: key.lon, completion: completion)
-    }
-
-    private func fetchFromCache(bucketLat: Double, bucketLon: Double,
-                                completion: @escaping (OSMCourseData?) -> Void) {
-        Task {
-            do {
-                let rows: [CacheRow] = try await supabase.from("osm_course_data")
-                    .select("data,fetched_at")
-                    .eq("gps_bucket_lat", value: bucketLat)
-                    .eq("gps_bucket_lon", value: bucketLon)
-                    .limit(1)
-                    .execute()
-                    .value
-                completion(rows.first?.data)
-            } catch {
-                dprint("[OSMCourseService] cache fetch failed: \(error)")
-                completion(nil)
-            }
-        }
-    }
-
-    /// Upsert payload — encoded as the row shape the table expects.
-    private struct CacheUpsert: Encodable {
-        let gps_bucket_lat: Double
-        let gps_bucket_lon: Double
-        let center_latitude: Double
-        let center_longitude: Double
-        let radius_meters: Int
-        let fetched_at: Date
-        let attribution: String
-        let course_id: String?
-        let created_by: String?
-        let data: OSMCourseData
-    }
-
-    func upsertCache(_ data: OSMCourseData,
-                     osmId: Int64,
-                     completion: @escaping (Bool) -> Void) {
-        let key = cacheKey(forOsmId: osmId)
-        upsertRow(data, bucketLat: key.lat, bucketLon: key.lon, courseId: nil, completion: completion)
-    }
-
-    func upsertCache(_ data: OSMCourseData,
-                     courseId: UUID?,
-                     completion: @escaping (Bool) -> Void) {
-        let bucket = bucketKey(for: data.center.coordinate)
-        upsertRow(data, bucketLat: bucket.lat, bucketLon: bucket.lon, courseId: courseId, completion: completion)
-    }
-
-    private func upsertRow(_ data: OSMCourseData,
-                           bucketLat: Double, bucketLon: Double,
-                           courseId: UUID?,
-                           completion: @escaping (Bool) -> Void) {
-        let row = CacheUpsert(
-            gps_bucket_lat: bucketLat,
-            gps_bucket_lon: bucketLon,
-            center_latitude: data.center.latitude,
-            center_longitude: data.center.longitude,
-            radius_meters: Int(data.radiusMeters),
-            fetched_at: data.fetchedAt,
-            attribution: data.attribution,
-            course_id: courseId?.uuidString,
-            created_by: currentUserId(),
-            data: data
-        )
-        Task {
-            do {
-                try await supabase.from("osm_course_data")
-                    .upsert(row, onConflict: "gps_bucket_lat,gps_bucket_lon")
-                    .execute()
-                completion(true)
-            } catch {
-                ClientEventLogger.log("osm.upsertRow.threw", detail: [
-                    "error": .string("\(error)"),
-                    "bucketLat": .double(bucketLat),
-                    "bucketLon": .double(bucketLon)
-                ])
-                dprint("[OSMCourseService] cache upsert failed: \(error)")
-                completion(false)
-            }
-        }
-    }
 }
 
 // MARK: - Errors
@@ -546,20 +418,3 @@ enum OSMError: Error, LocalizedError {
     }
 }
 
-// MARK: - JSON helpers
-
-private extension JSONEncoder {
-    static let osm: JSONEncoder = {
-        let e = JSONEncoder()
-        e.dateEncodingStrategy = .iso8601
-        return e
-    }()
-}
-
-private extension JSONDecoder {
-    static let osm: JSONDecoder = {
-        let d = JSONDecoder()
-        d.dateDecodingStrategy = .iso8601
-        return d
-    }()
-}

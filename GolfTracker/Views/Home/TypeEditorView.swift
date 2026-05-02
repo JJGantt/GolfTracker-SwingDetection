@@ -28,7 +28,10 @@ struct TypeEditorView: View {
     }
 
     var clubsOfType: [ClubData] {
-        store.getClubs(forType: typeId)
+        // Sort by name so the list is stable across launches. SwiftData's
+        // natural fetch order isn't guaranteed and the user-visible list
+        // would otherwise shuffle on reload.
+        store.getClubs(forType: typeId).sorted { $0.name < $1.name }
     }
 
     var body: some View {

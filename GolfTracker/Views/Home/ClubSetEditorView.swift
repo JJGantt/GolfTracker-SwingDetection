@@ -38,7 +38,12 @@ struct ClubSetEditorView: View {
                         Label("Add New Type", systemImage: "plus.circle.fill")
                     }
 
-                    ForEach(store.clubTypes) { clubType in
+                    // Display in the same canonical order the watch uses
+                    // (longest average-distance first, putter last). Without
+                    // this, SwiftData's natural fetch order shows types in
+                    // some arbitrary insertion order that doesn't match the
+                    // watch and isn't useful to the user.
+                    ForEach(store.clubTypes.sorted { ($0.averageDistance ?? 0) > ($1.averageDistance ?? 0) }) { clubType in
                         let isSelected = typeSelections.contains(where: { $0.typeId == clubType.id })
                         let activeClub = typeSelections.first(where: { $0.typeId == clubType.id })
                             .flatMap { $0.activeClubId }
@@ -146,8 +151,12 @@ struct ClubSetEditorView: View {
         let trimmedName = setName.trimmingCharacters(in: .whitespaces)
         guard !trimmedName.isEmpty else { return }
 
-        // Preserve the canonical order from store.clubTypes regardless of toggle order
-        let typeOrder = store.clubTypes.map(\.id)
+        // Preserve the canonical Drive→Putt order (longest avg distance first)
+        // regardless of toggle order. Without explicit sort here, the saved
+        // typeSelections inherit SwiftData's arbitrary fetch order.
+        let typeOrder = store.clubTypes
+            .sorted { ($0.averageDistance ?? 0) > ($1.averageDistance ?? 0) }
+            .map(\.id)
         let orderedSelections = typeSelections.sorted {
             let i0 = typeOrder.firstIndex(of: $0.typeId) ?? Int.max
             let i1 = typeOrder.firstIndex(of: $1.typeId) ?? Int.max

@@ -44,19 +44,19 @@ class SupabaseUploader {
     // MARK: - Event Lifecycle
 
     /// Called from `fireSmartDetection` on every detection.
-    /// Flushes any previous pending event, then holds the new one.
+    /// In auto-add mode: immediately uploads as positive/low and returns the
+    /// event id so the UI can mark it false_positive later via `markFalsePositive`
+    /// if the user undoes the auto-added stroke.
+    /// In manual mode: flushes any previous pending and holds this one as
+    /// pending, awaiting an `onSwingAccepted`/`onSwingRejected` from the popup.
+    @discardableResult
     func onSwingDetected(
         metadata: SwingDetectionManager.DetectionMetadata,
         motionSlice: [SwingDetectionManager.RecordedDataPoint],
         rawAccelSlice: [SwingDetectionManager.RawAccelDataPoint] = [],
         clubType: String?,
         autoAdd: Bool
-    ) {
-        // Flush previous pending event with low confidence (implicit — user didn't act)
-        if let prev = pending {
-            upload(event: prev)
-        }
-
+    ) -> UUID? {
         if rejectAll {
             // Farming mode: immediate upload, no pending
             let event = PendingEvent(
@@ -69,20 +69,49 @@ class SupabaseUploader {
                 confidence: "high"
             )
             upload(event: event)
+            // Flush any stale manual pending too
+            if let prev = pending { upload(event: prev) }
             pending = nil
-            return
+            return event.id
         }
 
-        // Hold as pending with tentative label based on mode
+        if autoAdd {
+            // Auto-add: no popup, no pending — upload immediately as
+            // positive/low. Undo path edits the row to false_positive/high.
+            // Flush any stale manual pending first (shouldn't happen but
+            // defensive).
+            if let prev = pending {
+                upload(event: prev)
+                pending = nil
+            }
+            let event = PendingEvent(
+                id: UUID(),
+                metadata: metadata,
+                motionSlice: motionSlice,
+                rawAccelSlice: rawAccelSlice,
+                clubType: clubType,
+                label: "positive",
+                confidence: "low"
+            )
+            upload(event: event)
+            return event.id
+        }
+
+        // Manual mode: flush previous pending (implicit — user didn't act),
+        // hold this one for the popup to accept/reject.
+        if let prev = pending {
+            upload(event: prev)
+        }
         pending = PendingEvent(
             id: UUID(),
             metadata: metadata,
             motionSlice: motionSlice,
             rawAccelSlice: rawAccelSlice,
             clubType: clubType,
-            label: autoAdd ? "positive" : "false_positive",
+            label: "false_positive",
             confidence: "low"
         )
+        return nil
     }
 
     /// Called when user taps to add the stroke (manual-add mode).
@@ -92,7 +121,7 @@ class SupabaseUploader {
         pending?.confidence = "high"
     }
 
-    /// Called when user undoes an auto-added stroke.
+    /// Called when user explicitly rejects the manual-add popup with X.
     /// Immediately flushes as false_positive with high confidence.
     func onSwingRejected() {
         guard var event = pending else { return }
@@ -109,14 +138,235 @@ class SupabaseUploader {
         pending = nil
     }
 
+    /// Edit a previously uploaded swing_event row to label=false_positive,
+    /// confidence=high. Used by the main-screen undo button when the user
+    /// undoes an auto-added stroke (the row was uploaded as positive/low at
+    /// detection time; undo flips it to high-confidence false_positive).
+    func markFalsePositive(eventId: UUID) {
+        struct UpdateRow: Encodable {
+            let label: String
+            let confidence: String
+        }
+        Task { [weak self] in
+            guard let self = self else { return }
+            do {
+                try await self.supabase
+                    .from("swing_events")
+                    .update(UpdateRow(label: "false_positive", confidence: "high"))
+                    .eq("id", value: eventId.uuidString)
+                    .execute()
+                ClientEventLogger.log("swing.update.falsePositive.ok", detail: [
+                    "eventId": .string(eventId.uuidString)
+                ])
+            } catch {
+                ClientEventLogger.log("swing.update.falsePositive.failed", detail: [
+                    "eventId": .string(eventId.uuidString),
+                    "error": .string("\(error)")
+                ])
+            }
+        }
+    }
+
+    /// Upload a rejected shape as a false-negative training sample. Called
+    /// when the user manually adds a stroke and there's a recently-rejected
+    /// shape in the buffer (claimed via
+    /// `SwingDetectionManager.claimMostRecentRejection`). Captures the
+    /// detector's view of the swing PLUS which gate(s) rejected it (in
+    /// `event.metadata`), so the labeled sample tells us not just "this was
+    /// a real swing the detector missed" but "this was a real swing that
+    /// gate X rejected."
+    /// Upload an entire group of rejected shapes captured between the
+    /// previous successful stroke and a manual stroke add. NOT swing_events
+    /// — these are CANDIDATES for a single missed swing; only ONE of the N
+    /// rejections corresponds to the real false-negative, the rest are
+    /// noise. They go to `false_negative_groups` + `false_negative_candidates`
+    /// for later manual sifting.
+    func uploadFalseNegativeGroup(
+        rejections: [SwingDetectionManager.RejectedShape],
+        roundId: UUID?,
+        strokeId: UUID?,
+        holeNumber: Int?,
+        clubType: String?
+    ) {
+        guard !rejections.isEmpty else { return }
+        guard let userId = WatchAuthSession.shared.currentUserId else {
+            ClientEventLogger.log("falseNeg.upload.bail.noAuth", detail: [
+                "candidateCount": .integer(rejections.count)
+            ])
+            return
+        }
+        let groupId = UUID()
+        ClientEventLogger.log("falseNeg.upload.start", detail: [
+            "groupId": .string(groupId.uuidString),
+            "candidateCount": .integer(rejections.count),
+            "strokeId": strokeId.map { .string($0.uuidString) } ?? .null
+        ])
+        Task { [weak self] in
+            await self?.insertFalseNegativeGroup(
+                groupId: groupId, userId: userId,
+                roundId: roundId, strokeId: strokeId,
+                holeNumber: holeNumber, candidateCount: rejections.count
+            )
+            for (index, rejected) in rejections.enumerated() {
+                await self?.insertFalseNegativeCandidate(
+                    groupId: groupId, userId: userId,
+                    position: index, rejected: rejected, clubType: clubType
+                )
+                await self?.uploadFalseNegativeCSV(
+                    groupId: groupId, userId: userId, position: index, rejected: rejected
+                )
+            }
+        }
+    }
+
+    private struct FalseNegativeGroupRow: Encodable {
+        let id: String
+        let user_id: String
+        let round_id: String?
+        let stroke_id: String?
+        let hole_number: Int?
+        let candidate_count: Int
+    }
+
+    private func insertFalseNegativeGroup(
+        groupId: UUID, userId: String,
+        roundId: UUID?, strokeId: UUID?,
+        holeNumber: Int?, candidateCount: Int
+    ) async {
+        let row = FalseNegativeGroupRow(
+            id: groupId.uuidString,
+            user_id: userId,
+            round_id: roundId?.uuidString,
+            stroke_id: strokeId?.uuidString,
+            hole_number: holeNumber,
+            candidate_count: candidateCount
+        )
+        do {
+            try await supabase.from("false_negative_groups").insert(row).execute()
+            ClientEventLogger.log("falseNeg.group.inserted", detail: [
+                "groupId": .string(groupId.uuidString)
+            ])
+        } catch {
+            ClientEventLogger.log("falseNeg.group.failed", detail: [
+                "error": .string("\(error)")
+            ])
+        }
+    }
+
+    private struct FalseNegativeCandidateRow: Encodable {
+        let group_id: String
+        let user_id: String
+        let position_in_group: Int
+        let rejected_at: Date
+        let stage: String
+        let gate_fails: String
+        let classification: String?
+        let swing_type: String?
+        let fs_peak_rot_mag: Double?
+        let bs_peak_rot_mag: Double?
+        let fs_bs_ratio: Double?
+        let contact_tv: Double?
+        let contact_n: Int?
+        let extrema_spread: Double?
+        let baseline_tv: Double?
+        let setup_duration: Double?
+        let bs_to_fs_gap: Double?
+        let club_type: String?
+        let detection_mode: String?
+        let storage_path: String?
+    }
+
+    private func insertFalseNegativeCandidate(
+        groupId: UUID, userId: String, position: Int,
+        rejected: SwingDetectionManager.RejectedShape, clubType: String?
+    ) async {
+        let shape = rejected.shape
+        let gate = rejected.gate
+        let bsRotMag = sqrt(
+            shape.bsPeakRotX * shape.bsPeakRotX +
+            shape.bsPeakRotY * shape.bsPeakRotY +
+            shape.bsPeakRotZ * shape.bsPeakRotZ
+        )
+        let fsBsRatio = bsRotMag > 0.0001 ? shape.fsPeakRotMag / bsRotMag : nil
+        let storagePath = "\(userId)/false_negatives/\(groupId.uuidString)/\(position).csv"
+        let row = FalseNegativeCandidateRow(
+            group_id: groupId.uuidString,
+            user_id: userId,
+            position_in_group: position,
+            rejected_at: rejected.rejectedAt,
+            stage: rejected.stage,
+            gate_fails: gate.fails.joined(separator: ","),
+            classification: shape.classification.rawValue,
+            swing_type: shape.classification.rawValue,
+            fs_peak_rot_mag: shape.fsPeakRotMag,
+            bs_peak_rot_mag: bsRotMag,
+            fs_bs_ratio: fsBsRatio,
+            contact_tv: gate.contactTV,
+            contact_n: gate.contactN,
+            extrema_spread: gate.extremaSpread,
+            baseline_tv: gate.baselineTV,
+            setup_duration: shape.setupEndT - shape.setupStartT,
+            bs_to_fs_gap: shape.fsPeakT - shape.bsTopT,
+            club_type: clubType,
+            detection_mode: "unifDetect",
+            storage_path: storagePath
+        )
+        do {
+            try await supabase.from("false_negative_candidates").insert(row).execute()
+        } catch {
+            ClientEventLogger.log("falseNeg.candidate.failed", detail: [
+                "groupId": .string(groupId.uuidString),
+                "position": .integer(position),
+                "error": .string("\(error)")
+            ])
+        }
+    }
+
+    private func uploadFalseNegativeCSV(
+        groupId: UUID, userId: String, position: Int,
+        rejected: SwingDetectionManager.RejectedShape
+    ) async {
+        guard !rejected.motionSlice.isEmpty else { return }
+        let storagePath = "\(userId)/false_negatives/\(groupId.uuidString)/\(position).csv"
+        var csv = "SensorTime,UserAccelX,UserAccelY,UserAccelZ,UserAccelMag,RotationX,RotationY,RotationZ,RotationMag,GravityX,GravityY,GravityZ,Pitch,Roll,Yaw,MagAccuracy\n"
+        let f = { (v: Double) -> String in String(format: "%.4f", v) }
+        for dp in rejected.motionSlice {
+            csv += "\(f(dp.sensorTime)),\(f(dp.userAccelX)),\(f(dp.userAccelY)),\(f(dp.userAccelZ)),\(f(dp.userAccelMag)),\(f(dp.rotationX)),\(f(dp.rotationY)),\(f(dp.rotationZ)),\(f(dp.rotationMag)),\(f(dp.gravityX)),\(f(dp.gravityY)),\(f(dp.gravityZ)),\(f(dp.pitch)),\(f(dp.roll)),\(f(dp.yaw)),\(dp.magAccuracy)\n"
+        }
+        guard let csvData = csv.data(using: .utf8) else { return }
+        do {
+            _ = try await supabase.storage
+                .from(storageBucket)
+                .upload(storagePath, data: csvData, options: FileOptions(contentType: "text/csv"))
+        } catch {
+            ClientEventLogger.log("falseNeg.csv.failed", detail: [
+                "storagePath": .string(storagePath),
+                "error": .string("\(error)")
+            ])
+        }
+    }
+
+
     // MARK: - Upload
 
     private func upload(event: PendingEvent) {
         let eventCopy = event
         guard let userId = WatchAuthSession.shared.currentUserId else {
+            ClientEventLogger.log("swing.upload.bail.noAuth", detail: [
+                "eventId": .string(eventCopy.id.uuidString),
+                "label": .string(eventCopy.label),
+                "confidence": .string(eventCopy.confidence)
+            ])
             dprint("⌚ [SupabaseUploader] Drop event \(eventCopy.id.uuidString) — not signed in")
             return
         }
+        ClientEventLogger.log("swing.upload.start", detail: [
+            "eventId": .string(eventCopy.id.uuidString),
+            "label": .string(eventCopy.label),
+            "confidence": .string(eventCopy.confidence),
+            "motionSampleCount": .integer(eventCopy.motionSlice.count),
+            "rawAccelSampleCount": .integer(eventCopy.rawAccelSlice.count)
+        ])
         Task { [weak self] in
             await self?.uploadMetadata(event: eventCopy, userId: userId)
             await self?.uploadMotionCSV(event: eventCopy, userId: userId)
@@ -172,8 +422,15 @@ class SupabaseUploader {
         )
         do {
             try await supabase.from("swing_events").insert(row).execute()
+            ClientEventLogger.log("swing.upload.metadata.ok", detail: [
+                "eventId": .string(event.id.uuidString)
+            ])
             dprint("⌚ [SupabaseUploader] metadata(\(event.label)/\(event.confidence)) uploaded")
         } catch {
+            ClientEventLogger.log("swing.upload.metadata.failed", detail: [
+                "eventId": .string(event.id.uuidString),
+                "error": .string("\(error)")
+            ])
             dprint("⌚ [SupabaseUploader] metadata upload failed: \(error)")
         }
     }
@@ -184,10 +441,10 @@ class SupabaseUploader {
             return
         }
         let storagePath = "\(userId)/\(event.id.uuidString).csv"
-        var csv = "SensorTime,UserAccelX,UserAccelY,UserAccelZ,UserAccelMag,RotationX,RotationY,RotationZ,RotationMag,GravityX,GravityY,GravityZ,Pitch,Roll,Yaw\n"
+        var csv = "SensorTime,UserAccelX,UserAccelY,UserAccelZ,UserAccelMag,RotationX,RotationY,RotationZ,RotationMag,GravityX,GravityY,GravityZ,Pitch,Roll,Yaw,MagAccuracy\n"
         let f = { (v: Double) -> String in String(format: "%.4f", v) }
         for dp in event.motionSlice {
-            csv += "\(f(dp.sensorTime)),\(f(dp.userAccelX)),\(f(dp.userAccelY)),\(f(dp.userAccelZ)),\(f(dp.userAccelMag)),\(f(dp.rotationX)),\(f(dp.rotationY)),\(f(dp.rotationZ)),\(f(dp.rotationMag)),\(f(dp.gravityX)),\(f(dp.gravityY)),\(f(dp.gravityZ)),\(f(dp.pitch)),\(f(dp.roll)),\(f(dp.yaw))\n"
+            csv += "\(f(dp.sensorTime)),\(f(dp.userAccelX)),\(f(dp.userAccelY)),\(f(dp.userAccelZ)),\(f(dp.userAccelMag)),\(f(dp.rotationX)),\(f(dp.rotationY)),\(f(dp.rotationZ)),\(f(dp.rotationMag)),\(f(dp.gravityX)),\(f(dp.gravityY)),\(f(dp.gravityZ)),\(f(dp.pitch)),\(f(dp.roll)),\(f(dp.yaw)),\(dp.magAccuracy)\n"
         }
         guard let csvData = csv.data(using: .utf8) else { return }
         do {

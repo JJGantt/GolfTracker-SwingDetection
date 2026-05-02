@@ -26,7 +26,12 @@ struct ClubManagementView: View {
                             .foregroundColor(.secondary)
                             .font(.subheadline)
                     } else {
-                        ForEach(store.clubSets) { clubSet in
+                        // Stable alphabetical order (and active set always
+                        // first); SwiftData fetch order isn't deterministic.
+                        ForEach(store.clubSets.sorted { lhs, rhs in
+                            if lhs.isActive != rhs.isActive { return lhs.isActive }
+                            return lhs.name < rhs.name
+                        }) { clubSet in
                             HStack(spacing: 12) {
                                 Button(action: {
                                     if !clubSet.isActive {

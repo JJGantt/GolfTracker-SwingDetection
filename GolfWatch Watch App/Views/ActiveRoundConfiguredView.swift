@@ -4,7 +4,7 @@ struct ActiveRoundConfiguredView: View {
     let content: AnyView
 
     @ObservedObject var store: WatchDataStore
-    let locationManager: LocationManager
+    @ObservedObject var locationManager: LocationManager
 
     @Binding var showingOptions: Bool
     @Binding var showingEditHole: Bool
@@ -12,23 +12,20 @@ struct ActiveRoundConfiguredView: View {
     @Binding var activeSettingsSheet: ActiveRoundView.SettingsSheet?
     @Binding var isFullViewMode: Bool
     @Binding var manualClubOverride: Bool
-    @Binding var navigateToAccelTest: Bool
     @Binding var navigateToViewSettings: Bool
     @Binding var navigateToClubRecommend: Bool
     @Binding var navigateToPredictGreen: Bool
-    @Binding var isPlacingPenalty: Bool
+    @Binding var isPlacingTarget: Bool
     @Binding var minimalScreenMode: Bool
     @Binding var selectedClubIndex: Double
 
     let currentHole: Hole?
     let distanceToHole: Int?
     let detectedSwingTimestamp: Date?
-    let canUndo: Bool
 
     let dismissParent: () -> Void
     let updateMapPosition: () -> Void
     let updateNoHoleMapPosition: () -> Void
-    let deleteLastStroke: () -> Void
 
     let onViewAppear: () -> Void
     let onViewDisappear: () -> Void
@@ -37,7 +34,6 @@ struct ActiveRoundConfiguredView: View {
     let onCurrentHoleIndexChange: () -> Void
     let onCurrentHoleChange: () -> Void
     let onShowingOptionsChange: (Bool) -> Void
-    let onPlacingPenaltyChange: (Bool) -> Void
     let onMinimalScreenModeChange: (Bool) -> Void
     let onDetectedSwingChange: (Date?) -> Void
     let onSelectedClubIndexChange: () -> Void
@@ -52,16 +48,14 @@ struct ActiveRoundConfiguredView: View {
                     showingDistanceEditor: $showingDistanceEditor,
                     isFullViewMode: $isFullViewMode,
                     manualClubOverride: $manualClubOverride,
-                    navigateToAccelTest: $navigateToAccelTest,
                     navigateToViewSettings: $navigateToViewSettings,
                     navigateToClubRecommend: $navigateToClubRecommend,
                     navigateToPredictGreen: $navigateToPredictGreen,
-                    isPlacingPenalty: $isPlacingPenalty,
+                    isPlacingTarget: $isPlacingTarget,
+                    minimalScreenMode: $minimalScreenMode,
                     updateMapPosition: updateMapPosition,
                     updateNoHoleMapPosition: updateNoHoleMapPosition,
-                    deleteLastStroke: deleteLastStroke,
-                    dismissParent: dismissParent,
-                    canUndo: canUndo
+                    dismissParent: dismissParent
                 )
             }
             .sheet(isPresented: $showingEditHole) {
@@ -84,9 +78,6 @@ struct ActiveRoundConfiguredView: View {
             }
             .onChange(of: navigateToClubRecommend) { _, isActive in
                 routeSettingsSheet(.clubRecommend, isActive: isActive)
-            }
-            .onChange(of: navigateToAccelTest) { _, isActive in
-                routeSettingsSheet(.accelTest, isActive: isActive)
             }
             .onChange(of: navigateToPredictGreen) { _, isActive in
                 routeSettingsSheet(.predictGreen, isActive: isActive)
@@ -112,9 +103,6 @@ struct ActiveRoundConfiguredView: View {
             .onChange(of: showingOptions) { _, isShowing in
                 onShowingOptionsChange(isShowing)
             }
-            .onChange(of: isPlacingPenalty) { _, isPlacing in
-                onPlacingPenaltyChange(isPlacing)
-            }
             .onChange(of: minimalScreenMode) { _, isMinimal in
                 onMinimalScreenModeChange(isMinimal)
             }
@@ -129,8 +117,6 @@ struct ActiveRoundConfiguredView: View {
     @ViewBuilder
     private func settingsSheetView(_ sheet: ActiveRoundView.SettingsSheet) -> some View {
         switch sheet {
-        case .accelTest:
-            AccelTestView()
         case .viewSettings:
             ViewSettingsView(
                 isFullViewMode: $isFullViewMode,
@@ -157,8 +143,6 @@ struct ActiveRoundConfiguredView: View {
             navigateToViewSettings = false
         case .clubRecommend:
             navigateToClubRecommend = false
-        case .accelTest:
-            navigateToAccelTest = false
         case .predictGreen:
             navigateToPredictGreen = false
         }
