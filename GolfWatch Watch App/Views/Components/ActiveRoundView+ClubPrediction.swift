@@ -12,28 +12,34 @@ extension ActiveRoundView {
         }
     }
 
-    /// Commits the overlay's crown-selected club to the auto-added stroke.
-    /// Called on dismiss (X) and at the start of any new auto-add (covers "dismissed by new stroke").
-    func commitOverlayClub() {
-        guard let strokeId = autoAddedStrokeId, let club = overlaySelectedClub else { return }
-        store.updateStrokeClub(strokeId: strokeId, clubId: club.id)
-    }
-
     func applyClubPrediction() {
         guard store.clubPredictionMode != .off,
               let distance = distanceToHole else { return }
+        // Conditionally drop "Putt" from the candidate set when an OSM green
+        // polygon exists for the current hole — polygon containment +
+        // `greenPutterMarginYards` is the authoritative putter trigger in
+        // that case. Without a polygon, leave putter eligible so the
+        // distance predictor can pick it as the fallback (matches the
+        // yardage-based path in `handleDetectedSwingChange`).
+        var disabled = store.disabledPredictionClubs
+        if currentHoleGreenBlob != nil {
+            disabled.insert("Putt")
+        }
         if let predictedIndex = ClubPredictionManager.shared.predictClubIndex(
             forDistance: distance,
             clubs: clubs,
             clubTypes: store.clubTypes,
             mode: store.clubPredictionMode,
             customAverages: store.customClubAverages,
-            disabledClubs: store.disabledPredictionClubs
+            disabledClubs: disabled
         ) {
+            // Leave isAutoSelectingClub TRUE — the .onChange handler will
+            // observe and clear it. See `handleSelectedClubIndexChange` for
+            // the rationale. Synchronously clearing it here would cause the
+            // auto-selection to be misclassified as manual.
             isAutoSelectingClub = true
             selectedClubIndex = Double(predictedIndex)
             updateSwingDetectorClub()
-            isAutoSelectingClub = false
         }
     }
 
@@ -43,23 +49,53 @@ extension ActiveRoundView {
         swingDetector.selectedClubTypeName = newTypeName
 
         if newTypeName == "Putt" {
-            locationManager.setGPSPowerMode(.off)
-        } else if locationManager.gpsPowerMode == .off {
-            // Switching away from putter — restore GPS based on distance
+            // Putter forces moderate (10m filter). AutoAdvance needs GPS
+            // updates to detect walking off the green to the next tee, so
+            // we never fully stop the radio while putting.
+            locationManager.setGPSPowerMode(.moderate)
+        } else {
+            // Non-putter — let distance-based logic pick full vs moderate.
             updateGPSForDistance()
         }
     }
 
     func handleSelectedClubIndexChange() {
-        ClientEventLogger.log("clubIndexChange", detail: ["index": .double(selectedClubIndex)])
-        if !isAutoSelectingClub && store.clubPredictionMode != .off {
-            manualClubOverride = true
+        WatchDiagnostics.shared.recordCrownTick()
+        // Crown binding is Double, ticks many times per second. The actual
+        // selected club only changes once per integer step. Avoid running
+        // any of the heavy per-tick work (swing-detector publisher fire,
+        // GPS power mode read, SwiftData lookup) until the integer index
+        // actually changes.
+        let rounded = clubs.isEmpty
+            ? 0
+            : Int(selectedClubIndex.rounded()) % clubs.count
+        if rounded != lastSettledClubIndex {
+            lastSettledClubIndex = rounded
+            WatchDiagnostics.shared.recordClubIntegerChange()
+            // Observe-and-clear the auto-selection flag atomically. SwiftUI's
+            // .onChange runs asynchronously, so a setter that did
+            // `isAutoSelectingClub = true; selectedClubIndex = X;
+            // isAutoSelectingClub = false` in one synchronous block leaves
+            // the flag false by the time this handler actually runs — the
+            // auto-selection looks like a manual one. Result: every auto-
+            // selection used to silently set `manualClubOverride = true`,
+            // which in turn killed all future auto club-switching until the
+            // next stroke recording cleared it. Setters now leave the flag
+            // set; we clear it here in the handler.
+            let wasAutoSelection = isAutoSelectingClub
+            isAutoSelectingClub = false
+            if !wasAutoSelection && store.clubPredictionMode != .off {
+                manualClubOverride = true
+            }
+            updateSwingDetectorClub()
         }
 
-        updateSwingDetectorClub()
-
-        withAnimation(.easeInOut(duration: 0.15)) {
-            isCrownScrolling = true
+        // Cheap per-tick work — local @State only, no publisher fires
+        // beyond the view itself. Drives the "scrolling" animation.
+        if !isCrownScrolling {
+            withAnimation(.easeInOut(duration: 0.15)) {
+                isCrownScrolling = true
+            }
         }
 
         crownScrollTimer?.invalidate()

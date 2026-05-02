@@ -9,7 +9,7 @@ import MapKit
 ///   indicator; saving calls `dismiss()`.
 struct HolePlacementView: View {
     @ObservedObject var store: WatchDataStore
-    let locationManager: LocationManager
+    @ObservedObject var locationManager: LocationManager
     let hole: Hole
     let isEditing: Bool
     @Environment(\.dismiss) private var dismiss
@@ -25,18 +25,50 @@ struct HolePlacementView: View {
         return store.filteredGreenCandidates(for: store.currentRound?.courseId)
     }
 
+    /// True while we've asked the iPhone for blob detection but haven't
+    /// received the result yet. Drives the "Analyzing course geometry…"
+    /// overlay and disables tap-to-place so the user doesn't accidentally
+    /// commit a manual placement during the wait.
+    private var isWaitingForBlobs: Bool {
+        guard let courseId = store.currentRound?.courseId else { return false }
+        return store.pendingBlobDetectionCourseIds.contains(courseId)
+    }
+
+    /// API-derived par for this hole at the round's selected tee. When
+    /// non-nil, the par picker is skipped — tapping a position auto-saves
+    /// with this par.
+    private var knownPar: Int? {
+        store.teeHolePars[hole.number]
+    }
+
     var body: some View {
         ZStack {
             // Map layer
             MapReader { proxy in
                 Map(position: $position) {
-                    // User location arrow
+                    // Breadcrumb trail — small dots behind the user that
+                    // fade with age. Helps orient against the map when no
+                    // heading arrow is shown.
+                    ForEach(Array(locationManager.breadcrumbs.enumerated()), id: \.element.id) { idx, bc in
+                        let n = locationManager.breadcrumbs.count
+                        let opacity = 0.08 + 0.55 * Double(idx) / Double(max(n - 1, 1))
+                        Annotation("", coordinate: bc.coordinate) {
+                            Circle()
+                                .fill(Color(hex: store.myPlayerColor))
+                                .frame(width: 4, height: 4)
+                                .opacity(opacity)
+                        }
+                    }
+
+                    // User location dot — direction-less. Heading capture
+                    // is gone, so the previous arrow had no real heading
+                    // to point with. Tinted with playgroup color to match
+                    // the main round-play map.
                     if let userLocation = locationManager.location {
                         Annotation("", coordinate: userLocation.coordinate) {
-                            Image(systemName: "location.north.fill")
-                                .font(.system(size: isEditing ? 20 : 30))
-                                .foregroundColor(.blue)
-                                .rotationEffect(.degrees(locationManager.heading ?? 0))
+                            Circle()
+                                .fill(Color(hex: store.myPlayerColor))
+                                .frame(width: isEditing ? 7 : 9, height: isEditing ? 7 : 9)
                                 .shadow(color: .white, radius: 2)
                                 .shadow(color: .black.opacity(0.3), radius: 1)
                         }
@@ -81,8 +113,10 @@ struct HolePlacementView: View {
                         }
                     }
                 }
+                .mapStyle(.standard(pointsOfInterest: .excludingAll))
                 .modifier(HideMapControlsModifier(isInteractive: true))
                 .onTapGesture { screenCoord in
+                    if isWaitingForBlobs { return }
                     if let coordinate = proxy.convert(screenCoord, from: .local) {
                         if isManualPlacement || greenCandidates.isEmpty {
                             temporaryHolePosition = coordinate
@@ -97,10 +131,42 @@ struct HolePlacementView: View {
                             }
                         }
                         WKInterfaceDevice.current().play(.click)
+                        // If the API gave us the par for this hole and
+                        // we're in add mode, skip the par picker entirely
+                        // and save immediately with the known par. Edit
+                        // mode keeps the picker so the user can override.
+                        if !isEditing, let par = knownPar, temporaryHolePosition != nil {
+                            save(par: par)
+                        }
                     }
                 }
             }
             .ignoresSafeArea()
+
+            // Waiting overlay — covers the map while blob detection is in
+            // flight from the iPhone. Disables tap-to-place (handled in the
+            // tap handler above) and tells the user what's happening.
+            if isWaitingForBlobs {
+                VStack(spacing: 8) {
+                    ProgressView()
+                        .scaleEffect(1.2)
+                        .tint(.white)
+                    Text("Analyzing course geometry…")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundColor(.white)
+                        .multilineTextAlignment(.center)
+                    Text("Open the iPhone app if this takes more than a few seconds.")
+                        .font(.system(size: 10))
+                        .foregroundColor(.white.opacity(0.75))
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal, 12)
+                }
+                .padding(.vertical, 14)
+                .padding(.horizontal, 10)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(Color.black.opacity(0.65))
+                .ignoresSafeArea()
+            }
 
             // Top overlay: title + optional manual-placement toggle + distance label
             VStack(spacing: 2) {
@@ -149,8 +215,11 @@ struct HolePlacementView: View {
             .padding(.horizontal, 16)
             .ignoresSafeArea()
 
-            // Par buttons — appear once a position has been tapped
-            if temporaryHolePosition != nil {
+            // Par buttons — appear once a position has been tapped, but
+            // ONLY when the API doesn't give us the par for this hole. In
+            // add mode with a known par, the tap handler above auto-saves
+            // and dismisses without ever showing the picker.
+            if temporaryHolePosition != nil && !(knownPar != nil && !isEditing) {
                 VStack {
                     Spacer()
 

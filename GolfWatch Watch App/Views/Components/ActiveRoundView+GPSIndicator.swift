@@ -3,9 +3,9 @@ import MapKit
 
 // MARK: - GPS Indicator & Distance Readout
 //
-// Distance-to-hole / distance-to-target math, the hole-info overlay (yards or
-// "GRN" pill), and the GPS power-mode driver that steps between .full / .moderate
-// / .off based on distance and selected club.
+// Distance-to-hole / distance-to-target math, the hole-info overlay (yards),
+// and the GPS power-mode driver that steps between .full and .moderate
+// based on distance and selected club.
 extension ActiveRoundView {
     var distanceToHole: Int? {
         guard let userLocation = locationManager.location,
@@ -16,6 +16,13 @@ extension ActiveRoundView {
         let distanceInMeters = userLocation.distance(from: holeLocation)
         return Int(distanceInMeters * 1.09361)
     }
+
+    /// On-screen yardage readout: live GPS distance from user to the hole.
+    /// We previously showed scorecard tee-yardage when no strokes had been
+    /// recorded yet (pre-tee-shot), but reverted to always-live since
+    /// tee-yardage was confusing when the user wasn't actually at the tee
+    /// (auto-advanced from another hole, restarted the app mid-walk, etc).
+    var displayedDistanceToHole: Int? { distanceToHole }
 
     func distanceToTarget(_ target: CLLocationCoordinate2D) -> Int? {
         guard let userLocation = locationManager.location else { return nil }
@@ -36,11 +43,15 @@ extension ActiveRoundView {
                 if let hole = store.currentHole {
                     let parText = hole.par.map { String($0) } ?? "-"
 
-                    // Main container: Yards + H/P row
+                    // Always show live yardage to the hole — the "GRN"
+                    // putter-selected pill is gone for now (we'll come back
+                    // to it later). Green-polygon detection still runs in
+                    // the background to drive auto-putter-select / auto-
+                    // advance, it just doesn't change this readout.
                     VStack(alignment: .leading, spacing: 4) {
-                        Text(locationManager.gpsPowerMode == .off ? "GRN" : (distanceToHole.map { String($0) } ?? "XXX"))
+                        Text(displayedDistanceToHole.map { String($0) } ?? "XXX")
                             .font(.system(size: 32, weight: .bold, design: .rounded))
-                            .foregroundColor(locationManager.gpsPowerMode == .off ? .green : .white)
+                            .foregroundColor(.white)
 
                         HStack(spacing: 8) {
                             Text("H: \(hole.number)")
@@ -64,6 +75,22 @@ extension ActiveRoundView {
                         .background(Color.black.opacity(0.4))
                         .clipShape(RoundedRectangle(cornerRadius: 8))
                         .fixedSize()
+
+                    // Penalty stroke count, smaller orange "P: N" pill below
+                    // the score readout. Hidden when zero — penalties are
+                    // rare so the readout shouldn't clutter the overlay
+                    // unless the user has actually taken one.
+                    let penaltyCount = store.penaltyCount(for: hole)
+                    if penaltyCount > 0 {
+                        Text("P: \(penaltyCount)")
+                            .font(.system(size: 11, weight: .bold))
+                            .foregroundColor(.orange)
+                            .padding(.horizontal, 4)
+                            .padding(.vertical, 2)
+                            .background(Color.black.opacity(0.4))
+                            .clipShape(RoundedRectangle(cornerRadius: 6))
+                            .fixedSize()
+                    }
                 }
                 // No else case - when no hole exists, onAppear navigates to HolePlacementView
             }
@@ -73,7 +100,7 @@ extension ActiveRoundView {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .ignoresSafeArea()
-        .opacity(isPlacingTarget || isPlacingPenalty ? 0 : 1)
+        .opacity(isPlacingTarget ? 0 : 1)
     }
 
     func handleLocationChange() {
@@ -81,15 +108,52 @@ extension ActiveRoundView {
             restoreCalculatedMapPosition()
         }
 
-        guard store.clubPredictionMode != .off else { return }
+        // Log green-detection state. Fires on transitions of nowOnGreen,
+        // AND on the first call per round, AND throttled to once per 5s
+        // otherwise so we get periodic snapshots even when user is far
+        // from any green. Logged BEFORE the clubPredictionMode guard so
+        // we can tell if the guard is what's killing the chain.
+        let courseId = store.currentRound?.courseId
+        let candidateCount = courseId.map { store.filteredGreenCandidates(for: $0).count } ?? 0
+        let blob = currentHoleGreenBlob
         let nowOnGreen = isOnCurrentGreen
+        let now = Date()
+        let transition = nowOnGreen != lastLoggedOnGreen
+        let firstCall = lastLoggedGreenAt == nil
+        let throttledTick = lastLoggedGreenAt.map { now.timeIntervalSince($0) >= 5.0 } ?? true
+        if transition || firstCall || throttledTick {
+            lastLoggedOnGreen = nowOnGreen
+            lastLoggedGreenAt = now
+            ClientEventLogger.log("green.state", detail: [
+                "trigger": .string(transition ? "transition" : (firstCall ? "first" : "tick")),
+                "nowOnGreen": .bool(nowOnGreen),
+                "candidateCount": .integer(candidateCount),
+                "hasMatchingBlobForHole": .bool(blob != nil),
+                "predictionMode": .string("\(store.clubPredictionMode.rawValue)"),
+                "manualClubOverride": .bool(manualClubOverride),
+                "onGreenOverride": .bool(onGreenOverride),
+                "userLat": locationManager.location.map { .double($0.coordinate.latitude) } ?? .null,
+                "userLon": locationManager.location.map { .double($0.coordinate.longitude) } ?? .null,
+                "holeLat": store.currentHole?.latitude.map { .double($0) } ?? .null,
+                "holeLon": store.currentHole?.longitude.map { .double($0) } ?? .null
+            ])
+        }
+
+        guard store.clubPredictionMode != .off else { return }
+        // Leave isAutoSelectingClub TRUE here — the .onChange handler will
+        // observe and clear it. See `handleSelectedClubIndexChange` for the
+        // race rationale.
         if nowOnGreen && !onGreenOverride && !manualClubOverride {
             if let putterIndex = putterClubIndex() {
+                ClientEventLogger.log("club.autoSelect.putter.polygon", detail: [
+                    "hasMatchingBlobForHole": .bool(blob != nil),
+                    "marginYd": .double(UserDefaults.standard.object(forKey: "greenPutterMarginYards").flatMap { ($0 as? NSNumber)?.doubleValue } ?? 2.0)
+                ])
                 isAutoSelectingClub = true
                 onGreenOverride = true
                 selectedClubIndex = Double(putterIndex)
                 updateSwingDetectorClub()
-                isAutoSelectingClub = false
+                // Don't reset isAutoSelectingClub here — handler observes/clears.
             }
             return
         }
@@ -101,14 +165,16 @@ extension ActiveRoundView {
     }
 
     func handleDistanceToHoleChange(_ newDistance: Int?) {
-        // Update GPS power mode based on distance (skip if GPS is off for putter)
-        if locationManager.gpsPowerMode != .off {
-            updateGPSForDistance()
-        }
+        updateGPSForDistance()
 
+        // Note: NOT gated on autoAddedStrokeId. The overlay's crown-driven
+        // club (`overlayClubIndex`) is independent of the main club index
+        // (`selectedClubIndex`) which is what distance-prediction targets
+        // for the NEXT stroke. Used to be gated here, which caused the
+        // main club to stay stuck on whatever was predicted at swing time
+        // until the user tapped X on the overlay.
         guard !manualClubOverride,
               !onGreenOverride,
-              autoAddedStrokeId == nil,
               store.clubPredictionMode != .off,
               newDistance != nil else { return }
         applyClubPrediction()

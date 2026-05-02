@@ -1,57 +1,65 @@
 import Foundation
 import CoreLocation
 import Combine
-import Observation
 
-/// LocationManager uses the new `@Observable` macro instead of the older
-/// Combine-based `ObservableObject` / `@Published` pattern. Why: with
-/// `ObservableObject`, ANY @Published change publishes "this object
-/// changed" — every observing view re-evaluates its body. The watch's
-/// compass updates `heading` at ~5Hz, which made the entire
-/// `ActiveRoundView` body re-evaluate that often, even though heading is
-/// only needed in two tiny spots (the user-arrow rotation). With
-/// `@Observable`, observation is property-level: a view that reads only
-/// `location` doesn't re-render on `heading` changes.
-///
-/// Required side-effect: every consumer used to use
-/// `@StateObject`/`@ObservedObject var locationManager = LocationManager.shared`.
-/// Those wrappers don't apply to `@Observable` classes — consumers now
-/// access `LocationManager.shared` directly. Inside a SwiftUI view body,
-/// reading `LocationManager.shared.location` registers an observation on
-/// just that property automatically.
-@Observable
-class LocationManager: NSObject {
+/// LocationManager publishes via the classic `ObservableObject` /
+/// `@Published` pattern. We previously tried the `@Observable` macro for
+/// finer-grained per-property tracking, but that turned out to make
+/// `ActiveRoundView` re-render more aggressively, not less, because the
+/// view body reads many LocationManager properties (`location`, `heading`,
+/// `gpsPowerMode`) and each became its own dependency edge. Coarse-grained
+/// `objectWillChange` is, in practice, what works — SwiftUI batches
+/// multiple @Published mutations into a single re-eval per runloop tick.
+class LocationManager: NSObject, ObservableObject {
     static let shared = LocationManager()
     static let testCoordinate = CLLocationCoordinate2D(
         latitude: 30.285357365597697,
         longitude: -81.74623642434663
     )
 
-    @ObservationIgnored
     private let locationManager = CLLocationManager()
 
-    var location: CLLocation?
-    var heading: CLLocationDirection?
-    var authorizationStatus: CLAuthorizationStatus = .notDetermined
-    var errorMessage: String?
-    var isTestModeEnabled: Bool = false
+    @Published var location: CLLocation?
+    @Published var heading: CLLocationDirection?
+
+    /// Rolling buffer of recent user GPS points, used to draw a fading
+    /// breadcrumb trail behind the user marker on the active-round and
+    /// hole-placement maps. Newest entry is last. Spacing-throttled so a
+    /// stationary user doesn't burn the whole buffer on jitter.
+    struct Breadcrumb: Identifiable {
+        let id = UUID()
+        let coordinate: CLLocationCoordinate2D
+        let timestamp: Date
+    }
+    @Published private(set) var breadcrumbs: [Breadcrumb] = []
+    private let breadcrumbMaxCount = 60
+    private let breadcrumbMinSpacingMeters: CLLocationDistance = 3
+
+    private func appendBreadcrumb(_ loc: CLLocation) {
+        if let last = breadcrumbs.last {
+            let prev = CLLocation(latitude: last.coordinate.latitude,
+                                  longitude: last.coordinate.longitude)
+            if loc.distance(from: prev) < breadcrumbMinSpacingMeters { return }
+        }
+        breadcrumbs.append(Breadcrumb(coordinate: loc.coordinate, timestamp: Date()))
+        if breadcrumbs.count > breadcrumbMaxCount {
+            breadcrumbs.removeFirst(breadcrumbs.count - breadcrumbMaxCount)
+        }
+    }
+    @Published var authorizationStatus: CLAuthorizationStatus = .notDetermined
+    @Published var errorMessage: String?
+    @Published var isTestModeEnabled: Bool = false
     enum GPSPowerMode: String {
         case full       // kCLLocationAccuracyBest, 1m filter
         case moderate   // kCLLocationAccuracyNearestTenMeters, 10m filter
-        case off        // GPS completely stopped (on green)
     }
 
-    var gpsPowerMode: GPSPowerMode = .full
-    var isLowPowerMode: Bool = false  // deprecated — use gpsPowerMode == .off
-    @ObservationIgnored
-    private var lowPowerTimer: Timer?
+    @Published var gpsPowerMode: GPSPowerMode = .full
 
     /// Combine publisher for non-view subscribers (background watchers like
-    /// `AutoAdvanceMonitor` that use throttling/sinks). View code should
-    /// just read the `location` property — `@Observable` will track it
-    /// automatically. The publisher is fed alongside `location` from the
-    /// CLLocation delegate.
-    @ObservationIgnored
+    /// `AutoAdvanceMonitor` that use throttling/sinks). View code reads
+    /// the `location` property directly via `@ObservedObject`/`@StateObject`
+    /// and gets updates through the standard ObservableObject path.
     let locationPublisher = PassthroughSubject<CLLocation, Never>()
 
     /// User-controlled simulated location during test mode. When nil but
@@ -66,16 +74,16 @@ class LocationManager: NSObject {
     }
 
     /// Push a new simulated location into the running app. Updates
-    /// `location` (which @Observable tracks for views) and fires the
-    /// `locationPublisher` so AutoAdvanceMonitor's throttled subscriber
-    /// re-evaluates. Called from TestModeService when an inbound DB
-    /// change lands. No-op when test mode isn't enabled — caller should
-    /// flip test mode on first via `setTestModeEnabled(true)`.
+    /// `location` and fires the `locationPublisher` so AutoAdvanceMonitor's
+    /// throttled subscriber re-evaluates. Called from TestModeService when
+    /// an inbound DB change lands. No-op when test mode isn't enabled —
+    /// caller should flip test mode on first via `setTestModeEnabled(true)`.
     func applyTestLocation(_ coord: CLLocationCoordinate2D) {
         let loc = CLLocation(latitude: coord.latitude, longitude: coord.longitude)
         simulatedTestLocation = loc
         guard isTestModeEnabled else { return }
         location = loc
+        appendBreadcrumb(loc)
         locationPublisher.send(loc)
         errorMessage = nil
     }
@@ -85,7 +93,10 @@ class LocationManager: NSObject {
         locationManager.delegate = self
         locationManager.desiredAccuracy = kCLLocationAccuracyBest
         locationManager.distanceFilter = 1 // Update every 1 meter
-        locationManager.headingFilter = 5 // Update every 5 degrees
+        // Heading is no longer used by the round-play UI — the user marker
+        // renders as a non-rotating dot and aim direction will be driven
+        // by the OSM hole centerline when that lands. Skipping headingFilter
+        // setup and `startUpdatingHeading()` saves the compass radio cost.
 
         // Enable background location updates (necessary for watchOS when screen is off)
         #if os(iOS) || os(watchOS)
@@ -128,9 +139,6 @@ class LocationManager: NSObject {
         isTestModeEnabled = enabled
         if enabled {
             locationManager.stopUpdatingLocation()
-            #if os(iOS) || os(watchOS)
-            locationManager.stopUpdatingHeading()
-            #endif
             let forced = forcedTestLocation
             location = forced
             errorMessage = nil
@@ -170,35 +178,17 @@ class LocationManager: NSObject {
 
         dprint("[LocationManager] Starting location updates")
         locationManager.startUpdatingLocation()
-
-        #if os(iOS) || os(watchOS)
-        if CLLocationManager.headingAvailable() {
-            locationManager.startUpdatingHeading()
-        }
-        #endif
+        // Heading updates intentionally NOT started — see init() note.
     }
 
     func stopTracking() {
         locationManager.stopUpdatingLocation()
-
-        #if os(iOS) || os(watchOS)
-        locationManager.stopUpdatingHeading()
-        #endif
-        lowPowerTimer?.invalidate()
-        lowPowerTimer = nil
         gpsPowerMode = .full
-        isLowPowerMode = false
     }
 
     func setGPSPowerMode(_ mode: GPSPowerMode) {
         guard mode != gpsPowerMode, !isTestModeEnabled else { return }
-
-        // Clean up previous state
-        lowPowerTimer?.invalidate()
-        lowPowerTimer = nil
-
         gpsPowerMode = mode
-        isLowPowerMode = mode == .off
 
         switch mode {
         case .full:
@@ -212,16 +202,8 @@ class LocationManager: NSObject {
             locationManager.distanceFilter = 10
             locationManager.startUpdatingLocation()
             dprint("[LocationManager] GPS: moderate (10m accuracy, 10m filter)")
-
-        case .off:
-            locationManager.stopUpdatingLocation()
-            dprint("[LocationManager] GPS: off")
         }
     }
-
-    // Legacy wrappers
-    func enterLowPowerMode() { setGPSPowerMode(.off) }
-    func exitLowPowerMode() { setGPSPowerMode(.full) }
 
     func distance(to coordinate: CLLocationCoordinate2D) -> CLLocationDistance? {
         guard let location = location else { return nil }
@@ -293,6 +275,7 @@ extension LocationManager: CLLocationManagerDelegate {
         guard let newLocation = locations.last else { return }
         dprint("[LocationManager] Got location update: \(newLocation.coordinate.latitude), \(newLocation.coordinate.longitude)")
         location = newLocation
+        appendBreadcrumb(newLocation)
         locationPublisher.send(newLocation)
         errorMessage = nil
     }
