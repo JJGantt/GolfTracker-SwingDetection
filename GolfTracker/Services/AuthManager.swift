@@ -158,16 +158,27 @@ final class AuthManager: NSObject, ObservableObject {
                 await MainActor.run {
                     self.session = mirror
                     WatchConnectivityManager.shared.sendAuthSession(mirror)
-                    // Realtime lifecycle is round-scoped (started by ActiveRound
-                    // view onAppear, not at sign-in time) — sign-out still
-                    // tears it down to be safe.
-                    if mirror == nil {
-                        RealtimeSync.shared.stop()
-                    } else {
+                    if let mirror = mirror {
+                        // iOS keeps Realtime always-on once signed in. Cross-
+                        // device sync needs to work even when the user isn't
+                        // currently in an active round (e.g. watch starts a
+                        // round while the iPhone is on the rounds list view —
+                        // without this, the new round wouldn't appear until
+                        // the iPhone entered an active-round screen). On
+                        // foreground iPhone the WebSocket is cheap (~5 MB/mo
+                        // for heartbeats); the round-scoped lifecycle was a
+                        // watchOS-only battery concern.
+                        RealtimeSync.shared.start(forUserId: mirror.userId)
+                        // Catch up on any rounds-related rows we missed while
+                        // not subscribed (Realtime postgres-changes are
+                        // live-only — they don't replay). Idempotent.
+                        Task { await RealtimeSync.shared.reconcileRoundsWithSupabase() }
                         // Retry TestModeService bootstrap whenever a real
                         // session arrives. start() is idempotent — bails
                         // if it's already running.
                         TestModeService.shared.start()
+                    } else {
+                        RealtimeSync.shared.stop()
                     }
                 }
             }

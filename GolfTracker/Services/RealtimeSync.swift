@@ -35,6 +35,10 @@ final class RealtimeSync {
     private var subscriptions: [Task<Void, Never>] = []
     private var activeChannel: RealtimeChannelV2?
     private var activeUserId: String?
+    /// Long-lived task that drives the channel's persistent subscribe loop
+    /// (retry/backoff/reconnect via RealtimeReconnect). Cancelled on
+    /// `teardown()` to stop the loop and unsubscribe the channel.
+    private var subscribeLoopTask: Task<Void, Never>?
 
     private init() {}
 
@@ -65,6 +69,110 @@ final class RealtimeSync {
         Task { await self.teardown() }
     }
 
+    /// Pull recent rounds + their `round_holes` and `strokes` from Supabase
+    /// and upsert into the local SwiftData store via the same apply* paths
+    /// Realtime uses. Required because postgres-changes are live-only —
+    /// nothing replays events missed while the WebSocket was down or the app
+    /// was backgrounded. Without this the iPhone keeps a stale partial view
+    /// of any round the watch played while the iPhone wasn't actively
+    /// listening.
+    ///
+    /// Idempotent. Safe to call repeatedly. Hook points:
+    /// - sign-in (AuthManager)
+    /// - app foreground (scenePhase == .active)
+    /// - every successful Realtime re-subscribe (RealtimeReconnect)
+    /// Same window the iOS DataStore uses for "current round" — keep these
+    /// in sync. Hardcoded here (rather than referencing DataStore directly)
+    /// because RealtimeSync compiles into both iOS and watchOS targets and
+    /// WatchDataStore doesn't expose the same constant.
+    private static let reconcileWindowSeconds: TimeInterval = 8 * 60 * 60
+
+    func reconcileRoundsWithSupabase() async {
+        // Prefer activeUserId (set when Realtime is running); fall back to the
+        // platform auth source so reconcile can fire from app-foreground / sign-in
+        // hooks even if start() hasn't been called yet on this launch.
+        let resolvedUserId: String? = {
+            if let uid = activeUserId { return uid }
+            #if os(watchOS)
+            return WatchAuthSession.shared.currentUserId
+            #else
+            return AuthManager.shared.currentUserId
+            #endif
+        }()
+        guard let userId = resolvedUserId else { return }
+        let cutoff = Date().addingTimeInterval(-Self.reconcileWindowSeconds)
+        let cutoffISO = Self.isoFormatter.string(from: cutoff)
+        do {
+            // Pull rounds first so child upserts can link via parent.
+            let roundRows: [AnyJSON] = try await supabase
+                .from("rounds")
+                .select()
+                .eq("user_id", value: userId)
+                .gte("date", value: cutoffISO)
+                .execute()
+                .value
+
+            let roundIds: [String] = roundRows.compactMap { $0.objectValue?["id"]?.stringValue }
+            guard let context = context else { return }
+
+            for row in roundRows {
+                guard let dict = row.objectValue,
+                      let idStr = dict["id"]?.stringValue,
+                      let id = UUID(uuidString: idStr) else { continue }
+                applyRound(context: context, kind: .update, id: id, record: dict)
+            }
+
+            if !roundIds.isEmpty {
+                let holeRows: [AnyJSON] = try await supabase
+                    .from("round_holes")
+                    .select()
+                    .in("round_id", values: roundIds)
+                    .execute()
+                    .value
+                for row in holeRows {
+                    guard let dict = row.objectValue,
+                          let idStr = dict["id"]?.stringValue,
+                          let id = UUID(uuidString: idStr) else { continue }
+                    applyHole(context: context, kind: .update, id: id, record: dict)
+                }
+
+                let strokeRows: [AnyJSON] = try await supabase
+                    .from("strokes")
+                    .select()
+                    .in("round_id", values: roundIds)
+                    .execute()
+                    .value
+                for row in strokeRows {
+                    guard let dict = row.objectValue,
+                          let idStr = dict["id"]?.stringValue,
+                          let id = UUID(uuidString: idStr) else { continue }
+                    applyStroke(context: context, kind: .update, id: id, record: dict)
+                }
+            }
+
+            try? context.save()
+            ClientEventLogger.log("realtime.reconcile.ok", detail: [
+                "rounds": .integer(roundRows.count)
+            ])
+
+            // Push the platform store to refresh @Published arrays so the UI
+            // observes the new state — same pattern as `apply(...)`'s tail.
+            await MainActor.run {
+                #if os(watchOS)
+                WatchDataStore.shared.refreshCurrentRound()
+                WatchDataStore.shared.objectWillChange.send()
+                #else
+                DataStore.shared.loadRounds()
+                DataStore.shared.objectWillChange.send()
+                #endif
+            }
+        } catch {
+            ClientEventLogger.log("realtime.reconcile.failed", detail: [
+                "error": .string("\(error)")
+            ])
+        }
+    }
+
     private func restart(forUserId userId: String) async {
         await teardown()
         activeUserId = userId
@@ -74,7 +182,11 @@ final class RealtimeSync {
 
         // user-keyed tables: filter server-side
         wireUserKeyedTable(channel, "rounds", userId: userId)
-        wireUserKeyedTable(channel, "courses", userId: userId)
+        // courses is shared across all users (migration 00026); RLS enforces
+        // read-all-authenticated. No user filter — every client sees every
+        // INSERT/UPDATE/DELETE so newly-registered shared courses stream in
+        // live to every device.
+        wireUnfilteredTable(channel, "courses")
         wireUserKeyedTable(channel, "club_types", userId: userId)
         wireUserKeyedTable(channel, "clubs", userId: userId)
         wireUserKeyedTable(channel, "club_sets", userId: userId)
@@ -87,17 +199,23 @@ final class RealtimeSync {
         wireUnfilteredTable(channel, "round_holes")
         wireUnfilteredTable(channel, "holes")
 
-        do {
-            try await channel.subscribeWithError()
-            dprint("📡 [RealtimeSync] subscribed for user \(userId)")
-        } catch {
-            dprint("📡 [RealtimeSync] subscribe failed: \(error.localizedDescription)")
+        // Persistent subscribe with retry/backoff via RealtimeReconnect.
+        // Cancelled by teardown(); loops internally on socket loss / OS
+        // backgrounding / network changes until then. The `onSubscribed`
+        // callback runs after every successful (re-)subscribe — catches up
+        // events missed during gaps, since postgres-changes are live-only.
+        subscribeLoopTask = Task { [weak self] in
+            await channel.subscribePersistently(label: "realtimeSync") {
+                await self?.reconcileRoundsWithSupabase()
+            }
         }
     }
 
     private func teardown() async {
         for task in subscriptions { task.cancel() }
         subscriptions.removeAll()
+        subscribeLoopTask?.cancel()
+        subscribeLoopTask = nil
         if let channel = activeChannel {
             await channel.unsubscribe()
         }
@@ -179,6 +297,15 @@ final class RealtimeSync {
             if isRoundsRelated { WatchDataStore.shared.refreshCurrentRound() }
             WatchDataStore.shared.objectWillChange.send()
             #else
+            // iPhone: refresh the @Published `rounds`/`courses` arrays when
+            // those tables change. The arrays are loaded once via SwiftData
+            // fetch at launch and are NOT live-bound to the store, so
+            // applyRound's SwiftData writes are invisible to view code
+            // (RoundsHistoryView reads `store.rounds`) without an explicit
+            // refresh. Same gap caused watch-started rounds to not appear in
+            // the iPhone rounds list.
+            if isRoundsRelated { DataStore.shared.loadRounds() }
+            if table == "courses" { DataStore.shared.loadCourses() }
             DataStore.shared.objectWillChange.send()
             #endif
         }
@@ -199,6 +326,8 @@ final class RealtimeSync {
         let completed = (record["completed_holes"]?.arrayValue?.compactMap { $0.intValue }) ?? []
 
         let selectedTeeId = record["selected_tee_id"]?.stringValue.flatMap(UUID.init(uuidString:))
+        let endedAt = record["ended_at"]?.stringValue.flatMap(Self.parseISODate)
+        let lastActivityAt = record["last_activity_at"]?.stringValue.flatMap(Self.parseISODate)
         if let existing = existing {
             existing.courseId = courseId
             existing.courseName = courseName
@@ -208,6 +337,8 @@ final class RealtimeSync {
             existing.holeDetectionEnabled = record["hole_detection_enabled"]?.boolValue
             existing.locationTestModeEnabled = record["location_test_mode_enabled"]?.boolValue
             existing.selectedTeeId = selectedTeeId
+            existing.endedAt = endedAt
+            existing.lastActivityAt = lastActivityAt
         } else {
             let r = Round(
                 id: id,
@@ -221,7 +352,27 @@ final class RealtimeSync {
             r.completedHolesArray = completed
             r.holeDetectionEnabled = record["hole_detection_enabled"]?.boolValue
             r.locationTestModeEnabled = record["location_test_mode_enabled"]?.boolValue
+            r.endedAt = endedAt
+            r.lastActivityAt = lastActivityAt
             context.insert(r)
+            adoptOrphans(context: context, round: r)
+        }
+    }
+
+    /// Re-attach any Hole / Stroke rows that arrived before this Round and got
+    /// inserted with `round == nil`. They carry `roundIdRef` so we can find
+    /// them after the parent finally lands. Without this, out-of-order
+    /// Realtime delivery silently drops children from the round's
+    /// relationships and never repairs.
+    private func adoptOrphans(context: ModelContext, round: Round) {
+        let id = round.id
+        let holeDescriptor = FetchDescriptor<Hole>(predicate: #Predicate { $0.round == nil && $0.roundIdRef == id })
+        if let orphans = try? context.fetch(holeDescriptor) {
+            for h in orphans { round.holes.append(h) }
+        }
+        let strokeDescriptor = FetchDescriptor<Stroke>(predicate: #Predicate { $0.round == nil && $0.roundIdRef == id })
+        if let orphans = try? context.fetch(strokeDescriptor) {
+            for s in orphans { round.strokes.append(s) }
         }
     }
 
@@ -237,14 +388,31 @@ final class RealtimeSync {
         let slope = record["slope"]?.intValue
         let city = record["city"]?.stringValue
         let externalCourseId = record["external_course_id"]?.stringValue
+        let centerLat = record["center_lat"]?.doubleValue
+        let centerLon = record["center_lon"]?.doubleValue
+        let osmId = record["osm_id"]?.intValue.map(Int64.init)
         if let existing = existing {
             existing.name = name
             existing.rating = rating
             existing.slope = slope
             existing.city = city
             existing.externalCourseId = externalCourseId
+            existing.centerLat = centerLat
+            existing.centerLon = centerLon
+            existing.osmId = osmId
         } else {
-            context.insert(Course(id: id, name: name, holes: [], rating: rating, slope: slope, city: city, externalCourseId: externalCourseId))
+            context.insert(Course(
+                id: id,
+                name: name,
+                holes: [],
+                rating: rating,
+                slope: slope,
+                city: city,
+                centerLat: centerLat,
+                centerLon: centerLon,
+                osmId: osmId,
+                externalCourseId: externalCourseId
+            ))
         }
     }
 
@@ -260,19 +428,33 @@ final class RealtimeSync {
         let lon = record["longitude"]?.doubleValue
         let par = record["par"]?.intValue
         let teeId = record["tee_id"]?.stringValue.flatMap(UUID.init(uuidString:))
+        let roundId = record["round_id"]?.stringValue.flatMap(UUID.init(uuidString:))
         if let existing = existing {
             existing.number = number; existing.latitude = lat; existing.longitude = lon; existing.par = par
             existing.teeId = teeId
+            // Update parent ref + repair link if the row landed orphaned earlier.
+            if let roundId = roundId {
+                existing.roundIdRef = roundId
+                if existing.round == nil {
+                    let rd = FetchDescriptor<Round>(predicate: #Predicate { $0.id == roundId })
+                    if let round = (try? context.fetch(rd))?.first {
+                        round.holes.append(existing)
+                    }
+                }
+            }
         } else {
             let h = Hole(id: id, number: number)
             h.latitude = lat; h.longitude = lon; h.par = par; h.teeId = teeId
+            h.roundIdRef = roundId
             context.insert(h)
             // Best-effort link to its round via round_id, if present.
-            if let roundId = record["round_id"]?.stringValue.flatMap(UUID.init(uuidString:)) {
+            if let roundId = roundId {
                 let rd = FetchDescriptor<Round>(predicate: #Predicate { $0.id == roundId })
                 if let round = (try? context.fetch(rd))?.first {
                     round.holes.append(h)
                 }
+                // Else: orphan — `roundIdRef` set above; `applyRound`'s
+                // `adoptOrphans` will re-attach when the parent lands.
             } else if let courseId = record["course_id"]?.stringValue.flatMap(UUID.init(uuidString:)) {
                 let cd = FetchDescriptor<Course>(predicate: #Predicate { $0.id == courseId })
                 if let course = (try? context.fetch(cd))?.first {
@@ -298,6 +480,7 @@ final class RealtimeSync {
         let isPenalty = record["is_penalty"]?.boolValue ?? false
         let traj = record["trajectory_heading"]?.doubleValue
         let coord = CLLocationCoordinate2D(latitude: lat, longitude: lon)
+        let roundId = record["round_id"]?.stringValue.flatMap(UUID.init(uuidString:))
 
         if let existing = existing {
             existing.holeNumber = holeNumber
@@ -308,16 +491,27 @@ final class RealtimeSync {
             existing.timestamp = timestamp
             existing.isPenalty = isPenalty
             existing.trajectoryHeading = traj
+            if let roundId = roundId {
+                existing.roundIdRef = roundId
+                if existing.round == nil {
+                    let rd = FetchDescriptor<Round>(predicate: #Predicate { $0.id == roundId })
+                    if let round = (try? context.fetch(rd))?.first {
+                        round.strokes.append(existing)
+                    }
+                }
+            }
         } else {
             let s = Stroke(id: id, holeNumber: holeNumber, strokeNumber: strokeNumber,
                            coordinate: coord, clubId: clubId, isPenalty: isPenalty,
                            trajectoryHeading: traj, timestamp: timestamp)
+            s.roundIdRef = roundId
             context.insert(s)
-            if let roundId = record["round_id"]?.stringValue.flatMap(UUID.init(uuidString:)) {
+            if let roundId = roundId {
                 let rd = FetchDescriptor<Round>(predicate: #Predicate { $0.id == roundId })
                 if let round = (try? context.fetch(rd))?.first {
                     round.strokes.append(s)
                 }
+                // Else: orphan — `applyRound` will adopt when parent lands.
             }
         }
     }

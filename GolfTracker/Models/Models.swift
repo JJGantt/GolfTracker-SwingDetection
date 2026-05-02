@@ -107,11 +107,24 @@ final class Course {
     var rating: Double?
     var slope: Int?
     var city: String?
-    /// GolfCourseAPI's id for this course, captured the first time the
-    /// resolver successfully matches it. Letting subsequent round-starts
-    /// at the same course skip the Edge Function call and read tees
-    /// straight out of `course_tees` via `cachedTees(forExternalCourseId:)`.
+    /// Course centroid in lat/lon. Used by the resolver's proximity query —
+    /// the very first lookup when a user starts a round. Populated when the
+    /// course is first registered via OSM resolution.
+    var centerLat: Double?
+    var centerLon: Double?
+    /// OSM way/relation id for this course (when sourced from OSM).
+    /// Uniqueness-constrained server-side so two clients resolving the same
+    /// OSM course collapse to the same row.
+    var osmId: Int64?
+    /// GolfCourseAPI's course id (when matched). Same uniqueness rule.
+    /// Tee picker reads `course_tees` keyed by this; round-time scorecard
+    /// data flows through `course_tee_holes`.
     var externalCourseId: String?
+    /// Polygon detail from OSM (greens, tees, fairways, bunkers, course
+    /// outline) as raw JSON. Per-hole data lives in `holes` (per-row) for
+    /// indexable access; this column carries the supporting geometry that
+    /// doesn't fit naturally as table rows.
+    var osmPolygons: Data?
 
     init(id: UUID = UUID(),
          name: String,
@@ -119,14 +132,22 @@ final class Course {
          rating: Double? = nil,
          slope: Int? = nil,
          city: String? = nil,
-         externalCourseId: String? = nil) {
+         centerLat: Double? = nil,
+         centerLon: Double? = nil,
+         osmId: Int64? = nil,
+         externalCourseId: String? = nil,
+         osmPolygons: Data? = nil) {
         self.id = id
         self.name = name
         self.holes = holes
         self.rating = rating
         self.slope = slope
         self.city = city
+        self.centerLat = centerLat
+        self.centerLon = centerLon
+        self.osmId = osmId
         self.externalCourseId = externalCourseId
+        self.osmPolygons = osmPolygons
     }
 
     var coordinate: CLLocationCoordinate2D? {
@@ -152,6 +173,11 @@ final class Hole {
     /// snapshot) rather than a course directly.
     var course: Course?
     var round: Round?
+    /// Stored parent round id used to re-adopt orphan holes if the parent
+    /// Round insert arrives after this row (Realtime can deliver child rows
+    /// before parents). When `round` is nil but `roundIdRef` matches a Round
+    /// that later lands, `applyRound` re-attaches via this id.
+    var roundIdRef: UUID?
 
     init(id: UUID = UUID(),
          number: Int,
@@ -191,6 +217,10 @@ final class Stroke {
     var isPenalty: Bool
     var trajectoryHeading: Double?
     var round: Round?
+    /// Stored parent round id — see `Hole.roundIdRef` for the rationale.
+    /// Set by `RealtimeSync.applyStroke` so orphan strokes can be re-adopted
+    /// when the parent Round insert lands after them.
+    var roundIdRef: UUID?
 
     init(id: UUID = UUID(),
          holeNumber: Int,
@@ -267,6 +297,17 @@ final class Round {
     /// mid-round (via Settings). Nil for rounds at courses GolfCourseAPI
     /// doesn't have (no tee picker shown).
     var selectedTeeId: UUID?
+    /// Round-completion marker. Nil while in progress; set to the end
+    /// timestamp by the manual End Round button, the inactivity sweep
+    /// (lastActivityAt > 1h ago), the off-course sweep (>2km from every
+    /// hole), and the auto-end-prior path when a new round starts.
+    /// `currentRound` getters filter `endedAt == nil`.
+    var endedAt: Date?
+    /// Last user-driven activity on this round — bumped on stroke add and
+    /// hole-index change. Drives the inactivity sweep. Single shared
+    /// column across devices: either device updating it is enough since
+    /// Realtime sync echoes the value to the other device.
+    var lastActivityAt: Date?
 
     init(id: UUID = UUID(),
          courseId: UUID,
@@ -288,6 +329,8 @@ final class Round {
         self.holeDetectionEnabled = holeDetectionEnabled
         self.locationTestModeEnabled = locationTestModeEnabled
         self.selectedTeeId = selectedTeeId
+        self.endedAt = nil
+        self.lastActivityAt = date
     }
 
     var completedHoles: Set<Int> {
@@ -365,8 +408,14 @@ struct HoleDetectionBlob: Identifiable, Codable, Hashable {
             let xj = polygon[j].longitude
             let yj = polygon[j].latitude
 
+            // Standard ray-casting. The straddle precondition `(yi > y) != (yj > y)`
+            // guarantees `yj - yi` is non-zero with meaningful magnitude, so no
+            // division-by-zero guard is needed. (Previously this used
+            // `max((yj - yi), 1.0e-12)` which clamped negative deltas to a tiny
+            // positive number, corrupting the math for any edge going downward
+            // in latitude — about half the edges in any clockwise-traced polygon.)
             let intersects = ((yi > y) != (yj > y)) &&
-                (x < ((xj - xi) * (y - yi) / max((yj - yi), 1.0e-12)) + xi)
+                (x < (xj - xi) * (y - yi) / (yj - yi) + xi)
             if intersects {
                 isInside.toggle()
             }

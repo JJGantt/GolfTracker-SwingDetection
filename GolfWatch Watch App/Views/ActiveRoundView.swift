@@ -4,7 +4,7 @@ import WatchKit
 
 struct ActiveRoundView: View {
     @StateObject var store = WatchDataStore.shared
-    let locationManager = LocationManager.shared
+    @ObservedObject var locationManager = LocationManager.shared
     @StateObject var swingDetector = SwingDetectionManager.shared
     @StateObject var workoutManager = WorkoutManager.shared
     @ObservedObject var playgroupChannel = PlaygroupChannel.shared
@@ -16,8 +16,7 @@ struct ActiveRoundView: View {
     @State var showingRecordedFeedback = false
     @State var crownOffset: CGFloat = 0
     @State var isPlacingTarget = false
-    @State var isPlacingPenalty = false
-    @State var temporaryPenaltyPosition: CLLocationCoordinate2D?
+    @State var showingUndoConfirmation = false
     @State var showingOptions = false
     @State var showingEditHole = false
     @State var isLastStrokeViewMode = false
@@ -29,24 +28,39 @@ struct ActiveRoundView: View {
     @State var isFullViewMode = true
     @State var isCrownScrolling = false
     @State var crownScrollTimer: Timer?
+    /// Tracks the last *integer* club index we propagated to the swing
+    /// detector. The crown binding is `Double` and ticks 30-60×/s; the
+    /// rounded integer (the actual selected club) only changes once per
+    /// click. We only do the heavy work on integer changes.
+    @State var lastSettledClubIndex: Int = -1
+    /// Tracks the last-seen value of `isOnCurrentGreen` so the diagnostic
+    /// log fires only on transitions, not on every location update.
+    @State var lastLoggedOnGreen: Bool = false
+    /// Last time the green-state log fired. Throttles the periodic log
+    /// to once per 5 seconds so we get snapshots even when nowOnGreen
+    /// is stuck at false (e.g. user far from any polygon).
+    @State var lastLoggedGreenAt: Date? = nil
     @State var isPulsing = false
     @State var showingDistanceEditor = false
     @State var showingScorecard = false
     @State var manualClubOverride = false       // True when user manually changed club
     @State var onGreenOverride = false          // True when auto-switched to putter for current green
-    @State var navigateToAccelTest = false
     @State var navigateToViewSettings = false
     @State var navigateToClubRecommend = false
     @State var navigateToPredictGreen = false
 
     enum SettingsSheet: String, Identifiable {
-        case viewSettings, clubRecommend, accelTest, predictGreen
+        case viewSettings, clubRecommend, predictGreen
         var id: String { rawValue }
     }
     @State var activeSettingsSheet: SettingsSheet?
     @State var isAutoSelectingClub = false      // True when we're programmatically updating club
-    @State var autoAddedStrokeId: UUID?          // Tracks the auto-added stroke for undo/club update
-    @State var overlayClubIndex: Double = 0     // Crown-controlled club shown in auto-add overlay
+    /// Stack of auto-added strokes paired with their swing_event row ids.
+    /// Each auto-detect → push (strokeId, eventId). Undo button on the main
+    /// screen pops from the top: deletes the stroke and edits the swing_event
+    /// row to false_positive/high. Manual strokes are NOT in this stack
+    /// (they're undoable via the same button but skip event labeling).
+    @State var autoAddStack: [(strokeId: UUID, eventId: UUID)] = []
     @State var lastAutoAddedLocation: CLLocationCoordinate2D?  // GPS of last auto-added stroke for practice replacement
     @FocusState var isMapFocused: Bool
     @FocusState var isMainViewFocused: Bool
@@ -66,22 +80,8 @@ struct ActiveRoundView: View {
         return clubs[index]
     }
 
-    var overlaySelectedClub: ClubData? {
-        guard !clubs.isEmpty else { return nil }
-        let index = Int(overlayClubIndex.rounded()) % clubs.count
-        return clubs[index]
-    }
-
-    var crownSelectedClubIndex: Binding<Double> {
-        autoAddedStrokeId != nil ? $overlayClubIndex : $selectedClubIndex
-    }
-
-    var minimalModeIconName: String {
-        minimalScreenMode ? "batteryblock" : "batteryblock.fill"
-    }
-
     var isInteractiveMapMode: Bool {
-        isPlacingTarget || isPlacingPenalty
+        isPlacingTarget
     }
 
     var currentHoleGreenBlob: HoleDetectionBlob? {
@@ -94,7 +94,45 @@ struct ActiveRoundView: View {
     var isOnCurrentGreen: Bool {
         guard let userCoord = locationManager.location?.coordinate,
               let blob = currentHoleGreenBlob else { return false }
-        return blob.contains(userCoord)
+        if blob.contains(userCoord) { return true }
+        // Tolerance ring around the polygon perimeter — treated as
+        // "on green" so the auto-putter switch fires while you're walking
+        // up to the apron, not only after you cross the edge. Tunable via
+        // dev settings (`greenPutterMarginYards`, default 2yd). Set to 0
+        // to disable the ring entirely. Uses distance to the nearest
+        // polygon EDGE (not the nearest vertex) — a vertex can be much
+        // further than the perpendicular foot on a straight edge.
+        let marginYd = UserDefaults.standard.object(forKey: "greenPutterMarginYards").flatMap { ($0 as? NSNumber)?.doubleValue }
+            ?? 2.0
+        guard marginYd > 0 else { return false }
+        let pts = blob.polygon
+        guard pts.count >= 2 else { return false }
+        let metersPerDegLat = 111_000.0
+        let cosLat = cos(userCoord.latitude * .pi / 180.0)
+        let metersPerDegLon = metersPerDegLat * cosLat
+        var minMeters = Double.greatestFiniteMagnitude
+        for i in 0..<pts.count {
+            let a = pts[i]
+            let b = pts[(i + 1) % pts.count]
+            let ax = (a.longitude - userCoord.longitude) * metersPerDegLon
+            let ay = (a.latitude - userCoord.latitude) * metersPerDegLat
+            let bx = (b.longitude - userCoord.longitude) * metersPerDegLon
+            let by = (b.latitude - userCoord.latitude) * metersPerDegLat
+            let dx = bx - ax
+            let dy = by - ay
+            let lenSq = dx * dx + dy * dy
+            let dist: Double
+            if lenSq > 0 {
+                let t = max(0.0, min(1.0, -(ax * dx + ay * dy) / lenSq))
+                let cx = ax + t * dx
+                let cy = ay + t * dy
+                dist = sqrt(cx * cx + cy * cy)
+            } else {
+                dist = sqrt(ax * ax + ay * ay)
+            }
+            if dist < minMeters { minMeters = dist }
+        }
+        return (minMeters * 1.09361) <= marginYd
     }
 
     var targetCoordinatesBinding: Binding<[CLLocationCoordinate2D]> {
@@ -123,8 +161,6 @@ struct ActiveRoundView: View {
                     .foregroundColor(.white)
             } else {
                 clubSelectorOverlayModern(clubFontSize: clubFontSize)
-                    // Dim when overlay is open — crown is controlling the overlay club, not this
-                    .opacity(autoAddedStrokeId != nil ? 0.35 : 1.0)
             }
         }
         // watchOS 10: club selector is shown in buttonsOverlay via legacyClubSelector()
@@ -260,7 +296,7 @@ struct ActiveRoundView: View {
             Spacer()
         }
         .animation(.easeInOut(duration: 0.2), value: isCrownScrolling)
-        .opacity(isPlacingTarget || isPlacingPenalty ? 0 : 1)
+        .opacity(isPlacingTarget ? 0 : 1)
     }
 
     // MARK: - watchOS 10 Club Selector (inline in button stack)
@@ -341,75 +377,54 @@ struct ActiveRoundView: View {
             Spacer()
 
             HStack(alignment: .bottom, spacing: 4) {
-                // Left: Target button
+                // Left: Undo button — replaces the target button (target is
+                // now in the pull-up Options menu). Standard undo arrow,
+                // always red filled, white icon. Tap shows a confirmation
+                // popup; confirming pops the most recent stroke. If that
+                // stroke was auto-added, also flips its swing_event row to
+                // false_positive/high (multi-tap = walk back through the
+                // stack). Manual strokes are deletable too — they just
+                // don't have an event to label. While target placement is
+                // active, this slot becomes a "Done" button so the user
+                // can exit target mode.
                 VStack(spacing: 4) {
-                    // Target button - hide when placing penalty or no hole
-                    if !isPlacingPenalty && store.currentHole != nil {
-                        Button(action: toggleTargetPlacement) {
-                            ZStack {
-                                if minimalScreenMode {
+                    if store.currentHole != nil {
+                        if isPlacingTarget {
+                            Button(action: toggleTargetPlacement) {
+                                ZStack {
                                     Circle()
-                                        .fill(Color.black.opacity(0.001))
-                                        .frame(width: buttonSize, height: buttonSize)
-
-                                    Circle()
-                                        .stroke(Color.white.opacity(0.95), lineWidth: isPlacingTarget ? 2.5 : 2)
-                                        .frame(width: buttonSize, height: buttonSize)
-                                        .shadow(
-                                            color: isPlacingTarget ? Color.yellow.opacity(0.6) : Color.black.opacity(0.25),
-                                            radius: isPlacingTarget ? 4 : 2,
-                                            x: 0,
-                                            y: 0
-                                        )
-
-                                    Image(systemName: "scope")
-                                        .font(.system(size: iconSize, weight: .bold))
-                                        .foregroundColor(.white)
-                                } else {
-                                    Circle()
-                                        .fill(Color.white.opacity(0.95))
+                                        .fill(Color.yellow.opacity(0.95))
                                         .frame(width: buttonSize, height: buttonSize)
                                         .shadow(color: .black.opacity(0.3), radius: 2, x: 0, y: 1)
 
-                                    if isPlacingTarget {
-                                        Circle()
-                                            .stroke(Color.yellow, lineWidth: 3)
-                                            .frame(width: buttonSize, height: buttonSize)
-                                    }
-
-                                    Image(systemName: "scope")
+                                    Image(systemName: "checkmark")
                                         .font(.system(size: iconSize, weight: .bold))
                                         .foregroundColor(.black)
                                 }
                             }
+                            .buttonStyle(PlainButtonStyle())
+                            .focusable(false)
+                        } else {
+                            Button(action: { showingUndoConfirmation = true }) {
+                                ZStack {
+                                    Circle()
+                                        .fill(Color.red.opacity(canUndo ? 0.95 : 0.35))
+                                        .frame(width: buttonSize, height: buttonSize)
+                                        .shadow(color: .black.opacity(0.3), radius: 2, x: 0, y: 1)
+
+                                    Image(systemName: "arrow.uturn.backward")
+                                        .font(.system(size: iconSize, weight: .bold))
+                                        .foregroundColor(.white)
+                                }
+                            }
+                            .buttonStyle(PlainButtonStyle())
+                            .focusable(false)
+                            .disabled(!canUndo)
                         }
-                        .buttonStyle(PlainButtonStyle())
-                        .focusable(false)
                     }
                 }
 
-                // Invisible heading toggle button in center (between left and right stacks)
-                // Positioned slightly higher to avoid pull-up menu at bottom
-                // Hidden when swing detected overlay is showing to avoid hit area overlap with dismiss button
-                if store.currentHole != nil && swingDetector.lastDetectedSwing == nil && !isPlacingTarget && !isPlacingPenalty {
-                    VStack {
-                        Spacer()
-                        Button(action: toggleAimDirection) {
-                            Rectangle()
-                                .fill(Color.white.opacity(0.001)) // Near-invisible but tappable
-                                .frame(maxWidth: .infinity)
-                                .frame(height: buttonSize * 2 + 4) // Height of two buttons + spacing
-                                .contentShape(Rectangle())
-                        }
-                        .buttonStyle(PlainButtonStyle())
-                        .focusable(false)
-                        .disabled(store.currentHole.map { store.isHoleCompleted($0.number) } ?? false)
-                        Spacer()
-                            .frame(height: buttonSize * 0.5) // Extra padding at bottom
-                    }
-                } else {
-                    Spacer()
-                }
+                Spacer()
 
                 // Right side column
                 VStack(spacing: 4) {
@@ -418,6 +433,24 @@ struct ActiveRoundView: View {
                         if !clubs.isEmpty {
                             legacyClubSelector(buttonSize: buttonSize)
                         }
+                    }
+
+                    // Dev data zone — only visible when debug logging is on.
+                    // Currently shows steps-since-last-detected-swing (raw
+                    // integer, no label — developer reads it knowing what
+                    // it means). Sits above the scorecard button. Will hold
+                    // additional dev signals as we add them.
+                    if ClientEventLogger.enabled {
+                        Text("\(swingDetector.stepsSinceLastDetectedSwing)")
+                            .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                            .foregroundColor(.white.opacity(0.85))
+                            .frame(minWidth: 22)
+                            .padding(.horizontal, 4)
+                            .padding(.vertical, 2)
+                            .background(
+                                RoundedRectangle(cornerRadius: 4)
+                                    .fill(Color.black.opacity(0.6))
+                            )
                     }
 
                     // Scorecard button — opens the shared ScorecardView as a sheet.
@@ -435,7 +468,7 @@ struct ActiveRoundView: View {
                     }
                     .buttonStyle(PlainButtonStyle())
                     .focusable(false)
-                    .opacity(isPlacingTarget || isPlacingPenalty ? 0 : 0.95)
+                    .opacity(isPlacingTarget ? 0 : 0.95)
 
                     // Stroke button
                     VStack(spacing: 4) {
@@ -478,7 +511,7 @@ struct ActiveRoundView: View {
                         .opacity(store.currentHole.map { store.isHoleCompleted($0.number) } ?? false ? 0.3 : 0.95)
                     }
                 }
-                .opacity(isPlacingTarget || isPlacingPenalty ? 0 : 1)
+                .opacity(isPlacingTarget ? 0 : 1)
             }
             .padding(.horizontal, 4)
             .modifier(ButtonsBottomPaddingModifier())
@@ -507,59 +540,7 @@ struct ActiveRoundView: View {
             }
         }
         .ignoresSafeArea()
-        .opacity(isPlacingTarget || isPlacingPenalty ? 0 : 1)
-    }
-
-    @ViewBuilder
-    func penaltyPlacementButtons(buttonSize: CGFloat, iconSize: CGFloat) -> some View {
-        VStack {
-            Spacer()
-
-            HStack(alignment: .bottom) {
-                // Cancel button (left)
-                Button(action: {
-                    isPlacingPenalty = false
-                    temporaryPenaltyPosition = nil
-                    WKInterfaceDevice.current().play(.click)
-                }) {
-                    ZStack {
-                        Circle()
-                            .fill(Color.red.opacity(0.95))
-                            .frame(width: buttonSize, height: buttonSize)
-                            .shadow(color: .black.opacity(0.3), radius: 2, x: 0, y: 1)
-
-                        Image(systemName: "xmark")
-                            .font(.system(size: iconSize, weight: .bold))
-                            .foregroundColor(.white)
-                    }
-                }
-                .buttonStyle(PlainButtonStyle())
-                .focusable(false)
-
-                Spacer()
-
-                // Confirm button (right) - only show when position is placed
-                if temporaryPenaltyPosition != nil {
-                    Button(action: confirmPenaltyPlacement) {
-                        ZStack {
-                            Circle()
-                                .fill(Color.orange.opacity(0.95))
-                                .frame(width: buttonSize, height: buttonSize)
-                                .shadow(color: .black.opacity(0.3), radius: 2, x: 0, y: 1)
-
-                            Image(systemName: "checkmark")
-                                .font(.system(size: iconSize, weight: .bold))
-                                .foregroundColor(.white)
-                        }
-                    }
-                    .buttonStyle(PlainButtonStyle())
-                    .focusable(false)
-                }
-            }
-            .padding(.horizontal, 4)
-            .padding(.bottom, 16)
-        }
-        .ignoresSafeArea()
+        .opacity(isPlacingTarget ? 0 : 1)
     }
 
     @ViewBuilder
@@ -573,7 +554,15 @@ struct ActiveRoundView: View {
             // Full screen map or black background
             if minimalScreenMode && !needsInteractiveMap {
                 Color.black.ignoresSafeArea()
-            } else if let hole = store.currentHole {
+            } else if let hole = store.currentHole, hole.hasLocation {
+                // Only render the standard map when the current hole has a
+                // placed flag. A newly-added hole (just clicked "+" in
+                // OptionsView) has no coordinate; rendering through
+                // mapView() force-unwraps `hole.coordinate` and crashes.
+                // The rootBodyContent guard SHOULD switch to
+                // HolePlacementView when needsFlagPlacement flips, but
+                // SwiftUI evaluates mainContent in the same render pass,
+                // so we add a belt-and-suspenders check here.
                 mapView(for: hole)
                     .ignoresSafeArea()
             } else {
@@ -587,26 +576,6 @@ struct ActiveRoundView: View {
             // Info overlay (top left) - distance and hole info
             holeInfoOverlay
 
-            // Minimal mode toggle (left side, middle)
-            VStack {
-                Spacer()
-                Button(action: {
-                    minimalScreenMode.toggle()
-                    WKInterfaceDevice.current().play(.click)
-                }) {
-                    Image(systemName: minimalModeIconName)
-                        .font(.system(size: 12))
-                        .foregroundColor(minimalScreenMode ? .white : .white.opacity(0.75))
-                        .frame(width: 28, height: 28)
-                        .background(Color.black.opacity(0.4))
-                        .clipShape(Circle())
-                }
-                .buttonStyle(PlainButtonStyle())
-                Spacer()
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.leading, 4)
-
             // Buttons overlay (bottom)
             buttonsOverlay(buttonSize: buttonSize, iconSize: iconSize)
 
@@ -616,11 +585,6 @@ struct ActiveRoundView: View {
             // Bottom swipe-up indicator
             swipeUpIndicator
 
-            // Buttons for penalty placement (cancel left, confirm right)
-            if isPlacingPenalty {
-                penaltyPlacementButtons(buttonSize: buttonSize, iconSize: iconSize)
-            }
-
             // Invisible button for double-tap gesture (clench fingers twice)
             // Uses detected swing if available, otherwise adds regular stroke
             Button(action: handleDoubleTapGesture) {
@@ -629,7 +593,7 @@ struct ActiveRoundView: View {
             }
             .buttonStyle(PlainButtonStyle())
             .modifier(HandGestureShortcutModifier())
-            .disabled(store.currentHole.map { store.isHoleCompleted($0.number) } ?? false || isPlacingTarget || isPlacingPenalty)
+            .disabled(store.currentHole.map { store.isHoleCompleted($0.number) } ?? false || isPlacingTarget)
         }
         .task {
             calculateCrownOffset(screenHeight: geometry.size.height)
@@ -650,7 +614,7 @@ struct ActiveRoundView: View {
         .navigationBarBackButtonHidden(true)
         .focusable()
         .focused($isMainViewFocused)
-        .modifier(ClubCrownRotationModifier(selectedClubIndex: crownSelectedClubIndex, clubCount: clubs.count))
+        .modifier(ClubCrownRotationModifier(selectedClubIndex: $selectedClubIndex, clubCount: clubs.count))
         .digitalCrownAccessory(.hidden)
     }
 
@@ -683,7 +647,8 @@ struct ActiveRoundView: View {
     }
 
     var body: some View {
-        ActiveRoundConfiguredView(
+        WatchDiagnostics.shared.recordBodyEval()
+        return ActiveRoundConfiguredView(
             content: AnyView(rootBodyContent),
             store: store,
             locationManager: locationManager,
@@ -693,21 +658,18 @@ struct ActiveRoundView: View {
             activeSettingsSheet: $activeSettingsSheet,
             isFullViewMode: $isFullViewMode,
             manualClubOverride: $manualClubOverride,
-            navigateToAccelTest: $navigateToAccelTest,
             navigateToViewSettings: $navigateToViewSettings,
             navigateToClubRecommend: $navigateToClubRecommend,
             navigateToPredictGreen: $navigateToPredictGreen,
-            isPlacingPenalty: $isPlacingPenalty,
+            isPlacingTarget: $isPlacingTarget,
             minimalScreenMode: $minimalScreenMode,
             selectedClubIndex: $selectedClubIndex,
             currentHole: store.currentHole,
             distanceToHole: distanceToHole,
             detectedSwingTimestamp: swingDetector.lastDetectedSwing?.timestamp,
-            canUndo: canUndo,
             dismissParent: { dismiss() },
             updateMapPosition: { updateMapPosition() },
             updateNoHoleMapPosition: updateNoHoleMapPosition,
-            deleteLastStroke: deleteLastStroke,
             onViewAppear: handleViewAppear,
             onViewDisappear: handleViewDisappear,
             onLocationChange: handleLocationChange,
@@ -715,7 +677,6 @@ struct ActiveRoundView: View {
             onCurrentHoleIndexChange: handleCurrentHoleIndexChange,
             onCurrentHoleChange: handleCurrentHoleChange,
             onShowingOptionsChange: handleShowingOptionsChange,
-            onPlacingPenaltyChange: handlePlacingPenaltyChange,
             onMinimalScreenModeChange: handleMinimalScreenModeChange,
             onDetectedSwingChange: handleDetectedSwingChange,
             onSelectedClubIndexChange: handleSelectedClubIndexChange
@@ -724,6 +685,14 @@ struct ActiveRoundView: View {
             if let round = store.currentRound {
                 ScorecardSheet(round: round)
             }
+        }
+        .confirmationDialog(
+            "Undo Last Stroke?",
+            isPresented: $showingUndoConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("Undo", role: .destructive) { undoLastStroke() }
+            Button("Cancel", role: .cancel) { }
         }
     }
 
@@ -736,12 +705,24 @@ struct ActiveRoundView: View {
         swingDetector.startMonitoring()
         updateSwingDetectorClub()
 
-        // Start Realtime ONLY while the active round screen is visible. Drops
-        // when the user backs out, so the WebSocket isn't open 24/7.
+        // Realtime on the watch is gated to multiplayer rounds only. For
+        // solo play there's nothing on the network we'd subscribe to —
+        // SupabaseSync handles outbound writes via PostgREST through the
+        // phone tether at HTTPS speed. Non-LTE watches can't open
+        // WebSockets at all, so for the common case the retry loop would
+        // just burn battery cycling through "attempt → fail → backoff."
+        // RealtimeSync.start gets called inside startPlaygroupChannelIfNeeded
+        // ONLY when an active playgroup is found.
         if let uid = WatchAuthSession.shared.currentUserId {
-            RealtimeSync.shared.start(forUserId: uid)
             startPlaygroupChannelIfNeeded(userId: uid)
         }
+
+        // Pull any iPhone-side mutations to this round we missed while we
+        // weren't subscribed to Realtime (which is the entire solo case).
+        // HTTP-only — no WebSocket — so the watchOS-WS unreliability that
+        // gates RealtimeSync doesn't apply here. Existing local state
+        // renders immediately; updated rows slot in when the fetch returns.
+        Task { await RealtimeSync.shared.reconcileRoundsWithSupabase() }
 
         guard store.currentRound != nil, !workoutManager.isWorkoutActive else { return }
         workoutManager.requestAuthorization { success, _ in
@@ -761,7 +742,7 @@ struct ActiveRoundView: View {
         manualClubOverride = false
         onGreenOverride = false
         lastAutoAddedLocation = nil
-        autoAddedStrokeId = nil
+        autoAddStack.removeAll()
         locationManager.setGPSPowerMode(.full)
         restoreCalculatedMapPosition(force: true)
         if let uid = WatchAuthSession.shared.currentUserId,
@@ -778,6 +759,11 @@ struct ActiveRoundView: View {
             do {
                 guard let pg = try await PlaygroupService.shared.currentOpenPlaygroup() else { return }
                 await MainActor.run {
+                    // Multiplayer round confirmed → spin up Realtime for
+                    // table sync (rounds/strokes/holes/etc.) AND the
+                    // playgroup channel for live presence + walkie-talkie.
+                    // Solo rounds skip both entirely.
+                    RealtimeSync.shared.start(forUserId: userId)
                     PlaygroupChannel.shared.start(playgroupId: pg.id, currentHole: holeNumber, userId: userId)
                 }
             } catch {
@@ -791,20 +777,8 @@ struct ActiveRoundView: View {
     }
 
     func handleShowingOptionsChange(_ isShowing: Bool) {
-        if !isShowing && !isPlacingPenalty {
+        if !isShowing {
             isMainViewFocused = true
-        }
-    }
-
-    func handlePlacingPenaltyChange(_ isPlacing: Bool) {
-        if isPlacing {
-            restoreCalculatedMapPosition(force: true)
-            isMapFocused = true
-            isMainViewFocused = false
-        } else {
-            isMapFocused = false
-            isMainViewFocused = true
-            restoreCalculatedMapPosition(force: true)
         }
     }
 
@@ -825,43 +799,67 @@ struct ActiveRoundView: View {
     func noHoleMapView() -> some View {
         MapReader { proxy in
             Map(position: $position, interactionModes: isInteractiveMapMode ? .all : []) {
+                // Breadcrumb trail — small dots behind the user that fade
+                // with age. Helps orient on a heading-less map.
+                ForEach(Array(locationManager.breadcrumbs.enumerated()), id: \.element.id) { idx, bc in
+                    let n = locationManager.breadcrumbs.count
+                    let opacity = 0.08 + 0.55 * Double(idx) / Double(max(n - 1, 1))
+                    Annotation("", coordinate: bc.coordinate) {
+                        Circle()
+                            .fill(Color(hex: store.myPlayerColor))
+                            .frame(width: 4, height: 4)
+                            .opacity(opacity)
+                    }
+                }
+
                 // User location — tinted with the user's playgroup-assigned
                 // color (defaults to blue when not in a playgroup).
                 if let userLocation = locationManager.location {
                     Annotation("", coordinate: userLocation.coordinate) {
-                        let relativeHeading = locationManager.heading ?? 0
-
-                        Image(systemName: "location.north.fill")
-                            .font(.system(size: 20))
-                            .foregroundColor(Color(hex: store.myPlayerColor))
-                            .rotationEffect(.degrees(relativeHeading))
+                        // Heading is no longer captured (we removed the
+                        // tap-to-freeze feature and stopped subscribing to
+                        // CMHeading altogether). Render the user as a
+                        // direction-less dot in their playgroup color.
+                        Circle()
+                            .fill(Color(hex: store.myPlayerColor))
+                            .frame(width: 7, height: 7)
                             .shadow(color: .white, radius: 2)
                             .shadow(color: .black.opacity(0.3), radius: 1)
                     }
                 }
 
-                // Stroke markers - show all strokes for current hole even if no hole is defined
+                // Stroke markers - show all strokes for current hole even if
+                // no hole is defined. Penalty strokes are NOT rendered on the
+                // map (the new penalty model is +1 to score with no map
+                // marker — the orange "P: N" pill in the overlay is the
+                // affordance).
                 if let round = store.currentRound {
                     let nextHoleNumber = round.holes.count + 1
-                    let strokesForHole = round.strokes.filter { $0.holeNumber == nextHoleNumber }
+                    let strokesForHole = round.strokes
+                        .filter { $0.holeNumber == nextHoleNumber && !$0.isPenalty }
+                        .sorted { $0.strokeNumber < $1.strokeNumber }
                     ForEach(Array(strokesForHole.enumerated()), id: \.element.id) { index, stroke in
                         Annotation("", coordinate: stroke.coordinate) {
                             ZStack {
                                 Circle()
-                                    .fill(stroke.isPenalty ? .orange : .white)
+                                    .fill(.white)
                                     .frame(width: 20, height: 20)
                                     .opacity(0.85)
                                     .shadow(color: .black, radius: 2)
 
                                 Text("\(stroke.strokeNumber)")
                                     .font(.system(size: 12, weight: .bold))
-                                    .foregroundColor(stroke.isPenalty ? .white : .black)
+                                    .foregroundColor(.black)
                             }
                         }
                     }
                 }
 
             }
+            // Suppress all POI labels (golf course names, businesses, etc).
+            // The course geometry (greens, centerline) is what matters; POI
+            // text is just clutter on the watch.
+            .mapStyle(.standard(pointsOfInterest: .excludingAll))
             .modifier(HideMapControlsModifier(isInteractive: false))
         }
         .onAppear {
@@ -871,60 +869,163 @@ struct ActiveRoundView: View {
 
     @ViewBuilder
     func standardMapView(for hole: Hole) -> some View {
-        // Note: This view is only called when hole.hasLocation is true (via needsFlagPlacement check)
+        // Caller (mainContent) now guards on `hole.hasLocation` before
+        // invoking us, so `coordinate` is guaranteed non-nil here. The
+        // force-unwrap stays — we want a hard signal if any future caller
+        // forgets the pre-check.
         let holeCoord = hole.coordinate!
-        MapReader { proxy in
+        // OSM polygon for the current hole's green. White outline only —
+        // Apple Maps already renders the green tint underneath, so we
+        // don't need our own fill. Source: `filteredGreenCandidates`
+        // unifies OSM-derived greens (priority 1) and blob-detection
+        // results (priority 2). Either one whose polygon contains the
+        // hole's flag becomes the white outline overlay — same rendering
+        // for both sources.
+        let osmPolygon: [CLLocationCoordinate2D]? = {
+            guard let courseId = store.currentRound?.courseId else { return nil }
+            return store.filteredGreenCandidates(for: courseId)
+                .first { $0.contains(holeCoord) }?
+                .polygonCoordinates
+        }()
+        // OSM hole centerline — the tee→green linestring tagged `golf=hole`.
+        // Match by `ref` (hole number) to the current hole. Falls back to nil
+        // when the OSM data is partial (no clean ref) or the course has no
+        // OSM coverage; the line just doesn't draw in those cases.
+        let osmCenterline: [CLLocationCoordinate2D]? = {
+            guard let courseId = store.currentRound?.courseId,
+                  let osm = store.osmCourseData(forCourseId: courseId) else { return nil }
+            let match = osm.holes.first { Int($0.ref ?? "") == hole.number }
+            guard let pts = match?.centerline, pts.count >= 2 else { return nil }
+            return pts.map(\.coordinate)
+        }()
+        // Putt count for the current hole — drives the centroid label.
+        let puttCount: Int = {
+            guard let round = store.currentRound else { return 0 }
+            return round.strokes.filter { stroke in
+                guard stroke.holeNumber == hole.number, !stroke.isPenalty else { return false }
+                guard let club = store.availableClubs.first(where: { $0.id == stroke.clubId }) else { return false }
+                return store.getTypeName(for: club) == "Putt"
+            }.count
+        }()
+        // Polygon centroid (mean of vertices) — used to position the putt
+        // count label inside the green when present.
+        let polygonCentroid: CLLocationCoordinate2D? = {
+            guard let pts = osmPolygon, !pts.isEmpty else { return nil }
+            let lat = pts.map(\.latitude).reduce(0, +) / Double(pts.count)
+            let lon = pts.map(\.longitude).reduce(0, +) / Double(pts.count)
+            return CLLocationCoordinate2D(latitude: lat, longitude: lon)
+        }()
+        return MapReader { proxy in
             Map(position: $position, interactionModes: isInteractiveMapMode ? .all : []) {
-                // Hole marker (top) - green if completed, yellow if not
-                Annotation("", coordinate: holeCoord) {
-                    Image(systemName: "flag.fill")
-                        .font(.system(size: 20))
-                        .foregroundColor(store.isHoleCompleted(hole.number) ? .green : .yellow)
+                // OSM green polygon — white outline only, no fill (Apple
+                // Maps' standard tile already shows the green underneath).
+                if let pts = osmPolygon, pts.count >= 3 {
+                    MapPolygon(coordinates: pts)
+                        .foregroundStyle(.clear)
+                        .stroke(.white, lineWidth: 1.5)
+                }
+                // OSM hole centerline — yellow dashed line tracing the
+                // ideal tee→green path. Visually distinct from the white
+                // player-trajectory connector that gets drawn from each
+                // recorded stroke.
+                if let line = osmCenterline {
+                    MapPolyline(coordinates: line)
+                        .stroke(
+                            .yellow.opacity(0.7),
+                            style: StrokeStyle(lineWidth: 1.5, lineCap: .round, dash: [4, 3])
+                        )
+                }
+                // Putt count, white integer at polygon centroid. Hidden when
+                // zero — no point showing "0" before any putts have happened.
+                if puttCount > 0, let center = polygonCentroid {
+                    Annotation("", coordinate: center) {
+                        Text("\(puttCount)")
+                            .font(.system(size: 18, weight: .bold, design: .rounded))
+                            .foregroundColor(.white)
+                            .shadow(color: .black, radius: 2)
+                    }
                 }
 
-                // User location (bottom) - shows frozen state with white outline, hidden on green (GPS off)
-                if let userLocation = locationManager.location, locationManager.gpsPowerMode != .off {
+                // Breadcrumb trail — small dots behind the user that fade
+                // with age.
+                ForEach(Array(locationManager.breadcrumbs.enumerated()), id: \.element.id) { idx, bc in
+                    let n = locationManager.breadcrumbs.count
+                    let opacity = 0.08 + 0.55 * Double(idx) / Double(max(n - 1, 1))
+                    Annotation("", coordinate: bc.coordinate) {
+                        Circle()
+                            .fill(Color(hex: store.myPlayerColor))
+                            .frame(width: 4, height: 4)
+                            .opacity(opacity)
+                    }
+                }
+
+                // User location dot — direction-less. Heading capture is
+                // gone (course-line will eventually drive intended direction);
+                // CMHeading subscription is also off, so the previous arrow
+                // had no real heading to point with.
+                if let userLocation = locationManager.location {
                     Annotation("", coordinate: userLocation.coordinate) {
-                        let isFrozen = swingDetector.capturedAimDirection != nil
-                        let bearingToHole = calculateBearing(from: userLocation.coordinate, to: holeCoord)
-                        let relativeHeading: Double = {
-                            // If frozen, use captured direction; otherwise use live heading
-                            if let capturedHeading = swingDetector.capturedAimDirection {
-                                return (capturedHeading - bearingToHole + 360).truncatingRemainder(dividingBy: 360)
-                            }
-                            guard let heading = locationManager.heading else { return 0 }
-                            // Map is rotated by bearing to hole, so arrow needs to compensate
-                            return (heading - bearingToHole + 360).truncatingRemainder(dividingBy: 360)
-                        }()
-
-                        ZStack {
-                            // White outline when frozen
-                            if isFrozen {
-                                Circle()
-                                    .stroke(Color.white, lineWidth: 2)
-                                    .frame(width: 28, height: 28)
-                            }
-
-                            Image(systemName: "location.north.fill")
-                                .font(.system(size: 20))
-                                .foregroundColor(.blue)
-                                .rotationEffect(.degrees(relativeHeading))
-                                .shadow(color: .white, radius: 2)
-                                .shadow(color: .black.opacity(0.3), radius: 1)
-                        }
+                        Circle()
+                            .fill(Color(hex: store.myPlayerColor))
+                            .frame(width: 7, height: 7)
+                            .shadow(color: .white, radius: 2)
+                            .shadow(color: .black.opacity(0.3), radius: 1)
                     }
                 }
 
                 // Stroke markers - show only in full view mode
                 if isFullViewMode, let round = store.currentRound {
-                    let strokesForHole = round.strokes.filter { $0.holeNumber == hole.number }
+                    // Sort by strokeNumber, not the SwiftData @Relationship
+                    // array's natural order — that order is undefined and
+                    // shifts as new rows are inserted (especially via
+                    // Realtime). Without an explicit sort, `.last` can return
+                    // an earlier stroke, breaking the "locked-in yardage
+                    // for completed shots, live yardage for the most recent
+                    // shot" display logic.
+                    //
+                    // Putts are intentionally filtered out of the dot+yardage
+                    // rendering — putts within the green get visualized via
+                    // the centroid putt-count integer instead, since
+                    // putt-to-putt yardage isn't meaningful and the dots
+                    // would clutter the green. The "last non-putt stroke
+                    // shows live distance to user" behavior naturally extends
+                    // through the putting phase: while putting, the most
+                    // recent non-putt stroke (e.g. the approach from 100yd
+                    // out) keeps showing live distance from user position.
+                    // Penalty strokes are excluded entirely from the map —
+                    // the new penalty model is +1 to score with no marker.
+                    let allStrokesForHole = round.strokes
+                        .filter { $0.holeNumber == hole.number && !$0.isPenalty }
+                        .sorted { $0.strokeNumber < $1.strokeNumber }
+                    let strokesForHole = allStrokesForHole.filter { stroke in
+                        guard let club = store.availableClubs.first(where: { $0.id == stroke.clubId }) else { return true }
+                        return store.getTypeName(for: club) != "Putt"
+                    }
+                    // Connector polyline: each non-putt stroke in order, plus
+                    // the first putt's location as the terminal endpoint
+                    // (if any). The line visually traces "where the ball
+                    // went" from tee through approach to the green; the
+                    // putt-count integer takes over from there.
+                    let firstPuttCoord: CLLocationCoordinate2D? = allStrokesForHole.first { stroke in
+                        guard let club = store.availableClubs.first(where: { $0.id == stroke.clubId }) else { return false }
+                        return store.getTypeName(for: club) == "Putt"
+                    }?.coordinate
+                    let connectorCoords: [CLLocationCoordinate2D] = {
+                        var coords = strokesForHole.map(\.coordinate)
+                        if let putt = firstPuttCoord { coords.append(putt) }
+                        return coords
+                    }()
+                    if connectorCoords.count >= 2 {
+                        MapPolyline(coordinates: connectorCoords)
+                            .stroke(.white.opacity(0.9), lineWidth: 1.0)
+                    }
                     ForEach(Array(strokesForHole.enumerated()), id: \.element.id) { index, stroke in
                         Annotation("", coordinate: stroke.coordinate) {
                             ZStack {
-                                // Full view mode - white circles
+                                // Full view mode - small white circles
                                 Circle()
-                                    .fill(stroke.isPenalty ? .orange : .white)
-                                    .frame(width: 12, height: 12)
+                                    .fill(.white)
+                                    .frame(width: 6, height: 6)
                                     .opacity(0.9)
                                     .shadow(color: .black, radius: 2)
 
@@ -948,11 +1049,8 @@ struct ActiveRoundView: View {
                                     VStack {
                                         Text("\(dist)")
                                             .font(.system(size: 10, weight: .bold))
-                                            .foregroundColor(.black)
-                                            .padding(.horizontal, 4)
-                                            .padding(.vertical, 2)
-                                            .background(Color.white.opacity(0.9))
-                                            .clipShape(RoundedRectangle(cornerRadius: 4))
+                                            .foregroundColor(.white)
+                                            .shadow(color: .black, radius: 2)
                                             .offset(y: -12)
                                         Spacer()
                                     }
@@ -1026,28 +1124,11 @@ struct ActiveRoundView: View {
                     }
                 }
 
-                // Temporary penalty position marker
-                if isPlacingPenalty, let penaltyPos = temporaryPenaltyPosition {
-                    Annotation("", coordinate: penaltyPos) {
-                        ZStack {
-                            Circle()
-                                .fill(.orange)
-                                .frame(width: 28, height: 28)
-                                .shadow(color: .black, radius: 2)
-
-                            if let round = store.currentRound, let hole = store.currentHole {
-                                let strokeCount = round.strokes.filter { $0.holeNumber == hole.number }.count
-                                Text("\(strokeCount + 1)")
-                                    .font(.system(size: 14, weight: .bold))
-                                    .foregroundColor(.white)
-                            }
-                        }
-                    }
-                }
             }
-            .modifier(HideMapControlsModifier(isInteractive: isPlacingTarget || isPlacingPenalty))
-            .allowsHitTesting(isPlacingTarget || isPlacingPenalty)
-            .focusable(isPlacingTarget || isPlacingPenalty)
+            .mapStyle(.standard(pointsOfInterest: .excludingAll))
+            .modifier(HideMapControlsModifier(isInteractive: isPlacingTarget))
+            .allowsHitTesting(isPlacingTarget)
+            .focusable(isPlacingTarget)
             .focused($isMapFocused)
             .onAppear {
                 restoreCalculatedMapPosition(force: true)
@@ -1094,10 +1175,6 @@ struct ActiveRoundView: View {
                         targetCoordinatesBinding.wrappedValue = coords
                         WKInterfaceDevice.current().play(.success)
                     }
-                } else if isPlacingPenalty {
-                    // Update penalty position
-                    temporaryPenaltyPosition = coordinate
-                    WKInterfaceDevice.current().play(.click)
                 }
             }
         }
@@ -1138,16 +1215,34 @@ struct ActiveRoundView: View {
         guard let hole = store.currentHole,
               let holeCoord = hole.coordinate else { return }
 
-        // Determine start coordinate based on view mode
+        // Determine start coordinate based on view mode.
+        // Full-view priority order:
+        //   1. OSM hole centerline tee point (when available) — pinned tee
+        //      box → flag is the most stable framing across the round and
+        //      doesn't shift as strokes get added
+        //   2. First recorded stroke — pre-OSM fallback for courses without
+        //      hole data
+        //   3. User location — last resort if there's no stroke and no OSM
         let startCoord: CLLocationCoordinate2D
-        if isFullViewMode, let first = firstStroke {
-            // Full view mode with strokes - anchor to first stroke
-            startCoord = first.coordinate
+        if isFullViewMode {
+            let osmTee: CLLocationCoordinate2D? = {
+                guard let courseId = store.currentRound?.courseId,
+                      let osm = store.osmCourseData(forCourseId: courseId) else { return nil }
+                let match = osm.holes.first { Int($0.ref ?? "") == hole.number }
+                return match?.centerline.first?.coordinate
+            }()
+            if let tee = osmTee {
+                startCoord = tee
+            } else if let first = firstStroke {
+                startCoord = first.coordinate
+            } else if let userLocation = locationManager.location {
+                startCoord = userLocation.coordinate
+            } else {
+                return
+            }
         } else if let userLocation = locationManager.location {
-            // Default mode or no strokes yet - use user location
             startCoord = userLocation.coordinate
         } else {
-            // No user location - can't position map
             return
         }
 

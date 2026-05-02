@@ -104,6 +104,13 @@ struct WatchHomeView: View {
                 // last had a round open. RealtimeSync is round-scoped so it
                 // wouldn't have streamed those edits to us in the meantime.
                 store.hydrateClubsFromSupabase()
+                // Same gap for rounds: solo rounds never open Realtime on
+                // watchOS, so iPhone-side mutations to a round in progress
+                // (stroke edits, hole tweaks, current-hole advance) are
+                // invisible until we pull. One-shot HTTP fetch — no live
+                // socket — so the watchOS-WS reliability concern doesn't
+                // apply.
+                Task { await RealtimeSync.shared.reconcileRoundsWithSupabase() }
             }
             .navigationDestination(isPresented: $navigateToActiveRound) {
                 ActiveRoundView()
@@ -116,25 +123,12 @@ struct WatchHomeView: View {
                 }
             }
             .sheet(item: Binding(
-                get: { store.pendingPOIPicker.map { CourseCandidatesWrapper(candidates: $0) } },
-                set: { _ in store.pickPOICandidate(nil) }
+                get: { store.pendingCoursePicker.map { CourseCandidatesWrapper(candidates: $0) } },
+                set: { _ in store.pickCourseCandidate(nil) }
             )) { wrapper in
                 CoursePickerView(candidates: wrapper.candidates) { picked in
-                    store.pickPOICandidate(picked)
+                    store.pickCourseCandidate(picked)
                 }
-            }
-            .alert(
-                store.pendingExistingCoursePrompt.map { "Play \($0.courseName)?" } ?? "",
-                isPresented: Binding(
-                    get: { store.pendingExistingCoursePrompt != nil },
-                    set: { if !$0 { store.answerExistingCoursePrompt(confirmed: false) } }
-                ),
-                presenting: store.pendingExistingCoursePrompt
-            ) { _ in
-                Button("Play") { store.answerExistingCoursePrompt(confirmed: true) }
-                Button("Different course", role: .cancel) { store.answerExistingCoursePrompt(confirmed: false) }
-            } message: { match in
-                Text("\(Int(match.distanceMeters))m away")
             }
             .sheet(item: Binding(
                 get: { store.pendingTeePicker.map { TeePickerWrapper(picker: $0) } },
@@ -211,13 +205,13 @@ private struct TeePickerView: View {
 
 // Identifiable wrapper so we can drive a `.sheet(item:)` off the candidates array.
 private struct CourseCandidatesWrapper: Identifiable {
-    let candidates: [RoundResolver.POICandidate]
+    let candidates: [RoundResolver.CourseCandidate]
     var id: String { candidates.map(\.name).joined(separator: "|") }
 }
 
 private struct CoursePickerView: View {
-    let candidates: [RoundResolver.POICandidate]
-    let onPick: (RoundResolver.POICandidate?) -> Void
+    let candidates: [RoundResolver.CourseCandidate]
+    let onPick: (RoundResolver.CourseCandidate?) -> Void
 
     var body: some View {
         NavigationStack {
