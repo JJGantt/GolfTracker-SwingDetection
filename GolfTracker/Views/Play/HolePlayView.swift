@@ -8,8 +8,10 @@ struct HolePlayView: View {
     let runHoleDetectionAtStart: Bool
     let runHoleDetectionWithTestCoordinates: Bool
 
+    @Environment(\.dismiss) private var dismiss
+
     // MARK: - Core State
-    @State var locationManager = LocationManager()
+    @StateObject var locationManager = LocationManager()
     @State var currentHoleIndex = 0
     @State var activeRound: Round?
 
@@ -407,6 +409,12 @@ struct HolePlayView: View {
                 if let round = currentRound {
                     ScorecardSheet(round: round)
                         .presentationDetents([.medium, .large])
+                        .safeAreaInset(edge: .bottom) {
+                            EndRoundButton(round: round, store: store, onEnded: {
+                                showingRoundSummary = false
+                                dismiss()
+                            })
+                        }
                 }
             }
     }

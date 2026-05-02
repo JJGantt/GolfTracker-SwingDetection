@@ -92,11 +92,15 @@ final class SupabaseSync {
         }
     }
 
+    /// Mirrors local edits to a shared course row. Does NOT write
+    /// `created_by` or `osm_polygons` — those are owned by RoundResolver on
+    /// initial INSERT (see migration 00026). Updates here only carry
+    /// user-edit-able fields plus the geo centroid (which can be backfilled
+    /// from holes if missing).
     func upsertCourse(_ course: Course) {
-        guard let uid = currentUserId else { return }
-        let body: [String: AnyCodableValue] = [
+        guard currentUserId != nil else { return }
+        var body: [String: AnyCodableValue] = [
             "id": .string(course.id.uuidString),
-            "user_id": .string(uid),
             "name": .string(course.name),
             "rating": course.rating.map(AnyCodableValue.double) ?? .null,
             "slope": course.slope.map(AnyCodableValue.int) ?? .null,
@@ -104,6 +108,9 @@ final class SupabaseSync {
             "external_course_id": course.externalCourseId.map(AnyCodableValue.string) ?? .null,
             "updated_at": .string(iso(Date()))
         ]
+        if let lat = course.centerLat { body["center_lat"] = .double(lat) }
+        if let lon = course.centerLon { body["center_lon"] = .double(lon) }
+        if let osmId = course.osmId { body["osm_id"] = .int(Int(osmId)) }
         upsert(table: "courses", values: body, onConflict: "id")
 
         for hole in course.holes {
@@ -145,6 +152,8 @@ final class SupabaseSync {
             "hole_detection_enabled": round.holeDetectionEnabled.map(AnyCodableValue.bool) ?? .null,
             "location_test_mode_enabled": round.locationTestModeEnabled.map(AnyCodableValue.bool) ?? .null,
             "selected_tee_id": round.selectedTeeId.map { .string($0.uuidString) } ?? .null,
+            "ended_at": round.endedAt.map { .string(iso($0)) } ?? .null,
+            "last_activity_at": round.lastActivityAt.map { .string(iso($0)) } ?? .null,
             "updated_at": .string(iso(Date()))
         ]
         upsert(table: "rounds", values: body, onConflict: "id")

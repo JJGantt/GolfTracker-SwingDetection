@@ -3,30 +3,26 @@ import CoreLocation
 import Combine
 import WatchKit
 
-/// Watches the user's GPS during an active round and auto-advances to the next
-/// hole when they've genuinely walked off the green and toward the next tee.
+/// Watches the user's GPS during an active round and auto-advances to the
+/// next hole when they've putted out and walked off the green.
 ///
-/// **Trigger requires the user to have actually visited the green first.**
-/// The "visited" gate is a point-in-polygon check against the established
-/// green polygon for the current hole — sourced from the same place the rest
-/// of the round-play UI gets it (`WatchDataStore.filteredGreenCandidates`,
-/// matched to the current hole by hole-marker containment). That polygon
-/// could come from OSM (Tier-1/2) or from blob detection (Tier-3 after the
-/// user has picked it). Once a hole has an established polygon, auto-advance
-/// works regardless of source.
+/// State model: a single ephemeral `currentHoleEnteredAt` timestamp. It
+/// resets to `Date()` on every `currentHoleIndex` change in any direction
+/// (forward auto-advance, manual back-nav, manual forward-nav, fresh load).
+/// There is no per-hole memory beyond that — strokes themselves live in
+/// `round.strokes` and we filter by timestamp.
 ///
-/// Once visited, the monitor advances when EITHER:
+/// Gates:
+///   1. **Putted-since-arrival**: there exists a putter stroke for the
+///      current hole with `timestamp > currentHoleEnteredAt`. Old putts
+///      from a prior visit (back-nav case) don't count.
+///   2. **Distance**: user is `>= greenLeftThresholdYards` (default 10) from
+///      the green polygon perimeter.
+///   3. **Bonus accelerator**: when OSM provides next-hole tee data, also
+///      fires when user is within `teeBoxThresholdYards` (10) of the next
+///      tee centerline — same putted-since-arrival gate applies.
 ///
-///   1. user is within `tee_box_threshold_yards` (10) of the next hole's tee point
-///      (only when OSM provided tee data — bonus accelerator for Tier-1), OR
-///   2. user is more than `green_left_threshold_yards` (40) from the current
-///      hole's green marker (universal fallback that fires for any source)
-///
-/// Single-shot per hole — once advanced, the monitor won't re-fire for the
-/// same hole until `resetForCurrentHole()` is called.
-///
-/// All distances in yards (single unit throughout). Real-world thresholds
-/// chosen by Jared, not invented here.
+/// All distances in yards. Thresholds chosen by Jared, not invented here.
 final class AutoAdvanceMonitor: ObservableObject {
     static let shared = AutoAdvanceMonitor()
 
@@ -35,22 +31,24 @@ final class AutoAdvanceMonitor: ObservableObject {
         didSet { UserDefaults.standard.set(enabled, forKey: "autoAdvanceEnabled") }
     }
 
-    /// Yards from the current green marker that counts as "left" — overall
-    /// fallback trigger when the next-tee path isn't available or doesn't fire.
-    var greenLeftThresholdYards: Double = 40
+    /// Yards beyond the **green polygon perimeter** that counts as "left."
+    /// Read from UserDefaults each evaluation so the iOS Settings → Developer
+    /// slider can tune it live.
+    static let greenLeftThresholdYardsKey = "autoAdvanceGreenLeftThresholdYards"
+    var greenLeftThresholdYards: Double {
+        let v = UserDefaults.standard.double(forKey: Self.greenLeftThresholdYardsKey)
+        return v > 0 ? v : 10
+    }
     /// Yards from the next hole's tee point that counts as "arriving at the
     /// next hole." Only used when OSM provides tee data for the next hole.
     var teeBoxThresholdYards: Double = 10
 
     private var cancellables = Set<AnyCancellable>()
-    /// Set of hole numbers we've already auto-advanced from. Cleared per-hole
-    /// by `resetForCurrentHole()` if user manually navigates back.
-    private var advancedFromHoleNumber: Int?
-    /// Set of hole numbers the user's GPS has been geometrically inside the
-    /// green polygon for. Persists across the lifetime of this round; cleared
-    /// when the round changes.
-    private var visitedGreenHoles: Set<Int> = []
-    private var visitedRoundId: UUID?
+    /// Timestamp the user arrived at the current hole. Resets on every
+    /// hole-index change. The putt-gate filters strokes by `> this`.
+    private var currentHoleEnteredAt: Date = Date()
+    private var lastSeenHoleIndex: Int?
+    private var lastSeenRoundId: UUID?
 
     private init() {
         if UserDefaults.standard.object(forKey: "autoAdvanceEnabled") != nil {
@@ -62,11 +60,6 @@ final class AutoAdvanceMonitor: ObservableObject {
     }
 
     private func wireLocationUpdates() {
-        // LocationManager moved from ObservableObject to @Observable, so the
-        // Combine `$location` publisher is gone. We use the explicit
-        // `locationPublisher` (PassthroughSubject) we added alongside the
-        // observed property — view code reads the property, background
-        // watchers like this one use the publisher.
         LocationManager.shared.locationPublisher
             .throttle(for: .seconds(2), scheduler: RunLoop.main, latest: true)
             .sink { [weak self] loc in
@@ -75,77 +68,144 @@ final class AutoAdvanceMonitor: ObservableObject {
             .store(in: &cancellables)
     }
 
-    /// Re-arms the monitor — call when the user manually navigates to a hole
-    /// (so re-leaving that hole can fire again).
-    func resetForCurrentHole() {
-        advancedFromHoleNumber = nil
-    }
-
     private func evaluate(at coordinate: CLLocationCoordinate2D) {
         guard enabled else { return }
         let store = WatchDataStore.shared
         guard let round = store.currentRound else { return }
 
-        // New round → wipe visited tracking.
-        if visitedRoundId != round.id {
-            visitedRoundId = round.id
-            visitedGreenHoles.removeAll()
-            advancedFromHoleNumber = nil
+        // SwiftData @Relationship arrays do NOT preserve order — sort by
+        // hole number explicitly. Without this, round.holes[idx] returns
+        // some random hole and we'd evaluate against the wrong green.
+        let sortedHoles = round.holes.sorted { $0.number < $1.number }
+        let idx = round.currentHoleIndex
+        guard idx >= 0, idx < sortedHoles.count else { return }
+        let currentHole = sortedHoles[idx]
+        let hasNextHole = idx + 1 < sortedHoles.count
+        let nextHole: Hole? = hasNextHole ? sortedHoles[idx + 1] : nil
+        guard let currentGreenMarker = currentHole.coordinate else { return }
+
+        // Reset the arrival timestamp on any hole-index or round change.
+        // Single source of state — back-nav, forward-nav, new round, all
+        // funnel through this one assignment. Prior putts are now "before
+        // arrival" and won't satisfy the putt gate until the user putts
+        // again from this visit.
+        if lastSeenRoundId != round.id || lastSeenHoleIndex != idx {
+            currentHoleEnteredAt = Date()
+            lastSeenRoundId = round.id
+            lastSeenHoleIndex = idx
         }
 
-        let idx = round.currentHoleIndex
-        guard idx >= 0, idx < round.holes.count else { return }
-        let currentHole = round.holes[idx]
-        // Last hole — nothing to advance to.
-        guard idx + 1 < round.holes.count else { return }
-        let nextHole = round.holes[idx + 1]
-        guard let currentGreenMarker = currentHole.coordinate else { return }
-        // Skip if we've already advanced from this hole.
-        if advancedFromHoleNumber == currentHole.number { return }
+        // === Putt-since-arrival gate ===
+        // Filters by timestamp so back-nav doesn't satisfy this just because
+        // an old putt exists for the hole.
+        let arrivalTs = currentHoleEnteredAt
+        let hasPuttedSinceArrival = round.strokes.contains { (stroke: Stroke) -> Bool in
+            guard stroke.holeNumber == currentHole.number else { return false }
+            guard stroke.timestamp > arrivalTs else { return false }
+            guard let club = store.availableClubs.first(where: { $0.id == stroke.clubId }) else { return false }
+            return store.getTypeName(for: club) == "Putt"
+        }
+        guard hasPuttedSinceArrival else { return }
 
         // OSM data (if any) — used for the bonus next-tee accelerator only.
         let osm = store.osmCourseData(forCourseId: round.courseId)
-        let nextOSMHole = osm?.holes.first { Int($0.ref ?? "") == nextHole.number }
+        let nextOSMHole = nextHole.flatMap { nh in osm?.holes.first { Int($0.ref ?? "") == nh.number } }
 
-        // Source-agnostic green polygon for this hole — same lookup the rest of
-        // the round-play UI uses (filteredGreenCandidates picks OSM first then
-        // blob detection, matched by hole-marker containment).
+        // Source-agnostic green polygon — same lookup the round-play UI uses.
         let currentGreenBlob = store.filteredGreenCandidates(for: round.courseId)
             .first { $0.contains(currentGreenMarker) }
 
-        // === Visited gate: did the user's GPS land inside the green polygon? ===
-        if let blob = currentGreenBlob, blob.contains(coordinate) {
-            visitedGreenHoles.insert(currentHole.number)
-        }
-        guard visitedGreenHoles.contains(currentHole.number) else {
-            // Never visited the green for this hole — don't advance.
-            return
-        }
-
-        // === Trigger A: within tee_box_threshold_yards of next hole's tee point ===
-        if let nextTee = nextOSMHole?.teePoint {
-            let teeLoc = CLLocation(latitude: nextTee.latitude, longitude: nextTee.longitude)
+        // === Trigger A: near next hole's tee centerline ===
+        if let next = nextHole, let nextTee = nextOSMHole?.teePoint {
+            let line = nextOSMHole?.centerline ?? []
             let userLoc = CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude)
-            let yardsToTee = userLoc.distance(from: teeLoc) * 1.09361
-            if yardsToTee <= teeBoxThresholdYards {
-                fire(from: currentHole, to: nextHole, reason: "near next tee (\(Int(yardsToTee))yd)")
+            let yardsToLine: Double = {
+                if line.count >= 2 {
+                    let a = line[0].coordinate
+                    let b = line[1].coordinate
+                    return distanceMetersToSegment(point: coordinate, segA: a, segB: b) * 1.09361
+                }
+                let teeLoc = CLLocation(latitude: nextTee.latitude, longitude: nextTee.longitude)
+                return userLoc.distance(from: teeLoc) * 1.09361
+            }()
+            if yardsToLine <= teeBoxThresholdYards {
+                fire(from: currentHole, to: next, reason: "near next tee (\(Int(yardsToLine))yd)")
                 return
             }
         }
 
-        // === Trigger B: more than green_left_threshold_yards from current green marker ===
+        // === Trigger B: ≥ greenLeftThresholdYards perpendicular from polygon edge ===
+        // Inside polygon → 0yd. Outside → min perpendicular distance to any
+        // edge segment (not vertex). Vertex-distance was wrong on typical
+        // 25–30yd greens with 5–7yd vertex spacing — min-vertex from the
+        // pin can exceed 10yd while the user is still standing on the green,
+        // so the gate fired from the cup. Edge-distance via the existing
+        // `distanceMetersToSegment` helper measures actual off-green distance.
         let userLoc = CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude)
-        let greenLoc = CLLocation(latitude: currentGreenMarker.latitude, longitude: currentGreenMarker.longitude)
-        let yardsFromGreen = userLoc.distance(from: greenLoc) * 1.09361
-        if yardsFromGreen >= greenLeftThresholdYards {
-            fire(from: currentHole, to: nextHole, reason: "left green (\(Int(yardsFromGreen))yd)")
+        let yardsFromEdge: Double = {
+            if let blob = currentGreenBlob, !blob.polygon.isEmpty {
+                if blob.contains(coordinate) { return 0 }
+                let poly = blob.polygon
+                var minMeters = Double.greatestFiniteMagnitude
+                for i in 0..<poly.count {
+                    let a = poly[i]
+                    let b = poly[(i + 1) % poly.count]
+                    let d = distanceMetersToSegment(point: coordinate, segA: a, segB: b)
+                    if d < minMeters { minMeters = d }
+                }
+                return minMeters * 1.09361
+            } else {
+                let greenLoc = CLLocation(latitude: currentGreenMarker.latitude, longitude: currentGreenMarker.longitude)
+                return userLoc.distance(from: greenLoc) * 1.09361
+            }
+        }()
+        if yardsFromEdge >= greenLeftThresholdYards {
+            if let next = nextHole {
+                fire(from: currentHole, to: next, reason: "left green (\(Int(yardsFromEdge))yd from edge)")
+            } else {
+                fireAddNext(from: currentHole, reason: "left green (\(Int(yardsFromEdge))yd from edge), no next hole")
+            }
             return
         }
     }
 
+    /// Geometry-mode case: no next hole exists yet. Creates one (no
+    /// coordinate) so HolePlacementView's `needsFlagPlacement` flow takes over.
+    private func fireAddNext(from currentHole: Hole, reason: String) {
+        let store = WatchDataStore.shared
+        WKInterfaceDevice.current().play(.success)
+        if !(store.currentRound?.isHoleCompleted(currentHole.number) ?? true) {
+            store.completeHole(holeNumber: currentHole.number)
+        }
+        store.addNextHole()
+        dprint("⌚ [AutoAdvance] Hole \(currentHole.number) → addNext — \(reason)")
+    }
+
+    /// Perpendicular distance in meters from `point` to segment AB. Uses an
+    /// equirectangular local projection — within a single hole the flat-earth
+    /// approximation is well below GPS noise.
+    private func distanceMetersToSegment(point: CLLocationCoordinate2D,
+                                         segA: CLLocationCoordinate2D,
+                                         segB: CLLocationCoordinate2D) -> Double {
+        let metersPerDegLat = 111_000.0
+        let cosLat = cos(point.latitude * .pi / 180.0)
+        let metersPerDegLon = metersPerDegLat * cosLat
+        let px = (point.longitude - segA.longitude) * metersPerDegLon
+        let py = (point.latitude - segA.latitude) * metersPerDegLat
+        let bx = (segB.longitude - segA.longitude) * metersPerDegLon
+        let by = (segB.latitude - segA.latitude) * metersPerDegLat
+        let lenSq = bx * bx + by * by
+        guard lenSq > 0 else { return sqrt(px * px + py * py) }
+        let t = max(0.0, min(1.0, (px * bx + py * by) / lenSq))
+        let closestX = t * bx
+        let closestY = t * by
+        let dx = px - closestX
+        let dy = py - closestY
+        return sqrt(dx * dx + dy * dy)
+    }
+
     private func fire(from currentHole: Hole, to nextHole: Hole, reason: String) {
         let store = WatchDataStore.shared
-        advancedFromHoleNumber = currentHole.number
         WKInterfaceDevice.current().play(.success)
         if !(store.currentRound?.isHoleCompleted(currentHole.number) ?? true) {
             store.completeHole(holeNumber: currentHole.number)

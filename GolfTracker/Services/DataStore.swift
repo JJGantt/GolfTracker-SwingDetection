@@ -39,7 +39,7 @@ class DataStore: ObservableObject {
     var currentRound: Round? {
         let cutoff = Date().addingTimeInterval(-Self.currentRoundMaxAgeSeconds)
         return rounds
-            .filter { $0.date >= cutoff }
+            .filter { $0.endedAt == nil && $0.date >= cutoff }
             .max(by: { $0.date < $1.date })
     }
 
@@ -115,6 +115,33 @@ class DataStore: ObservableObject {
 
         // Set up Watch Connectivity callbacks
         setupWatchConnectivity()
+        startRoundLifecycleSweep()
+    }
+
+    private var lifecycleTimer: Timer?
+
+    /// 60s timer evaluating any in-progress round against the inactivity
+    /// (>1h) and off-course (>2km) gates. Mirrors WatchDataStore's sweep so
+    /// rounds end correctly regardless of which device is active.
+    private func startRoundLifecycleSweep() {
+        lifecycleTimer?.invalidate()
+        let timer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
+            self?.evaluateRoundLifecycle()
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        lifecycleTimer = timer
+        evaluateRoundLifecycle()
+    }
+
+    private func evaluateRoundLifecycle() {
+        guard let round = currentRound else { return }
+        let decision = RoundLifecycleEvaluator.evaluate(
+            round: round,
+            location: LocationManager.shared.location?.coordinate
+        )
+        if decision.shouldEnd {
+            endRound(round, reason: decision.reason ?? "lifecycle")
+        }
     }
 
     private func setupWatchConnectivity() {
@@ -128,8 +155,162 @@ class DataStore: ObservableObject {
             }
         }
 
+        // Watch-driven blob detection request. Watch hits this whenever it
+        // starts/resumes a round on a course; iPhone runs the analyzer (or
+        // returns cached data) and ships results back via the existing
+        // sendHoleDetectionData flow. Lets the watch always have blob data
+        // for visual comparison against OSM polygons, even when the iOS
+        // user never explicitly opted into hole detection.
+        WatchConnectivityManager.shared.onReceiveHoleDetectionRequest = { [weak self] courseId in
+            guard let self = self else { return }
+            Task { @MainActor in
+                // Try cache → SwiftData → Supabase fetch-by-id. The third
+                // step is the new one: when the round was resolved on the
+                // watch (shared courses table), the iPhone may not have
+                // received the Realtime INSERT echo yet, so the local
+                // SwiftData has no matching row. We fetch directly from
+                // Supabase and insert it before kicking off blob detection.
+                var course: Course? = self.courses.first(where: { $0.id == courseId })
+                if course == nil, let context = self.context {
+                    let descriptor = FetchDescriptor<Course>(predicate: #Predicate { $0.id == courseId })
+                    course = (try? context.fetch(descriptor))?.first
+                }
+                if course == nil {
+                    course = await self.fetchAndInsertCourse(by: courseId)
+                }
+                ClientEventLogger.log("blob.request.received", detail: [
+                    "courseId": .string(courseId.uuidString),
+                    "courseFound": .bool(course != nil),
+                    "courseName": course.map { .string($0.name) } ?? .null
+                ])
+                guard let course = course else { return }
+                self.runHoleDetection(for: course)
+            }
+        }
+
         // Clubs/types now sync via DB — both devices read from SwiftData and
         // observe Realtime changes; no WC push needed at startup.
+    }
+
+    /// Public entry point so watch-initiated hole detection requests can
+    /// kick off the same pipeline. Cached results return immediately;
+    /// otherwise the analyzer runs and ships results back via WC when done.
+    /// Direct Supabase fetch for a course by id, with local SwiftData
+    /// insert. Used when the watch refers to a shared-courses row that the
+    /// iPhone hasn't received via Realtime yet. Returns the freshly-inserted
+    /// Course on success, nil if the row doesn't exist or the fetch fails.
+    @MainActor
+    private func fetchAndInsertCourse(by courseId: UUID) async -> Course? {
+        guard let context = self.context else { return nil }
+        struct Row: Decodable {
+            let id: UUID
+            let name: String
+            let center_lat: Double?
+            let center_lon: Double?
+            let osm_id: Int64?
+            let external_course_id: String?
+            // Decoded loosely — the OSM polygon shape is JSONB; we only
+            // need the basic course fields here for blob detection.
+        }
+        do {
+            let rows: [Row] = try await SupabaseManager.shared
+                .from("courses")
+                .select("id,name,center_lat,center_lon,osm_id,external_course_id")
+                .eq("id", value: courseId.uuidString)
+                .limit(1)
+                .execute()
+                .value
+            guard let row = rows.first else {
+                ClientEventLogger.log("blob.request.fetchCourse.missing", detail: [
+                    "courseId": .string(courseId.uuidString)
+                ])
+                return nil
+            }
+            let course = Course(
+                id: row.id,
+                name: row.name,
+                centerLat: row.center_lat,
+                centerLon: row.center_lon,
+                osmId: row.osm_id,
+                externalCourseId: row.external_course_id
+            )
+            context.insert(course)
+            try? context.save()
+            ClientEventLogger.log("blob.request.fetchCourse.inserted", detail: [
+                "courseId": .string(courseId.uuidString),
+                "name": .string(row.name)
+            ])
+            // Refresh the cached `courses` array
+            loadCourses()
+            return course
+        } catch {
+            ClientEventLogger.log("blob.request.fetchCourse.error", detail: [
+                "courseId": .string(courseId.uuidString),
+                "error": .string("\(error)")
+            ])
+            return nil
+        }
+    }
+
+    /// Server-side blob-detection cache fetch. Returns nil on miss /
+    /// network error / decode error so the caller falls back to the
+    /// analyzer.
+    @MainActor
+    private func fetchBlobDetectionResults(courseId: UUID) async -> CourseHoleDetectionData? {
+        struct Row: Decodable {
+            let blob_detection_results: CourseHoleDetectionData?
+        }
+        do {
+            let rows: [Row] = try await SupabaseManager.shared
+                .from("courses")
+                .select("blob_detection_results")
+                .eq("id", value: courseId.uuidString)
+                .limit(1)
+                .execute()
+                .value
+            return rows.first?.blob_detection_results
+        } catch {
+            ClientEventLogger.log("blob.serverCache.fetchError", detail: [
+                "courseId": .string(courseId.uuidString),
+                "error": .string("\(error)")
+            ])
+            return nil
+        }
+    }
+
+    /// Server-side blob-detection cache write. Fire-and-forget; failures
+    /// are non-fatal — the in-memory + JSON cache still works.
+    private func uploadBlobDetectionResults(courseId: UUID, data: CourseHoleDetectionData) {
+        struct UpdateRow: Encodable {
+            let blob_detection_results: CourseHoleDetectionData
+            let blob_detection_at: String
+        }
+        let row = UpdateRow(
+            blob_detection_results: data,
+            blob_detection_at: ISO8601DateFormatter().string(from: Date())
+        )
+        Task { @MainActor in
+            do {
+                try await SupabaseManager.shared
+                    .from("courses")
+                    .update(row)
+                    .eq("id", value: courseId.uuidString)
+                    .execute()
+                ClientEventLogger.log("blob.serverCache.uploaded", detail: [
+                    "courseId": .string(courseId.uuidString),
+                    "blobCount": .integer(data.blobs.count)
+                ])
+            } catch {
+                ClientEventLogger.log("blob.serverCache.uploadError", detail: [
+                    "courseId": .string(courseId.uuidString),
+                    "error": .string("\(error)")
+                ])
+            }
+        }
+    }
+
+    func runHoleDetection(for course: Course) {
+        startHoleDetection(for: course, allowCache: true, persistResult: true)
     }
 
     private func mergeStrokesFromWatch(_ strokes: [Stroke]) {
@@ -632,6 +813,10 @@ class DataStore: ObservableObject {
         useHoleDetectionTestCoordinates: Bool = false
     ) -> Round {
         dprint("📱 [DataStore] startRound called for course: \(course.name)")
+        // Auto-end any prior in-progress round — starting a new round
+        // implies the old one is finished, regardless of whether the user
+        // hit End Round. Avoids stale "ongoing" rounds piling up.
+        endAnyOngoingRound(reason: "new round starting")
         let round = Round(
             courseId: course.id,
             courseName: course.name,
@@ -676,6 +861,44 @@ class DataStore: ObservableObject {
                 error: nil
             )
             WatchConnectivityManager.shared.sendHoleDetectionData(cached)
+            return
+        }
+
+        // Server-side cache: courses.blob_detection_results. If a previous
+        // run (any device, any user) already analyzed this course, fetch
+        // and reuse instead of running the analyzer locally. The fetch is
+        // async; on miss we re-call ourselves with allowCache=false so the
+        // analyzer code path runs synchronously. On hit we ship and return.
+        if allowCache {
+            let courseId = course.id
+            let overrideCenterLocal = overrideCenter
+            Task { @MainActor in
+                if let serverCached = await self.fetchBlobDetectionResults(courseId: courseId) {
+                    self.holeDetectionDataByCourse[courseId] = serverCached
+                    self.saveHoleDetectionData()
+                    self.holeDetectionRunStateByCourse[courseId] = HoleDetectionRunState(
+                        isRunning: false,
+                        message: "Hole detection ready (cached)",
+                        progress: 1.0,
+                        error: nil
+                    )
+                    WatchConnectivityManager.shared.sendHoleDetectionData(serverCached)
+                    ClientEventLogger.log("blob.serverCache.hit", detail: [
+                        "courseId": .string(courseId.uuidString),
+                        "blobCount": .integer(serverCached.blobs.count)
+                    ])
+                } else {
+                    ClientEventLogger.log("blob.serverCache.miss", detail: [
+                        "courseId": .string(courseId.uuidString)
+                    ])
+                    self.startHoleDetection(
+                        for: course,
+                        overrideCenter: overrideCenterLocal,
+                        allowCache: false,
+                        persistResult: persistResult
+                    )
+                }
+            }
             return
         }
 
@@ -731,6 +954,11 @@ class DataStore: ObservableObject {
                         self.holeDetectionDataByCourse[course.id] = detectionData
                         if persistResult {
                             self.saveHoleDetectionData()
+                            // Server-side persistence — write to courses
+                            // table so any device picking up this round
+                            // (or another user playing the same course)
+                            // skips the analyzer.
+                            self.uploadBlobDetectionResults(courseId: course.id, data: detectionData)
                         }
                         self.holeDetectionRunStateByCourse[course.id] = HoleDetectionRunState(
                             isRunning: false,
@@ -925,10 +1153,31 @@ class DataStore: ObservableObject {
         guard let roundIndex = rounds.firstIndex(where: { $0.id == round.id }) else { return }
 
         rounds[roundIndex].currentHoleIndex = newIndex
+        rounds[roundIndex].lastActivityAt = Date()
         saveRounds()
 
         // Sync to Watch
         if let r = rounds.first(where: { $0.id == round.id }) ?? rounds.first { SupabaseSync.shared.upsertRound(r) }
+    }
+
+    /// Mark a round finished. Manual button + lifecycle sweep both call this.
+    /// Idempotent: setting `endedAt` on an already-ended round is a no-op.
+    func endRound(_ round: Round, reason: String = "manual") {
+        guard let idx = rounds.firstIndex(where: { $0.id == round.id }) else { return }
+        guard rounds[idx].endedAt == nil else { return }
+        rounds[idx].endedAt = Date()
+        saveRounds()
+        dprint("📱 [DataStore] Ended round \(round.id) — \(reason)")
+        SupabaseSync.shared.upsertRound(rounds[idx])
+        if currentRoundId == round.id { currentRoundId = nil }
+    }
+
+    /// End every in-progress round. Used by startRound — once the user
+    /// starts a new round, any prior open round is implicitly over.
+    func endAnyOngoingRound(reason: String) {
+        for r in rounds where r.endedAt == nil {
+            endRound(r, reason: reason)
+        }
     }
 
     func completeHole(in round: Round, holeNumber: Int) {
@@ -1492,21 +1741,29 @@ private final class HoleDetectionAnalyzer {
             let centroidX = Double(sumX) / Double(area)
             let centroidY = Double(sumY) / Double(area)
 
-            let sandPixels = countSandPixels(
-                aroundMinX: minX,
-                minY: minY,
-                maxX: maxX,
-                maxY: maxY,
+            // Sand-surround percentage replaces the old "raw count of sand
+            // pixels in bounding-box-extended-by-radius" metric. The new
+            // metric is: cast 72 rays from the centroid, walk past the
+            // blob's own green pixels, then walk 10 yd outward; record the
+            // fraction of rays that hit any sand pixel within that window.
+            // Rewards greens RINGED by bunkers (the diagnostic geometry of
+            // a real green) without rewarding a single huge bunker on one
+            // side. Mirrors the algorithm proven out in HoleDetect.
+            let sandSurroundPct = computeSandSurroundFraction(
+                centroidX: centroidX,
+                centroidY: centroidY,
+                isGreen: isGreen,
                 pixelData: pixelData,
                 width: width,
-                height: height
+                height: height,
+                metersPerPixel: metersPerPixel
             )
 
             let greenness = calculateGreennessScore(
                 area: area,
                 minWidth: minWidth,
                 elongation: elongation,
-                sandPixels: sandPixels
+                sandSurroundPct: sandSurroundPct
             )
 
             let hull = convexHull(points: boundaryPoints)
@@ -1581,46 +1838,81 @@ private final class HoleDetectionAnalyzer {
         )
     }
 
-    private func countSandPixels(
-        aroundMinX minX: Int,
-        minY: Int,
-        maxX: Int,
-        maxY: Int,
+    /// Sand-surround percentage for a single blob — the angular-coverage
+    /// metric proven out in HoleDetect. Casts `sandSurroundRays` rays from
+    /// the centroid (every 5° by default), walks past the blob's own green
+    /// pixels (using the precomputed `isGreen` mask — no color-matching
+    /// needed), then walks `sandSurroundDistanceYards` outward; records
+    /// the fraction of rays that hit any sand pixel within that window.
+    /// Returns a value in [0, 100] (1-decimal).
+    private func computeSandSurroundFraction(
+        centroidX: Double,
+        centroidY: Double,
+        isGreen: [Bool],
         pixelData: [UInt8],
         width: Int,
-        height: Int
-    ) -> Int {
-        let startX = max(0, minX - sandScanRadius)
-        let endX = min(width - 1, maxX + sandScanRadius)
-        let startY = max(0, minY - sandScanRadius)
-        let endY = min(height - 1, maxY + sandScanRadius)
+        height: Int,
+        metersPerPixel: Double
+    ) -> Double {
+        let rayCount = 72
+        let distanceYards = 10.0
+        let yardsPerMeter = 1.09361
+        let metersPerYard = 1.0 / yardsPerMeter
+        let outwardSteps = max(1, Int(((distanceYards * metersPerYard) / metersPerPixel).rounded()))
+        let maxBlobSkip = 200
 
-        var sandPixels = 0
-        for y in stride(from: startY, through: endY, by: 2) {
-            for x in stride(from: startX, through: endX, by: 2) {
-                let offset = (y * width + x) * 4
-                let r = Int(pixelData[offset])
-                let g = Int(pixelData[offset + 1])
-                let b = Int(pixelData[offset + 2])
-                if abs(r - sandColor.r) <= sandTolerance &&
-                    abs(g - sandColor.g) <= sandTolerance &&
-                    abs(b - sandColor.b) <= sandTolerance {
-                    sandPixels += 1
-                }
-            }
+        @inline(__always)
+        func pxIsGreen(_ x: Int, _ y: Int) -> Bool {
+            if x < 0 || x >= width || y < 0 || y >= height { return false }
+            return isGreen[y * width + x]
         }
 
-        // Mirror the stride compensation used in HoleDetect.
-        return sandPixels * 4
+        @inline(__always)
+        func pxIsSand(_ x: Int, _ y: Int) -> Bool {
+            if x < 0 || x >= width || y < 0 || y >= height { return false }
+            let o = (y * width + x) * 4
+            let r = Int(pixelData[o]), g = Int(pixelData[o + 1]), b = Int(pixelData[o + 2])
+            return abs(r - sandColor.r) <= sandTolerance
+                && abs(g - sandColor.g) <= sandTolerance
+                && abs(b - sandColor.b) <= sandTolerance
+        }
+
+        var hits = 0
+        for i in 0..<rayCount {
+            let angle = Double(i) / Double(rayCount) * 2.0 * .pi
+            let dx = cos(angle)
+            let dy = sin(angle)
+            // Walk past in-blob green pixels first (radial exit through perimeter)
+            var step = 0
+            while step < maxBlobSkip {
+                let x = Int((centroidX + dx * Double(step)).rounded())
+                let y = Int((centroidY + dy * Double(step)).rounded())
+                if !pxIsGreen(x, y) { break }
+                step += 1
+            }
+            // Then walk outward checking for sand
+            var rayHit = false
+            for k in 0...outwardSteps {
+                let x = Int((centroidX + dx * Double(step + k)).rounded())
+                let y = Int((centroidY + dy * Double(step + k)).rounded())
+                if pxIsSand(x, y) { rayHit = true; break }
+            }
+            if rayHit { hits += 1 }
+        }
+        let pct = Double(hits) / Double(rayCount) * 1000.0
+        return (pct.rounded()) / 10.0
     }
 
-    private func calculateGreennessScore(area: Int, minWidth: Double, elongation: Double, sandPixels: Int) -> Int {
-        let sandContrib = Double(sandPixels) * sandWeight
+    /// Greenness score: shape-only base, then multiplied by sand-surround %
+    /// when > 1 (no penalty for unbunkered greens). Mirrors the formula in
+    /// HoleDetect's `calculateGreennessScore`.
+    private func calculateGreennessScore(area: Int, minWidth: Double, elongation: Double, sandSurroundPct: Double) -> Int {
         let areaContrib = Double(area) * areaWeight
         let widthContrib = minWidth * widthWeight
         let elongationPenalty = max(elongation * elongation, 1.0e-6)
-        let greenness = (sandContrib + areaContrib + widthContrib) / elongationPenalty
-        return Int(round(greenness))
+        let base = (areaContrib + widthContrib) / elongationPenalty
+        let multiplier = sandSurroundPct > 1.0 ? sandSurroundPct : 1.0
+        return Int((base * multiplier).rounded())
     }
 
     private func mergeDuplicateBlobs(_ blobs: [HoleDetectionBlob]) -> [HoleDetectionBlob] {

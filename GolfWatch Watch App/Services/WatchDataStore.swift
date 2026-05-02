@@ -65,15 +65,76 @@ class WatchDataStore: ObservableObject {
             sortBy: [SortDescriptor(\Round.date, order: .reverse)]
         )
         let rounds = (try? context.fetch(descriptor)) ?? []
-        let mostRecent = rounds.first { $0.date >= cutoff }
+        let mostRecent = rounds.first { $0.endedAt == nil && $0.date >= cutoff }
         let newId = mostRecent?.id
         if newId != currentRoundId { currentRoundId = newId }
+        // Make sure the in-memory osm_polygons cache is populated for the
+        // current round's course. The resolver populates it on a fresh
+        // round-start, but resumed rounds (cold launch, mid-round app
+        // restart, cross-device handoff) never go through that path —
+        // without this, green detection / putter auto-switch / auto-
+        // advance silently do nothing because filteredGreenCandidates
+        // returns empty.
+        if let courseId = mostRecent?.courseId, osmCourseDataByCourse[courseId] == nil {
+            hydrateOsmDataForCourse(courseId)
+        }
+    }
+
+    /// Fire-and-forget fetch of `courses.osm_polygons` for the given course
+    /// id; on success, populates `osmCourseDataByCourse[courseId]`.
+    /// Called from `refreshCurrentRound` whenever a round becomes current
+    /// without having gone through the resolver this session.
+    private func hydrateOsmDataForCourse(_ courseId: UUID) {
+        struct Row: Decodable { let osm_polygons: OSMCourseData? }
+        ClientEventLogger.log("greenHydrate.start", detail: [
+            "courseId": .string(courseId.uuidString)
+        ])
+        Task { [weak self] in
+            do {
+                let rows: [Row] = try await SupabaseManager.shared
+                    .from("courses")
+                    .select("osm_polygons")
+                    .eq("id", value: courseId.uuidString)
+                    .limit(1)
+                    .execute()
+                    .value
+                let osm = rows.first?.osm_polygons
+                ClientEventLogger.log("greenHydrate.fetched", detail: [
+                    "rowCount": .integer(rows.count),
+                    "hasOsm": .bool(osm != nil),
+                    "greenCount": .integer(osm?.greens.count ?? 0),
+                    "holeCount": .integer(osm?.holes.count ?? 0)
+                ])
+                guard let osm = osm else { return }
+                await MainActor.run {
+                    self?.osmCourseDataByCourse[courseId] = osm
+                }
+            } catch {
+                ClientEventLogger.log("greenHydrate.failed", detail: [
+                    "error": .string("\(error)")
+                ])
+            }
+        }
     }
 
     @Published var holeDetectionDataByCourse: [UUID: CourseHoleDetectionData] = [:]
+    /// Course ids whose blob detection request has been sent to the iPhone
+    /// but not yet returned. Drives the placement-view "Analyzing course
+    /// geometry…" waiting state. Cleared when blob data arrives or after
+    /// a 60s timeout.
+    @Published var pendingBlobDetectionCourseIds: Set<UUID> = []
     /// In-memory cache of OSM course data keyed by courseId. Populated when the
     /// resolver completes; consumed by AutoAdvanceMonitor's visited-green check.
     @Published var osmCourseDataByCourse: [UUID: OSMCourseData] = [:]
+    /// Per-hole yardage from the selected tee for the current round, keyed
+    /// by hole number. Populated on round-start by fetching `course_tee_holes`
+    /// for the user's chosen tee. Drives the "official" yardage display
+    /// when the user hasn't yet teed off (no strokes recorded for the hole),
+    /// before falling back to live GPS distance once the round is in motion.
+    @Published var teeHoleYardages: [Int: Int] = [:]
+    /// Per-hole par from the API scorecard for the currently-selected tee.
+    /// Used to skip the par picker in HolePlacementView when known.
+    @Published var teeHolePars: [Int: Int] = [:]
     /// The user's assigned palette color in their current playgroup. Persists
     /// across devices because it's read from `playgroup_members.color` (set
     /// once at host/join time and stored in Supabase). Defaults to blue when
@@ -93,13 +154,8 @@ class WatchDataStore: ObservableObject {
 
     /// Streamed during round start ("Locating…", "Pebble Beach — loading…").
     @Published var roundStartStatus: String?
-    @Published var pendingPOIPicker: [RoundResolver.POICandidate]?
-    private var pendingPOIPickerCompletion: ((RoundResolver.POICandidate?) -> Void)?
-
-    /// Set when the resolver finds exactly one nearby saved course and needs
-    /// the user to confirm "Play <name>?" or "Different course".
-    @Published var pendingExistingCoursePrompt: RoundResolver.ExistingCourseMatch?
-    private var pendingExistingCourseCompletion: ((Bool) -> Void)?
+    @Published var pendingCoursePicker: [RoundResolver.CourseCandidate]?
+    private var pendingCoursePickerCompletion: ((RoundResolver.CourseCandidate?) -> Void)?
 
     /// Set after the resolver completes with GolfCourseAPI scorecard data —
     /// the user picks a tee from the cached tee list before the round opens.
@@ -140,12 +196,42 @@ class WatchDataStore: ObservableObject {
     // currentRoundId persistence; no longer used (the SwiftData store is
     // the source of truth, refreshCurrentRound queries it).
 
+    private var lifecycleTimer: Timer?
+
     private init() {
         loadUserDefaults()
         setupConnectivity()
         // Touch the auto-advance monitor so its location subscription wires up
         // immediately at app launch.
         _ = AutoAdvanceMonitor.shared
+        startRoundLifecycleSweep()
+    }
+
+    /// 60s timer evaluating the current round against the inactivity (>1h)
+    /// and off-course (>2km) gates. Fires `endRound` on a positive result.
+    /// Idempotent — keeps running even when no current round exists, since
+    /// the next round picks up at the next tick.
+    private func startRoundLifecycleSweep() {
+        lifecycleTimer?.invalidate()
+        let timer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
+            self?.evaluateRoundLifecycle()
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        lifecycleTimer = timer
+        // Fire once at startup so a stale round on launch ends immediately
+        // without waiting 60s.
+        evaluateRoundLifecycle()
+    }
+
+    private func evaluateRoundLifecycle() {
+        guard let round = currentRound else { return }
+        let decision = RoundLifecycleEvaluator.evaluate(
+            round: round,
+            location: LocationManager.shared.location?.coordinate
+        )
+        if decision.shouldEnd {
+            endRound(reason: decision.reason ?? "lifecycle")
+        }
     }
 
     /// Called from GolfWatchApp at startup.
@@ -305,10 +391,32 @@ class WatchDataStore: ObservableObject {
 
     // MARK: - Current Round / Hole
 
+    /// Cache backing `currentRound`. SwiftData @Model classes are reference
+    /// types, so a stored reference stays current even when the underlying
+    /// row is mutated from elsewhere (RealtimeSync echoes, local writes,
+    /// etc.) — we just need to refetch when `currentRoundId` itself changes.
+    /// Without this cache, `currentRound` did a fresh `FetchDescriptor` +
+    /// `context.fetch` on every access; ActiveRoundView's body reads
+    /// currentRound 10+ times per evaluation, which produced ~30-40
+    /// SwiftData fetches per second during play, backed up the main thread,
+    /// and caused watchOS to throttle Digital Crown event delivery.
+    private var _cachedCurrentRound: Round?
+    private var _cachedCurrentRoundIdForRound: UUID?
+
     var currentRound: Round? {
-        guard let id = currentRoundId, let context = context else { return nil }
+        guard let id = currentRoundId, let context = context else {
+            _cachedCurrentRound = nil
+            _cachedCurrentRoundIdForRound = nil
+            return nil
+        }
+        if id == _cachedCurrentRoundIdForRound, let cached = _cachedCurrentRound {
+            return cached
+        }
         let descriptor = FetchDescriptor<Round>(predicate: #Predicate { $0.id == id })
-        return (try? context.fetch(descriptor))?.first
+        let fetched = (try? context.fetch(descriptor))?.first
+        _cachedCurrentRound = fetched
+        _cachedCurrentRoundIdForRound = id
+        return fetched
     }
 
     var currentHoleIndex: Int { currentRound?.currentHoleIndex ?? 0 }
@@ -430,12 +538,30 @@ class WatchDataStore: ObservableObject {
         )
         context.insert(stroke)
         round.strokes.append(stroke)
+        round.lastActivityAt = Date()
         try? context.save()
 
         // Push to Supabase via the shared sync layer.
         SupabaseSync.shared.upsertStroke(stroke, roundId: round.id)
+        SupabaseSync.shared.upsertRound(round)
         objectWillChange.send()
         return stroke.id
+    }
+
+    /// Convenience: adds a penalty stroke at the current GPS. Penalties no
+    /// longer get placed on the map (the placement-mode UI was removed); each
+    /// call is just "+1 to the score." Picks any available club for the
+    /// `clubId` slot since `Stroke.clubId` is non-optional and the value is
+    /// unused for penalties.
+    @discardableResult
+    func addPenaltyStroke() -> UUID? {
+        guard let club = availableClubs.first else { return nil }
+        return addStroke(clubId: club.id, isPenalty: true)
+    }
+
+    /// Penalty stroke count for a hole. Drives the orange "P: N" readout.
+    func penaltyCount(for hole: Hole) -> Int {
+        currentRound?.strokes.filter { $0.holeNumber == hole.number && $0.isPenalty }.count ?? 0
     }
 
     func updateStrokeClub(strokeId: UUID, clubId: UUID) {
@@ -452,9 +578,43 @@ class WatchDataStore: ObservableObject {
     func updateCurrentHoleIndex(newIndex: Int) {
         guard let round = currentRound, let context = context else { return }
         round.currentHoleIndex = newIndex
+        round.lastActivityAt = Date()
         try? context.save()
         SupabaseSync.shared.upsertRound(round)
         objectWillChange.send()
+    }
+
+    /// Mark the current round finished. Manual button + lifecycle sweep both
+    /// route through here. Idempotent — re-ending an already-ended round
+    /// is a no-op.
+    func endRound(reason: String = "manual") {
+        guard let round = currentRound, let context = context else { return }
+        guard round.endedAt == nil else { return }
+        round.endedAt = Date()
+        try? context.save()
+        SupabaseSync.shared.upsertRound(round)
+        dprint("⌚ [WatchDataStore] Ended round \(round.id) — \(reason)")
+        refreshCurrentRound()
+        objectWillChange.send()
+    }
+
+    /// End every still-open round. Used by startRound — once the user
+    /// kicks off a new round, any prior open round is implicitly over.
+    func endAnyOngoingRound(reason: String) {
+        guard let context = context else { return }
+        let descriptor = FetchDescriptor<Round>(
+            predicate: #Predicate { $0.endedAt == nil }
+        )
+        let open = (try? context.fetch(descriptor)) ?? []
+        let now = Date()
+        for r in open {
+            r.endedAt = now
+            SupabaseSync.shared.upsertRound(r)
+        }
+        if !open.isEmpty {
+            try? context.save()
+            dprint("⌚ [WatchDataStore] Ended \(open.count) prior round(s) — \(reason)")
+        }
     }
 
     func completeHole(holeNumber: Int) {
@@ -512,8 +672,13 @@ class WatchDataStore: ObservableObject {
 
     private func setupConnectivity() {
         connectivity.onReceiveHoleDetectionData = { [weak self] detectionData in
+            ClientEventLogger.log("blob.received", detail: [
+                "courseId": .string(detectionData.courseId.uuidString),
+                "blobCount": .integer(detectionData.blobs.count)
+            ])
             DispatchQueue.main.async {
                 self?.holeDetectionDataByCourse[detectionData.courseId] = detectionData
+                self?.pendingBlobDetectionCourseIds.remove(detectionData.courseId)
             }
         }
         // Watch is the authority for filter settings — push current value to iPhone on launch.
@@ -572,7 +737,6 @@ class WatchDataStore: ObservableObject {
         ClientEventLogger.log("addNextHole.saved", detail: ["holeNumber": .integer(nextHoleNumber), "holeCount": .integer(round.holes.count)])
         SupabaseSync.shared.upsertRound(round)
         ClientEventLogger.log("addNextHole.upsertEnqueued")
-        AutoAdvanceMonitor.shared.resetForCurrentHole()
         objectWillChange.send()
         ClientEventLogger.log("addNextHole.objectWillChangeSent")
     }
@@ -586,7 +750,6 @@ class WatchDataStore: ObservableObject {
         round.currentHoleIndex = nextHoleNumber - 1
         try? context.save()
         SupabaseSync.shared.upsertRound(round)
-        AutoAdvanceMonitor.shared.resetForCurrentHole()
         objectWillChange.send()
     }
 
@@ -622,7 +785,6 @@ class WatchDataStore: ObservableObject {
         let prevIndex = currentHoleIndex - 1
         guard prevIndex >= 0 else { return }
         updateCurrentHoleIndex(newIndex: prevIndex)
-        AutoAdvanceMonitor.shared.resetForCurrentHole()
     }
 
     // MARK: - Start Round (resolver-backed)
@@ -645,14 +807,8 @@ class WatchDataStore: ObservableObject {
             },
             coursePicker: { [weak self] candidates, choose in
                 DispatchQueue.main.async {
-                    self?.pendingPOIPicker = candidates
-                    self?.pendingPOIPickerCompletion = choose
-                }
-            },
-            existingCoursePrompt: { [weak self] match, choose in
-                DispatchQueue.main.async {
-                    self?.pendingExistingCoursePrompt = match
-                    self?.pendingExistingCourseCompletion = choose
+                    self?.pendingCoursePicker = candidates
+                    self?.pendingCoursePickerCompletion = choose
                 }
             },
             completion: { [weak self] resolution in
@@ -717,29 +873,23 @@ class WatchDataStore: ObservableObject {
         startRound(from: resolution, selectedTeeId: tee?.id)
     }
 
-    func pickPOICandidate(_ candidate: RoundResolver.POICandidate?) {
-        let cb = pendingPOIPickerCompletion
-        pendingPOIPicker = nil
-        pendingPOIPickerCompletion = nil
+    func pickCourseCandidate(_ candidate: RoundResolver.CourseCandidate?) {
+        let cb = pendingCoursePickerCompletion
+        pendingCoursePicker = nil
+        pendingCoursePickerCompletion = nil
         cb?(candidate)
-    }
-
-    /// Called by the home view's "Play <course>?" prompt. `confirmed=true`
-    /// → resolver fast-paths to the existing course; false → falls through
-    /// to OSM resolution.
-    func answerExistingCoursePrompt(confirmed: Bool) {
-        let cb = pendingExistingCourseCompletion
-        pendingExistingCoursePrompt = nil
-        pendingExistingCourseCompletion = nil
-        cb?(confirmed)
     }
 
     private func startRound(from resolution: RoundResolver.Resolution, selectedTeeId: UUID?) {
         guard let context = context else { return }
+        // Starting a new round implies any prior open round is finished.
+        endAnyOngoingRound(reason: "new round starting")
         if let osm = resolution.osmData {
             osmCourseDataByCourse[resolution.courseId] = osm
         }
 
+        // Round.holes is a snapshot — built from OSM data when available,
+        // otherwise a single placeholder hole the user fills in as they go.
         let holes: [Hole]
         if resolution.tier == .full, let osm = resolution.osmData {
             holes = osm.holes
@@ -757,43 +907,30 @@ class WatchDataStore: ObservableObject {
             holes = [Hole(number: 1, teeId: selectedTeeId)]
         }
 
-        // Ensure a Course row exists for this resolution. Without it, the
-        // resolver's existing-course-first proximity check on subsequent
-        // round-starts at the same location finds nothing — and without
-        // an existing Course row to carry external_course_id, every
-        // subsequent round at the same course re-hits the GolfCourseAPI
-        // Edge Function. Look up by id; create if missing. The Course's
-        // own holes (separate from round.holes — round.holes is a snapshot)
-        // come from the resolution's OSM data when available.
+        // Ensure a local Course mirror of the (shared) row exists. The
+        // resolver already INSERTed the shared row when isExistingCourse=false,
+        // and the row already exists when true. We mirror so view code can
+        // resolve names/holes against SwiftData without round-tripping.
         let lookupId = resolution.courseId
         let courseDescriptor = FetchDescriptor<Course>(
             predicate: #Predicate { $0.id == lookupId }
         )
         let existingCourse = (try? context.fetch(courseDescriptor))?.first
-        let courseExternalId = existingCourse?.externalCourseId
-            ?? resolution.scorecardCourse.map { String($0.id) }
         let course: Course
         if let existing = existingCourse {
             existing.name = resolution.courseName
-            if let ext = courseExternalId {
+            if let ext = resolution.scorecardCourse.map({ String($0.id) }) {
                 existing.externalCourseId = ext
             }
             course = existing
         } else {
-            // Build a Course with a separate copy of the holes (not the same
-            // instances as round.holes — the round snapshots its own).
-            let courseHoles = holes.map { rh -> Hole in
-                let h = Hole(number: rh.number, par: rh.par, teeId: rh.teeId)
-                h.latitude = rh.latitude
-                h.longitude = rh.longitude
-                return h
-            }
-            for h in courseHoles { context.insert(h) }
             course = Course(
                 id: resolution.courseId,
                 name: resolution.courseName,
-                holes: courseHoles,
-                externalCourseId: courseExternalId
+                holes: [],
+                centerLat: resolution.courseCoordinate.latitude,
+                centerLon: resolution.courseCoordinate.longitude,
+                externalCourseId: resolution.scorecardCourse.map { String($0.id) }
             )
             context.insert(course)
         }
@@ -808,9 +945,97 @@ class WatchDataStore: ObservableObject {
         context.insert(newRound)
         try? context.save()
         refreshCurrentRound()
-        SupabaseSync.shared.upsertCourse(course)
+        // Only mirror our local Course edits to Supabase when the row was
+        // already there (isExistingCourse=true). When isExistingCourse=false
+        // the resolver just INSERTed the canonical shared row carrying all
+        // the geo + osm_polygons fields — calling upsertCourse here would
+        // overwrite that with the thinner local mirror.
+        if resolution.isExistingCourse {
+            SupabaseSync.shared.upsertCourse(course)
+        }
         SupabaseSync.shared.upsertRound(newRound)
-        dprint("⌚ [WatchDataStore] Started round at \(resolution.courseName) (tier=\(resolution.tier), \(holes.count) holes, tee=\(selectedTeeId?.uuidString ?? "none"), external=\(courseExternalId ?? "nil"))")
+        dprint("⌚ [WatchDataStore] Started round at \(resolution.courseName) (tier=\(resolution.tier), \(holes.count) holes, tee=\(selectedTeeId?.uuidString ?? "none"), existing=\(resolution.isExistingCourse))")
+        // Hydrate per-hole yardage AND par for the selected tee. Yardage
+        // drives the scorecard yardage readout on each new hole; par
+        // drives the auto-skip of the par picker in HolePlacementView.
+        // Wiped on round end / start of next round.
+        teeHoleYardages = [:]
+        teeHolePars = [:]
+        if let teeId = selectedTeeId {
+            Task { [weak self] in
+                do {
+                    let holes = try await GolfCourseAPIService.shared.cachedHoles(forTeeId: teeId)
+                    let yardageMap = Dictionary(uniqueKeysWithValues: holes.compactMap { h -> (Int, Int)? in
+                        guard let yds = h.yardage else { return nil }
+                        return (h.holeNumber, yds)
+                    })
+                    let parMap = Dictionary(uniqueKeysWithValues: holes.compactMap { h -> (Int, Int)? in
+                        guard let par = h.par else { return nil }
+                        return (h.holeNumber, par)
+                    })
+                    await MainActor.run {
+                        self?.teeHoleYardages = yardageMap
+                        self?.teeHolePars = parMap
+                    }
+                } catch {
+                    dprint("⌚ [WatchDataStore] cached tee holes fetch failed: \(error)")
+                }
+            }
+        }
+        // Blob detection is the fallback for courses without usable OSM
+        // green data. Two cases that need it:
+        //   1. No OSM data at all (course outside OSM, or relation
+        //      missing entirely).
+        //   2. OSM data was returned, but the relation is incomplete —
+        //      no `golf=green` features tagged inside the course bounds.
+        //      Wekiva GC is an example: relation + bunkers + cartpaths
+        //      are mapped but not greens/tees/holes. Without falling
+        //      back here, the user lands in manual placement mode with
+        //      nothing on the map to work with.
+        let needsBlobDetection: Bool = {
+            guard let osm = resolution.osmData else { return true }
+            return osm.greens.isEmpty
+        }()
+        if needsBlobDetection {
+            let reason: String = resolution.osmData == nil
+                ? "noOsmData"
+                : "osmGreensEmpty"
+            ClientEventLogger.log("blob.request", detail: [
+                "courseId": .string(resolution.courseId.uuidString),
+                "reason": .string(reason)
+            ])
+            // Flip the round's hole-detection flag on so the placement UI
+            // (HolePlacementView) actually shows blob candidates as overlays.
+            // Without this, blobs arrive at the watch but the picker filters
+            // them out — round.holeDetectionEnabled defaults to false.
+            if let round = currentRound, round.holeDetectionEnabled != true {
+                round.holeDetectionEnabled = true
+                try? context.save()
+                SupabaseSync.shared.upsertRound(round)
+                ClientEventLogger.log("blob.request.holeDetectionEnabled", detail: [
+                    "roundId": .string(round.id.uuidString)
+                ])
+                objectWillChange.send()
+            }
+            // Mark pending so HolePlacementView shows the waiting overlay
+            // and disables manual placement until results arrive (or
+            // timeout). Cleared in `connectivity.onReceiveHoleDetectionData`.
+            pendingBlobDetectionCourseIds.insert(resolution.courseId)
+            WatchConnectivityManager.shared.sendHoleDetectionRequest(courseId: resolution.courseId)
+            // 60s safety timeout — if blobs never come back (iPhone offline,
+            // analyzer error), unstick the UI so user can manually place.
+            let courseId = resolution.courseId
+            DispatchQueue.main.asyncAfter(deadline: .now() + 60) { [weak self] in
+                guard let self = self else { return }
+                if self.pendingBlobDetectionCourseIds.contains(courseId)
+                    && self.holeDetectionDataByCourse[courseId] == nil {
+                    self.pendingBlobDetectionCourseIds.remove(courseId)
+                    ClientEventLogger.log("blob.request.timedOut", detail: [
+                        "courseId": .string(courseId.uuidString)
+                    ])
+                }
+            }
+        }
     }
 
     func startManualQuickRound() {
@@ -833,10 +1058,8 @@ class WatchDataStore: ObservableObject {
     private static func statusString(for step: RoundResolver.Step) -> String? {
         switch step {
         case .locating: return "Locating…"
-        case .checkingExisting: return "Checking saved courses…"
-        case .confirmingExisting(let match): return "Found \(match.courseName)"
+        case .searchingShared: return "Checking nearby courses…"
         case .searchingPOIs: return "Searching nearby courses…"
-        case .checkingDB: return "Checking saved courses…"
         case .picking: return "Pick a course"
         case .loadingCourseData(let name): return "\(name) — loading…"
         case .ready: return nil
@@ -961,6 +1184,13 @@ class WatchDataStore: ObservableObject {
 class ClubPredictionManager {
     static let shared = ClubPredictionManager()
 
+    /// Club types skipped by distance-based prediction unconditionally.
+    /// - "Sand": special-purpose, only chosen by manual override.
+    /// "Putt" is NOT here — it's excluded conditionally by the caller (only
+    /// when an OSM green polygon is available for the current hole, since
+    /// polygon containment is the authoritative signal in that case). When
+    /// no polygon exists, distance-based prediction can still pick putter
+    /// as the fallback.
     static let excludedFromPrediction: Set<String> = ["Sand"]
 
     private let naiveDistances: [String: Int] = [

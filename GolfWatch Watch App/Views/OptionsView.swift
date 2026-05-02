@@ -11,21 +11,19 @@ struct OptionsView: View {
     @Binding var showingDistanceEditor: Bool
     @Binding var isFullViewMode: Bool
     @Binding var manualClubOverride: Bool
-    @Binding var navigateToAccelTest: Bool
     @Binding var navigateToViewSettings: Bool
     @Binding var navigateToClubRecommend: Bool
     @Binding var navigateToPredictGreen: Bool
-    @Binding var isPlacingPenalty: Bool
+    @Binding var isPlacingTarget: Bool
+    @Binding var minimalScreenMode: Bool
 
     // Closures for actions
     var updateMapPosition: () -> Void
     var updateNoHoleMapPosition: () -> Void
-    var deleteLastStroke: () -> Void
     var dismissParent: () -> Void
-    var canUndo: Bool
 
-    @State private var showingUndoConfirmation = false
     @State private var showingMultiplayer = false
+    @State private var showingEndRoundConfirm = false
     @AppStorage(PlaygroupChannel.liveDotsEnabledKey) private var liveDotsEnabled = true
 
     var body: some View {
@@ -89,16 +87,22 @@ struct OptionsView: View {
                     .padding(.horizontal, 8)
                 }
 
-                // Second row: Undo and Edit buttons
+                // Second row: Target placement and Talk
                 HStack(spacing: 8) {
-                    // Undo button - shows confirmation
+                    // Target placement — toggles the on-map target placement
+                    // mode. Was previously a button on the main screen
+                    // bottom-left; that slot is now the Undo button. Target
+                    // placement is the lower-frequency action so it lives
+                    // here in the pull-up.
                     Button(action: {
-                        showingUndoConfirmation = true
+                        showingOptions = false
+                        isPlacingTarget = true
+                        WKInterfaceDevice.current().play(.click)
                     }) {
                         HStack(spacing: 6) {
-                            Image(systemName: "arrow.uturn.backward")
+                            Image(systemName: "scope")
                                 .font(.system(size: 14, weight: .bold))
-                            Text("Undo")
+                            Text("Target")
                                 .font(.system(size: 12, weight: .semibold))
                                 .lineLimit(1)
                                 .minimumScaleFactor(0.8)
@@ -106,12 +110,12 @@ struct OptionsView: View {
                         .foregroundColor(.white)
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 14)
-                        .background(Color.red.opacity(0.9))
+                        .background(Color.blue.opacity(0.9))
                         .cornerRadius(8)
                     }
                     .buttonStyle(PlainButtonStyle())
-                    .disabled(!canUndo)
-                    .opacity(canUndo ? 1.0 : 0.5)
+                    .disabled(store.currentHole == nil)
+                    .opacity(store.currentHole == nil ? 0.5 : 1.0)
 
                     // Push-to-talk (walkie-talkie) — press-and-hold to record,
                     // release to send. Visible whether or not in a playgroup;
@@ -122,12 +126,11 @@ struct OptionsView: View {
                 }
                 .padding(.horizontal, 8)
 
-                // Third row: Penalty and Home buttons
+                // Third row: Penalty (+1 stroke per tap, sheet stays open
+                // so user can tap multiple times) and Battery toggle.
                 HStack(spacing: 8) {
-                    // Penalty button - enters penalty placement mode
                     Button(action: {
-                        showingOptions = false
-                        isPlacingPenalty = true
+                        store.addPenaltyStroke()
                         WKInterfaceDevice.current().play(.click)
                     }) {
                         HStack(spacing: 6) {
@@ -148,15 +151,19 @@ struct OptionsView: View {
                     .disabled(store.currentHole.map { store.isHoleCompleted($0.number) } ?? true)
                     .opacity((store.currentHole.map { store.isHoleCompleted($0.number) } ?? true) ? 0.5 : 1.0)
 
+                    // Battery / minimal-screen-mode toggle. Was a tiny
+                    // floating button on the main map; moved here to keep
+                    // the main view uncluttered. Tap toggles in place;
+                    // sheet stays open so the user can preview the change
+                    // by closing.
                     Button(action: {
-                        SwingDetectionManager.shared.stopMonitoring()
-                        showingOptions = false
-                        dismissParent()
+                        minimalScreenMode.toggle()
+                        WKInterfaceDevice.current().play(.click)
                     }) {
                         HStack(spacing: 6) {
-                            Image(systemName: "house.fill")
+                            Image(systemName: minimalScreenMode ? "batteryblock.fill" : "batteryblock")
                                 .font(.system(size: 14, weight: .bold))
-                            Text("Home")
+                            Text("Battery")
                                 .font(.system(size: 12, weight: .semibold))
                                 .lineLimit(1)
                                 .minimumScaleFactor(0.8)
@@ -164,12 +171,57 @@ struct OptionsView: View {
                         .foregroundColor(.white)
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 14)
-                        .background(Color.gray.opacity(0.9))
+                        .background(minimalScreenMode ? Color.green.opacity(0.9) : Color.gray.opacity(0.9))
                         .cornerRadius(8)
                     }
                     .buttonStyle(PlainButtonStyle())
                 }
                 .padding(.horizontal, 8)
+
+                // Home — moved to its own row below to make room for the
+                // Battery toggle one row up.
+                Button(action: {
+                    SwingDetectionManager.shared.stopMonitoring()
+                    showingOptions = false
+                    dismissParent()
+                }) {
+                    HStack(spacing: 8) {
+                        Image(systemName: "house.fill")
+                            .font(.system(size: 14, weight: .bold))
+                        Text("Home")
+                            .font(.system(size: 13, weight: .semibold))
+                    }
+                    .foregroundColor(.white)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 12)
+                    .background(Color.gray.opacity(0.9))
+                    .cornerRadius(8)
+                }
+                .buttonStyle(PlainButtonStyle())
+                .padding(.horizontal, 8)
+
+                // End Round — manual finish. Confirmation alert prevents
+                // accidental taps; the action sets `endedAt` which clears
+                // the round from `currentRound` everywhere.
+                if store.currentRound != nil {
+                    Button(action: {
+                        showingEndRoundConfirm = true
+                    }) {
+                        HStack(spacing: 8) {
+                            Image(systemName: "flag.checkered")
+                                .font(.system(size: 14, weight: .bold))
+                            Text("End Round")
+                                .font(.system(size: 13, weight: .semibold))
+                        }
+                        .foregroundColor(.white)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 12)
+                        .background(Color.red.opacity(0.9))
+                        .cornerRadius(8)
+                    }
+                    .buttonStyle(PlainButtonStyle())
+                    .padding(.horizontal, 8)
+                }
 
                 // Edit Hole — moved down here so the second-row spot can be
                 // used for the higher-frequency Talk button. Edit Hole is a
@@ -214,13 +266,6 @@ struct OptionsView: View {
                         }
                     }
 
-                    settingsNavButton("Motion Config") {
-                        showingOptions = false
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                            navigateToAccelTest = true
-                        }
-                    }
-
                     settingsNavButton("Predict Green") {
                         showingOptions = false
                         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
@@ -243,10 +288,11 @@ struct OptionsView: View {
                 MultiplayerView()
             }
         }
-        .confirmationDialog("Undo Last Stroke?", isPresented: $showingUndoConfirmation, titleVisibility: .visible) {
-            Button("Undo", role: .destructive) {
-                deleteLastStroke()
+        .alert("End Round?", isPresented: $showingEndRoundConfirm) {
+            Button("End Round", role: .destructive) {
+                store.endRound(reason: "manual")
                 showingOptions = false
+                dismissParent()
             }
             Button("Cancel", role: .cancel) { }
         }
