@@ -15,14 +15,34 @@ struct HoleOverlayControls: View {
     let onNext: () -> Void
     let onAddHole: () -> Void
 
+    /// True when the user's GPS sits inside the current hole's green
+    /// polygon. Source-agnostic — same `filteredGreenCandidates` lookup
+    /// used elsewhere. Drives the on-green color flip on the big
+    /// yardage readout (white → bright green).
+    private var isUserOnCurrentGreen: Bool {
+        guard let userCoord = userLocation?.coordinate,
+              let holeCoord = hole.coordinate,
+              let courseId = store.rounds.first(where: { $0.endedAt == nil })?.courseId
+        else { return false }
+        let blob = store.filteredGreenCandidates(for: courseId)
+            .first { $0.contains(holeCoord) }
+        guard let blob, !blob.polygon.isEmpty else { return false }
+        return blob.contains(userCoord)
+    }
+
     var body: some View {
         ZStack {
             VStack(spacing: 0) {
                 // Distance display section
             VStack(spacing: 8) {
-                Text(formattedDistance)
-                    .font(.system(size: 60, weight: .bold, design: .rounded))
-                    .foregroundColor(.white)
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text(formattedDistance)
+                        .font(.system(size: 60, weight: .bold, design: .rounded))
+                        .foregroundColor(isUserOnCurrentGreen
+                            ? Color(red: 0.4, green: 0.95, blue: 0.4)
+                            : .white)
+                    ElevationDeltaLabel()
+                }
 
                 if let errorMessage = errorMessage {
                     Text(errorMessage)

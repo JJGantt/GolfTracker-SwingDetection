@@ -39,11 +39,15 @@ struct GolfBallMarker: View {
 
 struct UserLocationMarker: View {
     let heading: CLLocationDirection?
+    /// User's playgroup color (or default blue when solo). Watch renders
+    /// its own user dot in the same color via `store.myPlayerColor` —
+    /// keeping the iOS marker color-aware brings them in sync.
+    var color: Color = .blue
 
     var body: some View {
         Image(systemName: "location.north.fill")
             .font(.system(size: 30))
-            .foregroundColor(.blue)
+            .foregroundColor(color)
             .rotationEffect(.degrees(heading ?? 0))
             .shadow(color: .white, radius: 2)
             .shadow(color: .black.opacity(0.3), radius: 1)

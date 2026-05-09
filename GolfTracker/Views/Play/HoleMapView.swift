@@ -24,9 +24,119 @@ struct HoleMapView: View {
         currentRound?.isHoleCompleted(hole.number) ?? false
     }
 
+    /// Source-agnostic green polygon for the current hole — same lookup
+    /// the watch uses (`filteredGreenCandidates` returns OSM polygons
+    /// when present, blob-detected polygons otherwise).
+    private var currentGreenPolygon: [CLLocationCoordinate2D]? {
+        guard let courseId = currentRound?.courseId,
+              let holeCoord = hole.coordinate else { return nil }
+        return DataStore.shared.filteredGreenCandidates(for: courseId)
+            .first { $0.contains(holeCoord) }?
+            .polygonCoordinates
+    }
+
+    /// OSM hole centerline. Only rendered when full-tier OSM coverage —
+    /// partial-tier (mismapped refs) gives the wrong line.
+    private var currentCenterline: [CLLocationCoordinate2D]? {
+        guard let courseId = currentRound?.courseId,
+              let osm = DataStore.shared.osmCourseData(forCourseId: courseId),
+              osm.tier == .full else { return nil }
+        let match = osm.holes.first { Int($0.ref ?? "") == hole.number }
+        guard let pts = match?.centerline, pts.count >= 2 else { return nil }
+        return pts.map(\.coordinate)
+    }
+
+    /// Putts on this hole — strokes whose club resolves to type "Putt".
+    /// Drives the "Putts: N" label above the green.
+    private var puttCount: Int {
+        guard let round = currentRound else { return 0 }
+        return round.strokes.reduce(0) { count, stroke in
+            guard stroke.holeNumber == hole.number, !stroke.isPenalty else { return count }
+            guard let club = DataStore.shared.availableClubs.first(where: { $0.id == stroke.clubId }) else { return count }
+            return DataStore.shared.getTypeName(for: club) == "Putt" ? count + 1 : count
+        }
+    }
+
+    /// User color = their playgroup color via PlaygroupChannel, or the
+    /// default solo color (palette[0]) when not in a playgroup.
+    private var userColor: Color {
+        let uid = AuthManager.shared.currentUserId ?? ""
+        return Color(hex: PlaygroupChannel.shared.color(for: uid))
+    }
+
+    /// Yards to display next to a stroke marker. Last stroke shows
+    /// live distance to the user; prior strokes show static distance
+    /// to the next stroke. Mirrors the watch's logic in
+    /// `ActiveRoundView.swift` stroke annotation block.
+    private func strokeYardage(strokesForHole: [Stroke], index: Int) -> Int? {
+        guard !strokesForHole.isEmpty, index < strokesForHole.count else { return nil }
+        let stroke = strokesForHole[index]
+        let strokeLoc = CLLocation(latitude: stroke.coordinate.latitude, longitude: stroke.coordinate.longitude)
+        if index == strokesForHole.count - 1 {
+            guard let user = userLocation else { return nil }
+            return Int(user.distance(from: strokeLoc) * 1.09361)
+        } else {
+            let next = strokesForHole[index + 1]
+            let nextLoc = CLLocation(latitude: next.coordinate.latitude, longitude: next.coordinate.longitude)
+            return Int(strokeLoc.distance(from: nextLoc) * 1.09361)
+        }
+    }
+
     var body: some View {
         MapReader { proxy in
             Map(position: $position) {
+                // Green polygon outline — white stroke, no fill (Apple Maps
+                // tile already shows the green underneath). Same shape as
+                // watch ActiveRoundView.
+                if let pts = currentGreenPolygon, pts.count >= 3 {
+                    MapPolygon(coordinates: pts)
+                        .foregroundStyle(.clear)
+                        .stroke(.white, lineWidth: 1.5)
+                }
+
+                // OSM hole centerline — yellow dashed line tracing the
+                // ideal tee→green path. Matches watch styling.
+                if let line = currentCenterline {
+                    MapPolyline(coordinates: line)
+                        .stroke(
+                            .yellow.opacity(0.7),
+                            style: StrokeStyle(lineWidth: 1.5, lineCap: .round, dash: [4, 3])
+                        )
+                }
+
+                // "Putts: N" label above the green polygon. Anchored at
+                // the polygon vertex furthest from the user (lands at
+                // visual top in the rotated hole-at-top view), with a
+                // screen-space upward offset so it sits outside the
+                // green outline. Hidden at zero. Centroid fallback when
+                // no user location.
+                if puttCount > 0,
+                   let pts = currentGreenPolygon, !pts.isEmpty {
+                    let anchorCoord: CLLocationCoordinate2D = {
+                        if let userCoord = userLocation?.coordinate,
+                           let furthest = pts.max(by: { a, b in
+                               let dA = CLLocation(latitude: userCoord.latitude, longitude: userCoord.longitude)
+                                   .distance(from: CLLocation(latitude: a.latitude, longitude: a.longitude))
+                               let dB = CLLocation(latitude: userCoord.latitude, longitude: userCoord.longitude)
+                                   .distance(from: CLLocation(latitude: b.latitude, longitude: b.longitude))
+                               return dA < dB
+                           }) {
+                            return furthest
+                        }
+                        // Centroid fallback
+                        let lat = pts.map(\.latitude).reduce(0, +) / Double(pts.count)
+                        let lon = pts.map(\.longitude).reduce(0, +) / Double(pts.count)
+                        return CLLocationCoordinate2D(latitude: lat, longitude: lon)
+                    }()
+                    Annotation("", coordinate: anchorCoord) {
+                        Text("Putts: \(puttCount)")
+                            .font(.system(size: 14, weight: .bold, design: .rounded))
+                            .foregroundColor(.white)
+                            .shadow(color: .black, radius: 2)
+                            .offset(y: -16)
+                    }
+                }
+
                 // Show current hole marker (green if completed, yellow if not)
                 if let holeCoord = hole.coordinate {
                     Annotation("", coordinate: holeCoord) {
@@ -39,31 +149,44 @@ struct HoleMapView: View {
                     }
                 }
 
-                // Show strokes for current hole
+                // Show strokes for current hole. Yardage label to LEFT
+                // of the dot, ElevationDeltaLabel to RIGHT. Both rendered
+                // as ZStack overlays with offsets so the dot stays
+                // anchored to the stroke's coordinate (HStack would shift
+                // the anchor as text widths varied). Mirrors watch.
                 if let round = currentRound {
                     let strokesForHole = round.strokes.filter { $0.holeNumber == hole.number }
                     ForEach(Array(strokesForHole.enumerated()), id: \.element.id) { index, stroke in
-                        // Show stroke position
                         Annotation("", coordinate: stroke.coordinate) {
-                            if stroke.isPenalty {
-                                // Orange ball for penalty strokes
-                                ZStack {
+                            ZStack {
+                                if stroke.isPenalty {
                                     Circle()
                                         .fill(.orange)
                                         .frame(width: 25, height: 25)
                                     Text("\(stroke.strokeNumber)")
                                         .font(.system(size: 12, weight: .bold))
                                         .foregroundColor(.white)
+                                } else {
+                                    GolfBallMarker(strokeNumber: stroke.strokeNumber)
                                 }
-                                .onTapGesture {
-                                    onStrokeTap(index)
+
+                                // Yardage label — last stroke = live distance to
+                                // user, prior strokes = static distance to next
+                                // stroke. Same logic as watch.
+                                let yardage: Int? = strokeYardage(strokesForHole: strokesForHole, index: index)
+                                if let yds = yardage {
+                                    Text("\(yds)")
+                                        .font(.system(size: 14, weight: .bold))
+                                        .foregroundColor(.white)
+                                        .shadow(color: .black, radius: 2)
+                                        .fixedSize()
+                                        .offset(x: -32)
                                 }
-                            } else {
-                                GolfBallMarker(strokeNumber: stroke.strokeNumber)
-                                    .onTapGesture {
-                                        onStrokeTap(index)
-                                    }
+                                ElevationDeltaLabel(coordinate: stroke.coordinate, fontSize: 14)
+                                    .fixedSize()
+                                    .offset(x: 32)
                             }
+                            .onTapGesture { onStrokeTap(index) }
                         }
                     }
                 }
@@ -71,7 +194,7 @@ struct HoleMapView: View {
                 // Show user location
                 if let userLocation = userLocation {
                     Annotation("", coordinate: userLocation.coordinate) {
-                        UserLocationMarker(heading: heading)
+                        UserLocationMarker(heading: heading, color: userColor)
                     }
                 }
 
@@ -123,14 +246,17 @@ struct HoleMapView: View {
                             if let distance = distanceToTarget(target) {
                                 VStack {
                                     Spacer()
-                                    Text("\(distance)")
-                                        .font(.system(size: 14, weight: .bold))
-                                        .foregroundColor(.black)
-                                        .padding(.horizontal, 6)
-                                        .padding(.vertical, 3)
-                                        .background(Color.white.opacity(0.9))
-                                        .clipShape(RoundedRectangle(cornerRadius: 6))
-                                        .offset(y: 24) // Position below the scope icon
+                                    HStack(alignment: .firstTextBaseline, spacing: 4) {
+                                        Text("\(distance)")
+                                            .font(.system(size: 14, weight: .bold))
+                                            .foregroundColor(.black)
+                                        ElevationDeltaLabel(coordinate: target, fontSize: 12)
+                                    }
+                                    .padding(.horizontal, 6)
+                                    .padding(.vertical, 3)
+                                    .background(Color.white.opacity(0.9))
+                                    .clipShape(RoundedRectangle(cornerRadius: 6))
+                                    .offset(y: 24) // Position below the scope icon
                                 }
                                 .frame(height: 32)
                             }
