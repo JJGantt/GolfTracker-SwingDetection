@@ -20,6 +20,11 @@ struct HoleMapView: View {
     /// isn't in a playgroup these collections are empty and nothing renders.
     @ObservedObject private var playgroup = PlaygroupChannel.shared
 
+    /// Per-hole breadcrumb cache pulled from `round_altitude_readings`.
+    /// Drives the fading-dot trail. Loaded by `HolePlayView` on appear
+    /// + hole change; this view just reads.
+    @ObservedObject private var roundPath = RoundPathCache.shared
+
     private var isHoleCompleted: Bool {
         currentRound?.isHoleCompleted(hole.number) ?? false
     }
@@ -134,6 +139,27 @@ struct HoleMapView: View {
                             .foregroundColor(.white)
                             .shadow(color: .black, radius: 2)
                             .offset(y: -16)
+                    }
+                }
+
+                // Breadcrumb trail — fading dots from the per-hole
+                // path samples uploaded by whichever device captured
+                // them (typically the watch). Most recent ~60 samples
+                // with a brightness gradient — older samples fade.
+                // Same styling as the watch's breadcrumb.
+                if let round = currentRound {
+                    let breadcrumbs = roundPath.samples(forRoundId: round.id, holeNumber: hole.number)
+                    let recent = Array(breadcrumbs.suffix(60))
+                    let n = recent.count
+                    let userColorBC = userColor
+                    ForEach(Array(recent.enumerated()), id: \.element.id) { idx, bc in
+                        let opacity = 0.08 + 0.55 * Double(idx) / Double(max(n - 1, 1))
+                        Annotation("", coordinate: bc.coordinate) {
+                            Circle()
+                                .fill(userColorBC)
+                                .frame(width: 6, height: 6)
+                                .opacity(opacity)
+                        }
                     }
                 }
 

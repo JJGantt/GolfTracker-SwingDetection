@@ -462,6 +462,7 @@ struct HolePlayView: View {
             }
 
             pushElevationReadoutHole()
+            refreshBreadcrumb()
         }
         .onDisappear {
             // Realtime is round-scoped — drop the WebSocket when leaving play.
@@ -475,6 +476,7 @@ struct HolePlayView: View {
                 PlaygroupChannel.shared.updateCurrentHole(newIndex + 1, userId: uid)
             }
             pushElevationReadoutHole()
+            refreshBreadcrumb()
         }
         .onChange(of: currentRound) { _, _ in
             applyLocationModeForRound()
@@ -865,5 +867,23 @@ struct HolePlayView: View {
     func pushElevationReadoutHole() {
         guard let hole = currentHole else { return }
         ElevationReadout.shared.updateHole(number: hole.number, green: hole.coordinate)
+    }
+
+    /// Pull breadcrumb data for the active round + current hole from
+    /// `round_altitude_readings`. Up-to-30s stale (matches the watch's
+    /// upload flush cadence). Force-refreshes on each call so a hole
+    /// that's currently being played picks up new samples on every
+    /// hole-index change. Cached per (roundId, holeNumber) so back-nav
+    /// between holes during a session doesn't refetch unnecessarily.
+    func refreshBreadcrumb() {
+        guard let round = activeRound, let hole = currentHole else { return }
+        // Force refresh for the *current* hole (may have new uploads),
+        // cache-first for any other hole (its data is settled).
+        let isCurrentHole = round.currentHoleIndex == currentHoleIndex
+        RoundPathCache.shared.loadIfNeeded(
+            roundId: round.id,
+            holeNumber: hole.number,
+            forceRefresh: isCurrentHole
+        )
     }
 }
