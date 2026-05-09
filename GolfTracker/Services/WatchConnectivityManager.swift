@@ -29,6 +29,10 @@ class WatchConnectivityManager: NSObject, ObservableObject {
     /// Watch asks iPhone to run hole detection for a course id. iPhone-only
     /// callback; consumed by `DataStore` which kicks off `startHoleDetection`.
     var onReceiveHoleDetectionRequest: ((UUID) -> Void)?
+    /// Fires once activation completes (success path). Currently used by
+    /// iOS DataStore to push the authoritative hole-filter settings down
+    /// to the watch on each (re)activation.
+    var onSessionActivated: (() -> Void)?
 
     // Pending sends queued until the WC session is activated.
     private var pendingHoleDetectionData: CourseHoleDetectionData?
@@ -144,9 +148,42 @@ class WatchConnectivityManager: NSObject, ObservableObject {
     func sendAuthSession(_ session: AuthSession?) {
         if let session = session, let data = try? JSONEncoder().encode(session) {
             mergeIntoApplicationContext(["authSession": data])
+            // Also sendMessage for live delivery — applicationContext is
+            // durable but coalescing-only and may not arrive immediately.
+            // The dual path matches the dev-param / debug-logging pattern.
+            guard WCSession.default.activationState == .activated,
+                  WCSession.default.isReachable else { return }
+            WCSession.default.sendMessage(
+                ["type": "authSession", "data": data],
+                replyHandler: nil,
+                errorHandler: nil
+            )
         } else {
             mergeIntoApplicationContext(["authSession": Data()])
+            guard WCSession.default.activationState == .activated,
+                  WCSession.default.isReachable else { return }
+            WCSession.default.sendMessage(
+                ["type": "authSession", "data": Data()],
+                replyHandler: nil,
+                errorHandler: nil
+            )
         }
+    }
+
+    /// Watch → iPhone: ask for the current auth session to be re-sent. Used
+    /// by the watch's auto-recovery flow when a Supabase call returns 401
+    /// — the watch may have a stale session and the iPhone has a fresh one.
+    /// iPhone responds by calling sendAuthSession with whatever it has.
+    func requestAuthSessionRefresh() {
+        #if os(watchOS)
+        guard WCSession.default.activationState == .activated,
+              WCSession.default.isReachable else { return }
+        WCSession.default.sendMessage(
+            ["type": "requestAuthSession"],
+            replyHandler: nil,
+            errorHandler: nil
+        )
+        #endif
     }
 
     // MARK: - Debug logging toggle (iPhone → Watch)
@@ -175,6 +212,12 @@ class WatchConnectivityManager: NSObject, ObservableObject {
     }
     func sendDevParam(key: String, intValue: Int) {
         sendDevParamPayload([key: intValue])
+    }
+    func sendDevParam(key: String, boolValue: Bool) {
+        sendDevParamPayload([key: boolValue])
+    }
+    func sendDevParam(key: String, stringValue: String) {
+        sendDevParamPayload([key: stringValue])
     }
     private func sendDevParamPayload(_ payload: [String: Any]) {
         var contextPayload: [String: Any] = (WCSession.default.applicationContext["devParams"] as? [String: Any]) ?? [:]
@@ -323,6 +366,33 @@ extension WatchConnectivityManager: WCSessionDelegate {
             }
             return
         }
+
+        // Live-delivery auth session push from iPhone — same payload as the
+        // applicationContext path but no coalescing delay. Used by the
+        // watch's auto-recovery flow when a Supabase call returned 401.
+        if let type = message["type"] as? String, type == "authSession",
+           let data = message["data"] as? Data {
+            DispatchQueue.main.async {
+                if data.isEmpty {
+                    WatchAuthSession.shared.apply(nil)
+                } else if let session = try? JSONDecoder().decode(AuthSession.self, from: data) {
+                    WatchAuthSession.shared.apply(session)
+                }
+            }
+            return
+        }
+        #endif
+
+        // Watch asks iPhone to re-send current AuthSession. Triggered by
+        // the watch's recovery path when its Supabase calls 401. iPhone
+        // forwards whatever it has via the existing dual-channel push.
+        #if os(iOS)
+        if let type = message["type"] as? String, type == "requestAuthSession" {
+            DispatchQueue.main.async {
+                self.sendAuthSession(AuthManager.shared.session)
+            }
+            return
+        }
         #endif
     }
 
@@ -400,13 +470,33 @@ extension WatchConnectivityManager: WCSessionDelegate {
     /// AutoAdvance + step gate read UserDefaults dynamically (no @Published),
     /// so they don't need a poke; ignorePracticeRadius does.
     private func applyDevParamToLiveObjects(key: String, value: Any) {
+        let m = SwingDetectionManager.shared
         switch key {
-        case "ignorePracticeRadius":
-            if let d = value as? Double {
-                SwingDetectionManager.shared.ignorePracticeRadius = d
-            }
-        default:
-            break
+        case "ignorePracticeRadius":         if let d = value as? Double { m.ignorePracticeRadius = d }
+        case "autoAdd":                      if let b = value as? Bool   { m.autoAdd = b }
+        case "detectionMode":                if let s = value as? String, let mode = DetectionMode(rawValue: s) { m.detectionMode = mode; m.resetToIdle() }
+        case "unifPreset":                   if let s = value as? String, let p = UnifDetectPreset(rawValue: s) { m.applyUnifPreset(p) }
+        case "unifSetupCeiling":             if let d = value as? Double { m.unifSetupCeiling = d }
+        case "unifSetupMinDur":              if let d = value as? Double { m.unifSetupMinDur = d }
+        case "unifValleyProm":               if let d = value as? Double { m.unifValleyProm = d }
+        case "unifPeakProm":                 if let d = value as? Double { m.unifPeakProm = d }
+        case "unifValleyDist":               if let i = value as? Int    { m.unifValleyDist = i }
+        case "unifPeakDist":                 if let i = value as? Int    { m.unifPeakDist = i }
+        case "unifAreaWindow":               if let d = value as? Double { m.unifAreaWindow = d }
+        case "unifBsMaxRotMag":              if let d = value as? Double { m.unifBsMaxRotMag = d }
+        case "unifSwingFSAreaThresh":        if let d = value as? Double { m.unifSwingFSAreaThresh = d }
+        case "unifContactTVSumMin":          if let d = value as? Double { m.unifContactTVSumMin = d }
+        case "unifContactMinExtrema":        if let i = value as? Int    { m.unifContactMinExtrema = i }
+        case "unifExtremaSpreadMax":         if let d = value as? Double { m.unifExtremaSpreadMax = d }
+        case "unifBaselineTVMax":            if let d = value as? Double { m.unifBaselineTVMax = d }
+        case "unifContactProminence":        if let d = value as? Double { m.unifContactProminence = d }
+        case "unifContactWindowRight":       if let d = value as? Double { m.unifContactWindowRight = d }
+        case "unifMaxReversals":             if let i = value as? Int    { m.unifMaxReversals = i }
+        case "unifBsToFsMin":                if let d = value as? Double { m.unifBsToFsMin = d }
+        case "unifBsToFsMax":                if let d = value as? Double { m.unifBsToFsMax = d }
+        case "unifFSBSRatioMin":             if let d = value as? Double { m.unifFSBSRatioMin = d }
+        case "unifPrePeakDtMax":             if let d = value as? Double { m.unifPrePeakDtMax = d }
+        default: break
         }
     }
     #endif
@@ -455,6 +545,7 @@ extension WatchConnectivityManager: WCSessionDelegate {
         if let error = error {
             dprint("❌ WCSession activation failed: \(error.localizedDescription)")
         } else {
+            DispatchQueue.main.async { self.onSessionActivated?() }
             if let detectionData = self.pendingHoleDetectionData {
                 self.actuallySendHoleDetectionData(detectionData)
                 self.pendingHoleDetectionData = nil

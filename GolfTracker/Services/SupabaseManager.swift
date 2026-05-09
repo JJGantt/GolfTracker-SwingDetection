@@ -57,6 +57,17 @@ struct ForwardingSupabaseLogger: SupabaseLogger {
             "message": .string(message.message),
             "fn": .string("\(message.function):\(message.line)")
         ])
+        // Auto-recovery hook (watch only): if the SDK reports a 401-like
+        // failure, ask the iPhone to re-send the current AuthSession via
+        // WC. Common cause is a stale refresh token after the watch's been
+        // offline; the iPhone usually has a fresh one. Throttled inside
+        // WatchAuthSession so we don't spam on repeated errors.
+        #if os(watchOS)
+        let lower = message.message.lowercased()
+        if lower.contains("401") || lower.contains("unauthorized") || lower.contains("jwt expired") {
+            WatchAuthSession.shared.requestRefreshFromPhone()
+        }
+        #endif
     }
 }
 

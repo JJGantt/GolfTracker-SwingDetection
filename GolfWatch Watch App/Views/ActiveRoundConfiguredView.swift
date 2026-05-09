@@ -14,7 +14,6 @@ struct ActiveRoundConfiguredView: View {
     @Binding var manualClubOverride: Bool
     @Binding var navigateToViewSettings: Bool
     @Binding var navigateToClubRecommend: Bool
-    @Binding var navigateToPredictGreen: Bool
     @Binding var isPlacingTarget: Bool
     @Binding var minimalScreenMode: Bool
     @Binding var selectedClubIndex: Double
@@ -50,7 +49,6 @@ struct ActiveRoundConfiguredView: View {
                     manualClubOverride: $manualClubOverride,
                     navigateToViewSettings: $navigateToViewSettings,
                     navigateToClubRecommend: $navigateToClubRecommend,
-                    navigateToPredictGreen: $navigateToPredictGreen,
                     isPlacingTarget: $isPlacingTarget,
                     minimalScreenMode: $minimalScreenMode,
                     updateMapPosition: updateMapPosition,
@@ -78,9 +76,6 @@ struct ActiveRoundConfiguredView: View {
             }
             .onChange(of: navigateToClubRecommend) { _, isActive in
                 routeSettingsSheet(.clubRecommend, isActive: isActive)
-            }
-            .onChange(of: navigateToPredictGreen) { _, isActive in
-                routeSettingsSheet(.predictGreen, isActive: isActive)
             }
     }
 
@@ -130,8 +125,6 @@ struct ActiveRoundConfiguredView: View {
                 manualClubOverride: $manualClubOverride,
                 showingDistanceEditor: $showingDistanceEditor
             )
-        case .predictGreen:
-            PredictGreenSettingsView(store: store)
         }
     }
 
@@ -143,8 +136,6 @@ struct ActiveRoundConfiguredView: View {
             navigateToViewSettings = false
         case .clubRecommend:
             navigateToClubRecommend = false
-        case .predictGreen:
-            navigateToPredictGreen = false
         }
 
         activeSettingsSheet = sheet

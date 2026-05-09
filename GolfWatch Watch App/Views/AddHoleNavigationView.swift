@@ -25,6 +25,12 @@ struct HolePlacementView: View {
         return store.filteredGreenCandidates(for: store.currentRound?.courseId)
     }
 
+    /// Pre-filtered list passed to the MapContent ForEach. Splitting the
+    /// guard out of the loop keeps MapContentBuilder happy.
+    private var renderableBlobs: [HoleDetectionBlob] {
+        greenCandidates.filter { $0.polygonCoordinates.count >= 3 }
+    }
+
     /// True while we've asked the iPhone for blob detection but haven't
     /// received the result yet. Drives the "Analyzing course geometry…"
     /// overlay and disables tap-to-place so the user doesn't accidentally
@@ -47,10 +53,11 @@ struct HolePlacementView: View {
             MapReader { proxy in
                 Map(position: $position) {
                     // Breadcrumb trail — small dots behind the user that
-                    // fade with age. Helps orient against the map when no
-                    // heading arrow is shown.
-                    ForEach(Array(locationManager.breadcrumbs.enumerated()), id: \.element.id) { idx, bc in
-                        let n = locationManager.breadcrumbs.count
+                    // fade with age. Renders the most-recent slice of
+                    // pathSamples; the full array (no upper bound) is
+                    // captured for upload to round_altitude_readings.
+                    ForEach(Array(Array(locationManager.pathSamples.suffix(60)).enumerated()), id: \.element.id) { idx, bc in
+                        let n = min(locationManager.pathSamples.count, 60)
                         let opacity = 0.08 + 0.55 * Double(idx) / Double(max(n - 1, 1))
                         Annotation("", coordinate: bc.coordinate) {
                             Circle()
@@ -99,18 +106,18 @@ struct HolePlacementView: View {
                         }
                     }
 
-                    // Suggested greens from phone-side blob detection
-                    ForEach(greenCandidates) { blob in
-                        if blob.polygonCoordinates.count >= 3,
-                           let first = blob.polygonCoordinates.first {
-                            let outline = blob.polygonCoordinates + [first]
-                            let isSelected = blob.id == selectedGreenBlobId
-                            MapPolyline(coordinates: outline)
-                                .stroke(
-                                    isSelected ? Color.yellow : Color.white,
-                                    lineWidth: isSelected ? 4 : 1.5
-                                )
-                        }
+                    // Suggested greens from phone-side blob detection.
+                    // Filter the empty/degenerate polygons out BEFORE the
+                    // ForEach — SwiftUI's MapContentBuilder has been
+                    // unreliable with `if` guards inside MapContent ForEach,
+                    // which is why this used to render zero outlines even
+                    // when greenCandidates was populated.
+                    ForEach(renderableBlobs) { blob in
+                        MapPolyline(coordinates: blob.polygonCoordinates + [blob.polygonCoordinates[0]])
+                            .stroke(
+                                blob.id == selectedGreenBlobId ? Color.yellow : Color.white,
+                                lineWidth: blob.id == selectedGreenBlobId ? 4 : 1.5
+                            )
                     }
                 }
                 .mapStyle(.standard(pointsOfInterest: .excludingAll))
@@ -289,6 +296,20 @@ struct HolePlacementView: View {
         guard let coordinate = temporaryHolePosition else {
             ClientEventLogger.log("HolePlacementView.save.noCoord")
             return
+        }
+        // Record this user's pick so canonical resolution at future
+        // round-starts (this user OR cross-user voting threshold) can
+        // skip placement view. blob_id nil = manual placement, excluded
+        // from voting but still beats voting for this user's own rounds.
+        if let courseId = store.currentRound?.courseId {
+            SupabaseSync.shared.upsertCourseHolePick(
+                courseId: courseId,
+                holeNumber: hole.number,
+                blobId: selectedGreenBlobId,
+                latitude: selectedGreenBlobId == nil ? coordinate.latitude : nil,
+                longitude: selectedGreenBlobId == nil ? coordinate.longitude : nil,
+                par: par
+            )
         }
         store.updateHole(holeNumber: hole.number, newCoordinate: coordinate, par: par)
         ClientEventLogger.log("HolePlacementView.save.afterUpdate")

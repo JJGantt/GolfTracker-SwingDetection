@@ -460,6 +460,8 @@ struct HolePlayView: View {
             } else {
                 updateMapPosition()
             }
+
+            pushElevationReadoutHole()
         }
         .onDisappear {
             // Realtime is round-scoped — drop the WebSocket when leaving play.
@@ -472,6 +474,7 @@ struct HolePlayView: View {
             if let uid = AuthManager.shared.currentUserId {
                 PlaygroupChannel.shared.updateCurrentHole(newIndex + 1, userId: uid)
             }
+            pushElevationReadoutHole()
         }
         .onChange(of: currentRound) { _, _ in
             applyLocationModeForRound()
@@ -853,5 +856,14 @@ struct HolePlayView: View {
                 print("📡 [HolePlayView] PlaygroupChannel start check failed: \(error.localizedDescription)")
             }
         }
+    }
+
+    /// Forward the current hole + green coord into ElevationReadout so
+    /// the live Δ-to-green tracks the player's hole. The "green" passed
+    /// is `Hole.coordinate` (green centroid for OSM rounds, user-placed
+    /// pin for manual rounds).
+    func pushElevationReadoutHole() {
+        guard let hole = currentHole else { return }
+        ElevationReadout.shared.updateHole(number: hole.number, green: hole.coordinate)
     }
 }

@@ -1,6 +1,8 @@
 import Foundation
 import CoreLocation
+import CoreMotion
 import Combine
+import Supabase
 
 /// LocationManager publishes via the classic `ObservableObject` /
 /// `@Published` pattern. We previously tried the `@Observable` macro for
@@ -18,33 +20,157 @@ class LocationManager: NSObject, ObservableObject {
     )
 
     private let locationManager = CLLocationManager()
+    private let altimeter = CMAltimeter()
+    private var altimeterRunning = false
+    /// Most recent altimeter reading, used by `currentRelativeAltitudeMeters`
+    /// for one-shot consumers (e.g. capturing alt on a stroke). Updated on
+    /// every CMAltimeter callback (~1 Hz).
+    private var latestRelativeAltitudeMeters: Double?
+    /// Running sum + count of altimeter readings since the last path
+    /// sample was emitted. Each new path sample takes the mean of these
+    /// and resets. Standing-still rows accumulate many readings (cleaner
+    /// signal); walking rows get 2-3. The modeling layer weights by
+    /// count downstream.
+    private var pathAltSum: Double = 0
+    private var pathAltCount: Int = 0
+
+    /// Read-only accessor for callers who want the most recent altimeter
+    /// reading at a specific moment (stroke recording, etc.). Same anchor
+    /// point as the path-sample data — values are comparable to each other
+    /// within one round. Returns nil while GPS test mode is on so the
+    /// real wrist-height reading isn't attached to a stroke at a fake
+    /// location (poisons stroke-elevation analysis downstream).
+    var currentRelativeAltitudeMeters: Double? {
+        isTestModeEnabled ? nil : latestRelativeAltitudeMeters
+    }
 
     @Published var location: CLLocation?
     @Published var heading: CLLocationDirection?
 
-    /// Rolling buffer of recent user GPS points, used to draw a fading
-    /// breadcrumb trail behind the user marker on the active-round and
-    /// hole-placement maps. Newest entry is last. Spacing-throttled so a
-    /// stationary user doesn't burn the whole buffer on jitter.
-    struct Breadcrumb: Identifiable {
+    /// One sample per ~3m of GPS movement during a round, paired with the
+    /// latest barometric relative altitude. Replaces the old in-memory
+    /// `Breadcrumb` rolling buffer — same data, no upper bound, plus
+    /// elevation. Drives the watch's fading breadcrumb trail (UI takes
+    /// `pathSamples.suffix(N)`) and feeds the upload queue for
+    /// `round_altitude_readings`.
+    struct PathSample: Identifiable {
         let id = UUID()
         let coordinate: CLLocationCoordinate2D
         let timestamp: Date
+        let relAltMeters: Double?
+        /// Number of altimeter readings averaged into `relAltMeters`. 1
+        /// for walking-pace rows, many for stationary rows.
+        let sampleCount: Int
     }
-    @Published private(set) var breadcrumbs: [Breadcrumb] = []
-    private let breadcrumbMaxCount = 60
-    private let breadcrumbMinSpacingMeters: CLLocationDistance = 3
+    @Published private(set) var pathSamples: [PathSample] = []
+    private let pathSampleMinSpacingMeters: CLLocationDistance = 3
 
-    private func appendBreadcrumb(_ loc: CLLocation) {
-        if let last = breadcrumbs.last {
+    /// Round-recording context. When non-nil, every new path sample is
+    /// also queued for upload to `round_altitude_readings`. Cleared on
+    /// `stopPathRecording`. The `holeNumberProvider` is read at sample
+    /// time so each row carries the hole the user was on at capture
+    /// (NOT at upload — by upload time the user may have advanced).
+    private struct RecordingContext {
+        let roundId: UUID
+        let userId: String
+        let holeNumberProvider: () -> Int
+    }
+    private var recordingContext: RecordingContext?
+    /// In-memory queue of altitude rows pending upload to
+    /// `round_altitude_readings`. Persisted to disk after every mutation
+    /// (see `pathQueueURL`) so a force-quit, crash, app exit, or
+    /// network outage doesn't drop captured samples. The on-disk JSON
+    /// is the durable source of truth; `pendingUploadRows` is the live
+    /// working copy. Loaded from disk on first round-start so any
+    /// rows from a prior aborted session get drained.
+    private var pendingUploadRows: [[String: Any]] = []
+    private let pathQueueLock = NSLock()
+    private lazy var pathQueueURL: URL = {
+        let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir.appendingPathComponent("path_upload_queue.json")
+    }()
+    /// Per-flush row cap. Keeps each PostgREST `insert` payload small so
+    /// it has a better shot at completing over a flaky cell connection.
+    /// On a successful flush we'll fire the next one immediately if
+    /// there's still backlog instead of waiting for the next 30s tick.
+    private let pathUploadChunkSize = 100
+    /// Set during an in-flight flush so a 30s tick can't double-fire
+    /// while we're still sending the previous batch.
+    private var pathFlushInFlight: Bool = false
+    private var uploadFlushTimer: Timer?
+
+    private func appendPathSample(_ loc: CLLocation) {
+        if let last = pathSamples.last {
             let prev = CLLocation(latitude: last.coordinate.latitude,
                                   longitude: last.coordinate.longitude)
-            if loc.distance(from: prev) < breadcrumbMinSpacingMeters { return }
+            if loc.distance(from: prev) < pathSampleMinSpacingMeters { return }
         }
-        breadcrumbs.append(Breadcrumb(coordinate: loc.coordinate, timestamp: Date()))
-        if breadcrumbs.count > breadcrumbMaxCount {
-            breadcrumbs.removeFirst(breadcrumbs.count - breadcrumbMaxCount)
+        // Take the mean of altimeter readings collected since the last
+        // emit, then reset. When stationary, this captures the dozens of
+        // readings that would otherwise be discarded between path samples
+        // — much cleaner signal at the points where the user actually
+        // pauses (tees, greens). When walking, this still works for the
+        // 2-3 readings collected during the ~2s it takes to cover 3m.
+        let avgAlt: Double? = pathAltCount > 0 ? pathAltSum / Double(pathAltCount) : latestRelativeAltitudeMeters
+        let count = max(pathAltCount, 1)
+        pathAltSum = 0
+        pathAltCount = 0
+
+        let sample = PathSample(
+            coordinate: loc.coordinate,
+            timestamp: loc.timestamp,
+            relAltMeters: avgAlt,
+            sampleCount: count
+        )
+        pathSamples.append(sample)
+
+        // GPS test mode: the barometer reading is real (the user's actual
+        // wrist height), but the lat/lon is fake. Persisting the row would
+        // attribute sensor data to a coordinate the user wasn't physically
+        // at — exactly the data-integrity problem the test-mode flag was
+        // added to avoid. So skip the upload entirely in test mode. The
+        // in-memory pathSamples array still updates so the breadcrumb UI
+        // works during testing.
+        if let ctx = recordingContext, !isTestModeEnabled {
+            let row: [String: Any] = [
+                "id": UUID().uuidString,
+                "round_id": ctx.roundId.uuidString,
+                "user_id": ctx.userId,
+                "hole_number": ctx.holeNumberProvider(),
+                "lat": sample.coordinate.latitude,
+                "lon": sample.coordinate.longitude,
+                "rel_alt_meters": sample.relAltMeters ?? 0,
+                "sample_count": sample.sampleCount,
+                "recorded_at": Self.iso(sample.timestamp)
+            ]
+            pathQueueLock.lock()
+            pendingUploadRows.append(row)
+            savePathQueueLocked()
+            pathQueueLock.unlock()
         }
+    }
+
+    /// Write current `pendingUploadRows` to disk. Caller must hold
+    /// `pathQueueLock`. Best-effort — a failed write doesn't surface
+    /// errors; the next mutation overwrites it.
+    private func savePathQueueLocked() {
+        guard let data = try? JSONSerialization.data(withJSONObject: pendingUploadRows) else { return }
+        try? data.write(to: pathQueueURL, options: .atomic)
+    }
+
+    /// Restore queued rows from disk (called once at first round-start).
+    /// Lets a force-quit / crash / network outage during a prior round
+    /// drain on the next round's flush cycle instead of being lost.
+    private func loadPathQueueFromDisk() {
+        pathQueueLock.lock()
+        defer { pathQueueLock.unlock() }
+        guard let data = try? Data(contentsOf: pathQueueURL),
+              let rows = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else {
+            return
+        }
+        // Prepend to anything already in memory — disk rows are older.
+        pendingUploadRows = rows + pendingUploadRows
     }
     @Published var authorizationStatus: CLAuthorizationStatus = .notDetermined
     @Published var errorMessage: String?
@@ -83,7 +209,7 @@ class LocationManager: NSObject, ObservableObject {
         simulatedTestLocation = loc
         guard isTestModeEnabled else { return }
         location = loc
-        appendBreadcrumb(loc)
+        appendPathSample(loc)
         locationPublisher.send(loc)
         errorMessage = nil
     }
@@ -243,6 +369,177 @@ class LocationManager: NSObject, ObservableObject {
         // Fall back to CLLocationManager's last known location
         return locationManager.location
     }
+
+    // MARK: - Path recording (round-scoped)
+
+    /// Begin capturing path samples for upload to `round_altitude_readings`.
+    /// Starts the barometer if available so subsequent location updates
+    /// carry a paired relative-altitude reading. Wipes any prior in-memory
+    /// path so the breadcrumb trail UI starts fresh for this round.
+    /// `holeNumberProvider` is invoked on each sample append — typically a
+    /// closure that reads `currentRound.currentHole.number` from the
+    /// platform DataStore.
+    func startPathRecording(roundId: UUID,
+                            userId: String,
+                            holeNumberProvider: @escaping () -> Int) {
+        recordingContext = RecordingContext(
+            roundId: roundId,
+            userId: userId,
+            holeNumberProvider: holeNumberProvider
+        )
+        pathSamples = []
+        // Drain any rows left over from a prior aborted session before
+        // starting fresh — they belong to the previous round but the
+        // server doesn't care, the row payload carries its own round_id.
+        loadPathQueueFromDisk()
+        startAltimeter()
+        // Bulk-flush every 30s while the round is active. Final flush
+        // happens in stopPathRecording.
+        uploadFlushTimer?.invalidate()
+        uploadFlushTimer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
+            self?.flushPathUploads()
+        }
+        dprint("[LocationManager] Path recording started for round \(roundId)")
+        ClientEventLogger.log("altitude.recording.started", detail: [
+            "roundId": .string(roundId.uuidString),
+            "altimeterAvailable": .bool(CMAltimeter.isRelativeAltitudeAvailable()),
+            "testMode": .bool(isTestModeEnabled),
+            "diskQueueCarryover": .integer(pendingUploadRows.count)
+        ])
+    }
+
+    /// Stop capturing. Drains the pending queue (chunked, retrying on
+    /// network failure) before returning. Altimeter spins down once the
+    /// drain completes. In-memory `pathSamples` stays around until the
+    /// next round starts (UI may still want to render the trail
+    /// post-round).
+    ///
+    /// Async because the final drain can take a few seconds over flaky
+    /// cell — callers (DataStore.endRound, WatchDataStore.endRound) fire
+    /// it inside a Task so the UI doesn't block.
+    func stopPathRecording() async {
+        guard recordingContext != nil else { return }
+        let totalSamples = pathSamples.count
+        let pendingAtStop = pendingUploadRows.count
+        // Stop the timer first — we don't want it firing concurrent
+        // flushes against the same queue while we're draining.
+        uploadFlushTimer?.invalidate()
+        uploadFlushTimer = nil
+        // Drain best-effort. Keep flushing until either the queue is
+        // empty or a flush fails (no point hammering when offline —
+        // the queue stays on disk and the next round picks it up).
+        var drainAttempts = 0
+        while !pendingUploadRows.isEmpty && drainAttempts < 40 {
+            drainAttempts += 1
+            let ok = await flushOneChunk()
+            if !ok { break }
+        }
+        recordingContext = nil
+        stopAltimeter()
+        dprint("[LocationManager] Path recording stopped")
+        ClientEventLogger.log("altitude.recording.stopped", detail: [
+            "totalSamples": .integer(totalSamples),
+            "pendingFlushedAtStop": .integer(pendingAtStop),
+            "remainingOnDisk": .integer(pendingUploadRows.count)
+        ])
+    }
+
+    /// Kicked by the 30s timer. Fires one chunked flush and, if there's
+    /// still backlog AND the flush succeeded, schedules another so we
+    /// drain quickly when network returns instead of waiting another
+    /// 30s per chunk.
+    private func flushPathUploads() {
+        Task { [weak self] in
+            guard let self else { return }
+            let ok = await self.flushOneChunk()
+            // If we just succeeded and there's more queued, fire again
+            // immediately. Bounded by the queue size; no risk of
+            // hot-looping because each chunk takes a full HTTP RTT.
+            if ok && !self.pendingUploadRows.isEmpty {
+                _ = await self.flushOneChunk()
+            }
+        }
+    }
+
+    /// Send up to `pathUploadChunkSize` rows in one PostgREST insert.
+    /// Returns true on success, false on any failure (network, auth,
+    /// payload). Failed rows are re-prepended to the queue and the
+    /// disk copy is rewritten to match.
+    @discardableResult
+    private func flushOneChunk() async -> Bool {
+        // Take a chunk under the lock so we don't race with a
+        // concurrent appendPathSample.
+        pathQueueLock.lock()
+        if pathFlushInFlight { pathQueueLock.unlock(); return true } // someone else has it
+        guard !pendingUploadRows.isEmpty else { pathQueueLock.unlock(); return true }
+        pathFlushInFlight = true
+        let chunkCount = min(pathUploadChunkSize, pendingUploadRows.count)
+        let chunk = Array(pendingUploadRows.prefix(chunkCount))
+        pendingUploadRows.removeFirst(chunkCount)
+        savePathQueueLocked()
+        pathQueueLock.unlock()
+
+        do {
+            let json = try JSONSerialization.data(withJSONObject: chunk)
+            let anyJson = try JSONDecoder().decode(AnyJSON.self, from: json)
+            try await SupabaseManager.shared.from("round_altitude_readings")
+                .insert(anyJson).execute()
+            dprint("[LocationManager] Uploaded \(chunk.count) altitude readings")
+            ClientEventLogger.log("altitude.flush.ok", detail: [
+                "rowCount": .integer(chunk.count),
+                "remaining": .integer(pendingUploadRows.count)
+            ])
+            pathQueueLock.lock(); pathFlushInFlight = false; pathQueueLock.unlock()
+            return true
+        } catch {
+            // Put the chunk back at the front and persist again so the
+            // next attempt picks it up. Disk copy now reflects the
+            // requeued state.
+            pathQueueLock.lock()
+            pendingUploadRows.insert(contentsOf: chunk, at: 0)
+            savePathQueueLocked()
+            pathFlushInFlight = false
+            pathQueueLock.unlock()
+            dprint("[LocationManager] Altitude upload failed (\(chunk.count) rows requeued): \(error)")
+            ClientEventLogger.log("altitude.flush.failed", detail: [
+                "rowCount": .integer(chunk.count),
+                "remaining": .integer(pendingUploadRows.count),
+                "error": .string(String(describing: error).prefix(200).description)
+            ])
+            return false
+        }
+    }
+
+    private func startAltimeter() {
+        guard !altimeterRunning else { return }
+        guard CMAltimeter.isRelativeAltitudeAvailable() else {
+            dprint("[LocationManager] Barometer unavailable — altitude readings will be nil")
+            return
+        }
+        altimeter.startRelativeAltitudeUpdates(to: .main) { [weak self] data, _ in
+            guard let self, let data else { return }
+            let v = data.relativeAltitude.doubleValue
+            self.latestRelativeAltitudeMeters = v
+            self.pathAltSum += v
+            self.pathAltCount += 1
+        }
+        altimeterRunning = true
+    }
+
+    private func stopAltimeter() {
+        guard altimeterRunning else { return }
+        altimeter.stopRelativeAltitudeUpdates()
+        altimeterRunning = false
+        latestRelativeAltitudeMeters = nil
+        pathAltSum = 0
+        pathAltCount = 0
+    }
+
+    private static func iso(_ date: Date) -> String {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return f.string(from: date)
+    }
 }
 
 extension LocationManager: CLLocationManagerDelegate {
@@ -275,7 +572,7 @@ extension LocationManager: CLLocationManagerDelegate {
         guard let newLocation = locations.last else { return }
         dprint("[LocationManager] Got location update: \(newLocation.coordinate.latitude), \(newLocation.coordinate.longitude)")
         location = newLocation
-        appendBreadcrumb(newLocation)
+        appendPathSample(newLocation)
         locationPublisher.send(newLocation)
         errorMessage = nil
     }

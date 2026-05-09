@@ -26,14 +26,7 @@ struct TestModeView: View {
                     Text(String(format: "Simulated: %.6f, %.6f", coord.latitude, coord.longitude))
                         .font(.caption.monospaced())
                         .foregroundColor(.secondary)
-                } else {
-                    Text("No simulated coordinate set — tap anywhere on the map to drop a pin.")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
                 }
-                Text("When on, both this phone and the paired watch use the simulated coordinate instead of real GPS. Round resolution, distances, hole auto-advance, and multiplayer presence all run against the simulated coord.")
-                    .font(.caption2)
-                    .foregroundColor(.secondary)
             }
             .padding()
             .background(Color(UIColor.secondarySystemBackground))

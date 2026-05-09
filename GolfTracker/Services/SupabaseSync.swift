@@ -135,6 +135,29 @@ final class SupabaseSync {
         delete(table: "holes", filterColumn: "id", filterValue: id.uuidString)
     }
 
+    /// User's pick of which blob (or manual coord) is hole N at course X.
+    /// Cross-user voting on these rows produces the canonical green at
+    /// round-start for users who haven't played the course yet.
+    func upsertCourseHolePick(courseId: UUID,
+                              holeNumber: Int,
+                              blobId: UUID?,
+                              latitude: Double?,
+                              longitude: Double?,
+                              par: Int?) {
+        guard let uid = currentUserId else { return }
+        let body: [String: AnyCodableValue] = [
+            "user_id": .string(uid),
+            "course_id": .string(courseId.uuidString),
+            "hole_number": .int(holeNumber),
+            "blob_id": blobId.map { .string($0.uuidString) } ?? .null,
+            "latitude": latitude.map(AnyCodableValue.double) ?? .null,
+            "longitude": longitude.map(AnyCodableValue.double) ?? .null,
+            "par": par.map(AnyCodableValue.int) ?? .null,
+            "updated_at": .string(iso(Date()))
+        ]
+        upsert(table: "course_hole_picks", values: body, onConflict: "user_id,course_id,hole_number", includeNulls: true)
+    }
+
     func deleteCourse(id: UUID) {
         delete(table: "courses", filterColumn: "id", filterValue: id.uuidString)
     }
@@ -188,6 +211,7 @@ final class SupabaseSync {
             "timestamp": .string(iso(stroke.timestamp)),
             "is_penalty": .bool(stroke.isPenalty),
             "trajectory_heading": stroke.trajectoryHeading.map(AnyCodableValue.double) ?? .null,
+            "rel_alt_meters": stroke.relAltMeters.map(AnyCodableValue.double) ?? .null,
             "updated_at": .string(iso(Date()))
         ]
         upsert(table: "strokes", values: body, onConflict: "id")
@@ -263,8 +287,8 @@ final class SupabaseSync {
         let filterValue: String?
     }
 
-    private func upsert(table: String, values: [String: AnyCodableValue], onConflict: String) {
-        let body = encodeValues(values)
+    private func upsert(table: String, values: [String: AnyCodableValue], onConflict: String, includeNulls: Bool = false) {
+        let body = encodeValues(values, includeNulls: includeNulls)
         let op = QueuedOperation(
             kind: .upsert,
             table: table,
@@ -368,11 +392,20 @@ final class SupabaseSync {
         return f.string(from: date)
     }
 
-    /// Encode a [String: AnyCodableValue] dict to JSON Data, dropping nulls.
-    private func encodeValues(_ values: [String: AnyCodableValue]) -> Data? {
+    /// Encode a [String: AnyCodableValue] dict to JSON Data. By default
+    /// drops nulls — most upserts are partial updates where unspecified
+    /// fields should keep their existing server-side value. Pass
+    /// `includeNulls: true` for tables where switching a field to NULL is
+    /// itself the intent (e.g. course_hole_picks toggling between blob_id
+    /// and manual lat/lon — the opposite field must be cleared).
+    private func encodeValues(_ values: [String: AnyCodableValue], includeNulls: Bool = false) -> Data? {
         var clean: [String: Any] = [:]
-        for (k, v) in values where !v.isNull {
-            clean[k] = v.jsonValue
+        for (k, v) in values {
+            if v.isNull {
+                if includeNulls { clean[k] = NSNull() }
+            } else {
+                clean[k] = v.jsonValue
+            }
         }
         return try? JSONSerialization.data(withJSONObject: clean)
     }

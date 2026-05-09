@@ -83,6 +83,21 @@ final class WatchAuthSession {
         }
     }
 
+    /// Throttled trigger to ask the iPhone for the current session via WC.
+    /// Called by the SDK error logger when a Supabase call fails with a
+    /// 401-like error — common cause is a stale refresh token after the
+    /// watch's been offline; the iPhone usually has a fresh one. Fires at
+    /// most once every `requestRefreshThrottleSeconds` so a flurry of
+    /// failing calls doesn't spam the iPhone.
+    private static let requestRefreshThrottleSeconds: TimeInterval = 10
+    private var lastRefreshRequestAt: Date = .distantPast
+    func requestRefreshFromPhone() {
+        let now = Date()
+        guard now.timeIntervalSince(lastRefreshRequestAt) >= Self.requestRefreshThrottleSeconds else { return }
+        lastRefreshRequestAt = now
+        WatchConnectivityManager.shared.requestAuthSessionRefresh()
+    }
+
     // MARK: - Session listener
 
     private var sessionListener: Task<Void, Never>?

@@ -92,17 +92,28 @@
 		6ASBMGR000000000000000B2 /* SupabaseManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6ASBMGR000000000000000B0 /* SupabaseManager.swift */; };
 		6ASCORE0000000000000001A /* ScorecardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6ASCORE00000000000000019 /* ScorecardView.swift */; };
 		6ASCORE0000000000000001B /* ScorecardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6ASCORE00000000000000019 /* ScorecardView.swift */; };
+		6AELEVLBL0000000000000A /* ElevationDeltaLabel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6AELEVLBL0000000000000B /* ElevationDeltaLabel.swift */; };
+		6AELEVLBL0000000000000C /* ElevationDeltaLabel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6AELEVLBL0000000000000B /* ElevationDeltaLabel.swift */; };
 		6ASCORE0000000000000001D /* ScorecardSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6ASCORE0000000000000001C /* ScorecardSheet.swift */; };
 		6ASCORE0000000000000001E /* ScorecardSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6ASCORE0000000000000001C /* ScorecardSheet.swift */; };
 		6ASETTC2F17000000000001 /* ClubRecommendSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6ASETTC2F17000000000002 /* ClubRecommendSettingsView.swift */; };
 		6ASETTINGS00000000000002 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6ASETTINGS00000000000001 /* SettingsView.swift */; };
 		6ATESTV000000000000000E1 /* TestModeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6ATESTV000000000000000E0 /* TestModeView.swift */; };
-		6ASETTP2F17000000000001 /* PredictGreenSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6ASETTP2F17000000000002 /* PredictGreenSettingsView.swift */; };
+		6AMOTPV000000000000000E1 /* MotionParametersView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6AMOTPV000000000000000E0 /* MotionParametersView.swift */; };
+		6AGRNFV000000000000000E1 /* GreenFiltersView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6AGRNFV000000000000000E0 /* GreenFiltersView.swift */; };
 		6ASETTV2F17000000000001 /* ViewSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6ASETTV2F17000000000002 /* ViewSettingsView.swift */; };
 		6ASUPAAUTH00000000000004 /* AuthManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6ASUPAAUTH00000000000003 /* AuthManager.swift */; };
 		6ASUPAAUTH00000000000006 /* LoginView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6ASUPAAUTH00000000000005 /* LoginView.swift */; };
 		6ASUPASYNC00000000000002 /* SupabaseSync.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6ASUPASYNC00000000000001 /* SupabaseSync.swift */; };
 		6ASUPASYNC00000000000003 /* SupabaseSync.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6ASUPASYNC00000000000001 /* SupabaseSync.swift */; };
+		6AELEVFOLDIN00000000000A /* ElevationFoldIn.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6AELEVFOLDIN00000000000B /* ElevationFoldIn.swift */; };
+		6AELEVFOLDIN00000000000C /* ElevationFoldIn.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6AELEVFOLDIN00000000000B /* ElevationFoldIn.swift */; };
+		6AELEVCACHE00000000000A /* HoleHeightCellCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6AELEVCACHE00000000000B /* HoleHeightCellCache.swift */; };
+		6AELEVCACHE00000000000C /* HoleHeightCellCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6AELEVCACHE00000000000B /* HoleHeightCellCache.swift */; };
+		6AELEVRDOUT00000000000A /* ElevationReadout.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6AELEVRDOUT00000000000B /* ElevationReadout.swift */; };
+		6AELEVRDOUT00000000000C /* ElevationReadout.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6AELEVRDOUT00000000000B /* ElevationReadout.swift */; };
+		6AHISTSHOT0000000000000A /* HistoricalFirstStrokeCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6AHISTSHOT0000000000000B /* HistoricalFirstStrokeCache.swift */; };
+		6AHISTSHOT0000000000000C /* HistoricalFirstStrokeCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6AHISTSHOT0000000000000B /* HistoricalFirstStrokeCache.swift */; };
 		6AWTALKIE0000000000000E1 /* WalkieTalkie.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6AWTALKIE0000000000000E0 /* WalkieTalkie.swift */; };
 		6AWTALKIE0000000000000E2 /* WalkieTalkie.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6AWTALKIE0000000000000E0 /* WalkieTalkie.swift */; };
 		6ACELOG000000000000000E1 /* ClientEventLogger.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6ACELOG000000000000000E0 /* ClientEventLogger.swift */; };
@@ -119,7 +130,7 @@
 		AA11BB22CC33DD44EE550018 /* UnifiedDetector.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA11BB22CC33DD44EE550019 /* UnifiedDetector.swift */; };
 		BBA6A7885FDA496CBB0C574B /* ActiveRoundView+GPSIndicator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 16BCE78889CC4D2BA4EA325D /* ActiveRoundView+GPSIndicator.swift */; };
 		BF402ACBA5ED40FE92601108 /* ActiveRoundView+Scorecard.swift in Sources */ = {isa = PBXBuildFile; fileRef = A6E32218380E4C3C93B38A12 /* ActiveRoundView+Scorecard.swift */; };
-		DCD05079795E4F9EB659C7AF /* SwingDetectionManager+ContactGates.swift in Sources */ = {isa = PBXBuildFile; fileRef = 870F6DC4F3184CDF81331B32 /* SwingDetectionManager+ContactGates.swift */; };
+		DCD05079795E4F9EB659C7AF /* SwingDetectionManager+PostPairingGates.swift in Sources */ = {isa = PBXBuildFile; fileRef = 870F6DC4F3184CDF81331B32 /* SwingDetectionManager+PostPairingGates.swift */; };
 		DDF199415BA84CF9BD09D35D /* SupabaseUploader.swift in Sources */ = {isa = PBXBuildFile; fileRef = E0D8E00B351E4F0D84DB3187 /* SupabaseUploader.swift */; };
 		E0D8E00B351E4F0D84DB31AA /* WatchAuthSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = E0D8E00B351E4F0D84DB31AB /* WatchAuthSession.swift */; };
 		E4F925C1F0D4499B99626884 /* CourseDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B06522DFDE374AFFB8DC4411 /* CourseDetailView.swift */; };
@@ -223,21 +234,27 @@
 		6ARLEVAL00000000000000F0 /* RoundLifecycleEvaluator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RoundLifecycleEvaluator.swift; sourceTree = "<group>"; };
 		6ASBMGR000000000000000B0 /* SupabaseManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SupabaseManager.swift; sourceTree = "<group>"; };
 		6ASCORE00000000000000019 /* ScorecardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScorecardView.swift; sourceTree = "<group>"; };
+		6AELEVLBL0000000000000B /* ElevationDeltaLabel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ElevationDeltaLabel.swift; sourceTree = "<group>"; };
 		6ASCORE0000000000000001C /* ScorecardSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScorecardSheet.swift; sourceTree = "<group>"; };
 		6ASETTC2F17000000000002 /* ClubRecommendSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClubRecommendSettingsView.swift; sourceTree = "<group>"; };
 		6ASETTINGS00000000000001 /* SettingsView.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		6ATESTV000000000000000E0 /* TestModeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TestModeView.swift; sourceTree = "<group>"; };
-		6ASETTP2F17000000000002 /* PredictGreenSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PredictGreenSettingsView.swift; sourceTree = "<group>"; };
+		6AMOTPV000000000000000E0 /* MotionParametersView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MotionParametersView.swift; sourceTree = "<group>"; };
+		6AGRNFV000000000000000E0 /* GreenFiltersView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GreenFiltersView.swift; sourceTree = "<group>"; };
 		6ASETTV2F17000000000002 /* ViewSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ViewSettingsView.swift; sourceTree = "<group>"; };
 		6ASUPAAUTH00000000000003 /* AuthManager.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = AuthManager.swift; sourceTree = "<group>"; };
 		6ASUPAAUTH00000000000005 /* LoginView.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = LoginView.swift; sourceTree = "<group>"; };
 		6ASUPASYNC00000000000001 /* SupabaseSync.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = SupabaseSync.swift; sourceTree = "<group>"; };
+		6AELEVFOLDIN00000000000B /* ElevationFoldIn.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = ElevationFoldIn.swift; sourceTree = "<group>"; };
+		6AELEVCACHE00000000000B /* HoleHeightCellCache.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = HoleHeightCellCache.swift; sourceTree = "<group>"; };
+		6AELEVRDOUT00000000000B /* ElevationReadout.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = ElevationReadout.swift; sourceTree = "<group>"; };
+		6AHISTSHOT0000000000000B /* HistoricalFirstStrokeCache.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = HistoricalFirstStrokeCache.swift; sourceTree = "<group>"; };
 		6AWTALKIE0000000000000E0 /* WalkieTalkie.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WalkieTalkie.swift; sourceTree = "<group>"; };
 		6ACELOG000000000000000E0 /* ClientEventLogger.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClientEventLogger.swift; sourceTree = "<group>"; };
 		6ATESTM000000000000000E0 /* TestModeService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TestModeService.swift; sourceTree = "<group>"; };
 		6CD8A1F4907C44A4BB2CA042 /* HolePlayView+AddPenaltyMode.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "HolePlayView+AddPenaltyMode.swift"; sourceTree = "<group>"; };
 		70A60D673360436FB2457C24 /* RoundDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RoundDetailView.swift; sourceTree = "<group>"; };
-		870F6DC4F3184CDF81331B32 /* SwingDetectionManager+ContactGates.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "SwingDetectionManager+ContactGates.swift"; sourceTree = "<group>"; };
+		870F6DC4F3184CDF81331B32 /* SwingDetectionManager+PostPairingGates.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "SwingDetectionManager+PostPairingGates.swift"; sourceTree = "<group>"; };
 		8713ACF846B0498E97AAC629 /* PlayerStats.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlayerStats.swift; sourceTree = "<group>"; };
 		93374566285C433CB8F2AD38 /* HolePlayView+MoveHoleMode.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "HolePlayView+MoveHoleMode.swift"; sourceTree = "<group>"; };
 		A027586C12704EBCAA1B1736 /* ActiveRoundView+ClubPrediction.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "ActiveRoundView+ClubPrediction.swift"; sourceTree = "<group>"; };
@@ -418,6 +435,8 @@
 				6ASUPAAUTH00000000000005 /* LoginView.swift */,
 				6ASETTINGS00000000000001 /* SettingsView.swift */,
 				6ATESTV000000000000000E0 /* TestModeView.swift */,
+				6AMOTPV000000000000000E0 /* MotionParametersView.swift */,
+				6AGRNFV000000000000000E0 /* GreenFiltersView.swift */,
 			);
 			path = Views;
 			sourceTree = "<group>";
@@ -432,6 +451,10 @@
 				6A7A65102026042200000002 /* DemoDataSeeder.swift */,
 				6ASUPAAUTH00000000000003 /* AuthManager.swift */,
 				6ASUPASYNC00000000000001 /* SupabaseSync.swift */,
+				6AELEVFOLDIN00000000000B /* ElevationFoldIn.swift */,
+				6AELEVCACHE00000000000B /* HoleHeightCellCache.swift */,
+				6AELEVRDOUT00000000000B /* ElevationReadout.swift */,
+				6AHISTSHOT0000000000000B /* HistoricalFirstStrokeCache.swift */,
 				6AOSMSVC00000000000000A0 /* OSMCourseService.swift */,
 				6ASBMGR000000000000000B0 /* SupabaseManager.swift */,
 				6ARSLVR000000000000000C0 /* RoundResolver.swift */,
@@ -490,6 +513,7 @@
 				6ASCORE00000000000000019 /* ScorecardView.swift */,
 				6ASCORE0000000000000001C /* ScorecardSheet.swift */,
 				6AMULTI00000000000001100 /* MultiplayerView.swift */,
+				6AELEVLBL0000000000000B /* ElevationDeltaLabel.swift */,
 			);
 			path = Shared;
 			sourceTree = "<group>";
@@ -540,7 +564,7 @@
 				AA11BB22CC33DD44EE550015 /* RollingMotionBuffer.swift */,
 				AA11BB22CC33DD44EE550019 /* UnifiedDetector.swift */,
 				FB7FE8DA8D214A009C45D055 /* SwingDetectionManager+RawAccel.swift */,
-				870F6DC4F3184CDF81331B32 /* SwingDetectionManager+ContactGates.swift */,
+				870F6DC4F3184CDF81331B32 /* SwingDetectionManager+PostPairingGates.swift */,
 				E0D8E00B351E4F0D84DB3187 /* SupabaseUploader.swift */,
 				E0D8E00B351E4F0D84DB31AB /* WatchAuthSession.swift */,
 			);
@@ -556,7 +580,6 @@
 				6AACTIONS2F16000000000002 /* OptionsView.swift */,
 				6ASETTV2F17000000000002 /* ViewSettingsView.swift */,
 				6ASETTC2F17000000000002 /* ClubRecommendSettingsView.swift */,
-				6ASETTP2F17000000000002 /* PredictGreenSettingsView.swift */,
 				6AD5EAC62EE3B7EB00DDDCF0 /* ActiveRoundView.swift */,
 				6A9A2C572F7DED6B008ADD6B /* ActiveRoundConfiguredView.swift */,
 				6AONBOARD000000000000003 /* WatchOnboardingView.swift */,
@@ -700,10 +723,15 @@
 				6ASCORE0000000000000001A /* ScorecardView.swift in Sources */,
 				6ASCORE0000000000000001D /* ScorecardSheet.swift in Sources */,
 				6AMULTI00000000000001101 /* MultiplayerView.swift in Sources */,
+				6AELEVLBL0000000000000A /* ElevationDeltaLabel.swift in Sources */,
 				6AONBOARD000000000000002 /* OnboardingView.swift in Sources */,
 				6ASUPAAUTH00000000000004 /* AuthManager.swift in Sources */,
 				6ASUPAAUTH00000000000006 /* LoginView.swift in Sources */,
 				6ASUPASYNC00000000000002 /* SupabaseSync.swift in Sources */,
+				6AELEVFOLDIN00000000000A /* ElevationFoldIn.swift in Sources */,
+				6AELEVCACHE00000000000A /* HoleHeightCellCache.swift in Sources */,
+				6AELEVRDOUT00000000000A /* ElevationReadout.swift in Sources */,
+				6AHISTSHOT0000000000000A /* HistoricalFirstStrokeCache.swift in Sources */,
 				6AOSMSVC00000000000000A1 /* OSMCourseService.swift in Sources */,
 				6ASBMGR000000000000000B1 /* SupabaseManager.swift in Sources */,
 				6ARSLVR000000000000000C1 /* RoundResolver.swift in Sources */,
@@ -718,6 +746,8 @@
 				6APLAYG00000000000001001 /* PlaygroupService.swift in Sources */,
 				6ASETTINGS00000000000002 /* SettingsView.swift in Sources */,
 				6ATESTV000000000000000E1 /* TestModeView.swift in Sources */,
+				6AMOTPV000000000000000E1 /* MotionParametersView.swift in Sources */,
+				6AGRNFV000000000000000E1 /* GreenFiltersView.swift in Sources */,
 				6C8B4EAC38754620BA3C4CB0 /* RoundDetailView.swift in Sources */,
 				6AB09FE92F15D47F0087C4ED /* ClubSetEditorView.swift in Sources */,
 				6AB09FEA2F15D47F0087C4ED /* HomeView.swift in Sources */,
@@ -745,7 +775,12 @@
 				6ASCORE0000000000000001B /* ScorecardView.swift in Sources */,
 				6ASCORE0000000000000001E /* ScorecardSheet.swift in Sources */,
 				6AMULTI00000000000001102 /* MultiplayerView.swift in Sources */,
+				6AELEVLBL0000000000000C /* ElevationDeltaLabel.swift in Sources */,
 				6ASUPASYNC00000000000003 /* SupabaseSync.swift in Sources */,
+				6AELEVFOLDIN00000000000C /* ElevationFoldIn.swift in Sources */,
+				6AELEVCACHE00000000000C /* HoleHeightCellCache.swift in Sources */,
+				6AELEVRDOUT00000000000C /* ElevationReadout.swift in Sources */,
+				6AHISTSHOT0000000000000C /* HistoricalFirstStrokeCache.swift in Sources */,
 				6A27A5752F0C000000000001 /* SwingDetectionManager.swift in Sources */,
 				6A27A5772F0C000000000003 /* WorkoutManager.swift in Sources */,
 				6AD5EACA2EE3B82E00DDDCF0 /* LocationManager.swift in Sources */,
@@ -754,7 +789,6 @@
 				6AACTIONS2F16000000000001 /* OptionsView.swift in Sources */,
 				6ASETTV2F17000000000001 /* ViewSettingsView.swift in Sources */,
 				6ASETTC2F17000000000001 /* ClubRecommendSettingsView.swift in Sources */,
-				6ASETTP2F17000000000001 /* PredictGreenSettingsView.swift in Sources */,
 				6AD5EAC72EE3B7EB00DDDCF0 /* ActiveRoundView.swift in Sources */,
 				6AD5EAB62EE3B79B00DDDCF0 /* GolfWatchApp.swift in Sources */,
 				6AD5EACC2EE3B83600DDDCF0 /* Models.swift in Sources */,
@@ -778,7 +812,7 @@
 				AA11BB22CC33DD44EE550014 /* RollingMotionBuffer.swift in Sources */,
 				AA11BB22CC33DD44EE550018 /* UnifiedDetector.swift in Sources */,
 				17FCA42178A14303B6F331C5 /* SwingDetectionManager+RawAccel.swift in Sources */,
-				DCD05079795E4F9EB659C7AF /* SwingDetectionManager+ContactGates.swift in Sources */,
+				DCD05079795E4F9EB659C7AF /* SwingDetectionManager+PostPairingGates.swift in Sources */,
 				DDF199415BA84CF9BD09D35D /* SupabaseUploader.swift in Sources */,
 				E0D8E00B351E4F0D84DB31AA /* WatchAuthSession.swift in Sources */,
 				25075A32729043CBA13B479B /* ActiveRoundView+StrokeRecording.swift in Sources */,

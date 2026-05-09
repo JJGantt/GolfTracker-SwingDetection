@@ -216,6 +216,13 @@ final class Stroke {
     var timestamp: Date
     var isPenalty: Bool
     var trajectoryHeading: Double?
+    /// Barometric relative altitude at the moment the stroke was recorded,
+    /// in meters. Values within one round are referenced to the same
+    /// anchor (altimeter zero-point at round start), so deltas between
+    /// strokes on the same hole are drift-free. Comparable across strokes
+    /// in the same round; not comparable across rounds or users without
+    /// the cross-user calibration step.
+    var relAltMeters: Double?
     var round: Round?
     /// Stored parent round id — see `Hole.roundIdRef` for the rationale.
     /// Set by `RealtimeSync.applyStroke` so orphan strokes can be re-adopted
@@ -229,6 +236,7 @@ final class Stroke {
          clubId: UUID,
          isPenalty: Bool = false,
          trajectoryHeading: Double? = nil,
+         relAltMeters: Double? = nil,
          timestamp: Date = Date()) {
         self.id = id
         self.holeNumber = holeNumber
@@ -239,6 +247,7 @@ final class Stroke {
         self.timestamp = timestamp
         self.isPenalty = isPenalty
         self.trajectoryHeading = trajectoryHeading
+        self.relAltMeters = relAltMeters
     }
 
     var coordinate: CLLocationCoordinate2D {
@@ -387,7 +396,7 @@ struct HoleDetectionBlob: Identifiable, Codable, Hashable {
             .distance(from: CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude))
     }
 
-    func passesFilter(_ settings: HoleDetectionFilterSettings) -> Bool {
+    func passesShapeFilter(_ settings: HoleDetectionFilterSettings) -> Bool {
         area >= settings.minArea &&
         minWidth >= settings.minWidth &&
         elongation <= settings.maxElongation &&
@@ -433,17 +442,39 @@ struct CourseHoleDetectionData: Codable, Hashable {
 }
 
 struct HoleDetectionFilterSettings: Codable, Hashable {
+    /// Master toggle. When false the filter is bypassed entirely and the
+    /// raw analyzer output passes through unchanged.
+    var enabled: Bool
     var minArea: Int
     var minWidth: Double
     var maxElongation: Double
     var minGreennessScore: Int
+    /// Keep only the top-N blobs ranked by greennessScore desc. Lets users
+    /// cut a 60-blob analyzer run down to ~18-25 candidates.
+    var maxRank: Int
 
     static let `default` = HoleDetectionFilterSettings(
+        enabled: true,
         minArea: 0,
         minWidth: 0,
         maxElongation: 100.0,
-        minGreennessScore: 0
+        minGreennessScore: 0,
+        maxRank: 100
     )
+
+    /// Filter pipeline: when `enabled` is false, returns blobs unchanged.
+    /// Otherwise applies per-blob shape gates (area/width/elong/score),
+    /// then keeps only the top-`maxRank` survivors ranked by greennessScore
+    /// descending. Rank ties resolved by blob id for determinism.
+    func apply(to blobs: [HoleDetectionBlob]) -> [HoleDetectionBlob] {
+        guard enabled else { return blobs }
+        let shapePassed = blobs.filter { $0.passesShapeFilter(self) }
+        let ranked = shapePassed.sorted {
+            if $0.greennessScore != $1.greennessScore { return $0.greennessScore > $1.greennessScore }
+            return $0.id.uuidString < $1.id.uuidString
+        }
+        return Array(ranked.prefix(maxRank))
+    }
 }
 
 // MARK: - Auth (transient, Keychain-only — not @Model)

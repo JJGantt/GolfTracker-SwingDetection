@@ -103,7 +103,10 @@ extension SwingDetectionManager {
         }
         switch detectionMode {
         case .unifDetect:
-            return batchedAccelForPutt
+            // forceRawAccelAlwaysOn (dev override) keeps 800Hz on for the
+            // whole monitoring session in addition to the putter-triggered
+            // path. See `SwingDetectionManager.forceRawAccelAlwaysOn`.
+            return batchedAccelForPutt || forceRawAccelAlwaysOn
         case .off:
             return false
         }

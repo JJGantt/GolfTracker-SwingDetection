@@ -78,10 +78,140 @@ class WatchDataStore: ObservableObject {
         if let courseId = mostRecent?.courseId, osmCourseDataByCourse[courseId] == nil {
             hydrateOsmDataForCourse(courseId)
         }
+        // Same problem for blob detection results. Fresh round-start fetches
+        // these (the polygon path puts them into holeDetectionDataByCourse),
+        // but resumed rounds skip that path and `filteredGreenCandidates`
+        // ends up empty — the hole has no polygon, the putter switcher
+        // falls back to yardage, AutoAdvance loses its edge-distance signal.
+        if let courseId = mostRecent?.courseId, holeDetectionDataByCourse[courseId] == nil {
+            hydrateBlobDetectionForCourse(courseId)
+        }
+    }
+
+    private func hydrateBlobDetectionForCourse(_ courseId: UUID) {
+        Task { [weak self] in
+            guard let self = self else { return }
+            if let cached = await self.fetchServerCachedBlobs(courseId: courseId) {
+                await MainActor.run {
+                    self.holeDetectionDataByCourse[courseId] = cached
+                    ClientEventLogger.log("blob.serverCache.hit", detail: [
+                        "courseId": .string(courseId.uuidString),
+                        "blobCount": .integer(cached.blobs.count),
+                        "device": .string("watch"),
+                        "trigger": .string("resumeRound")
+                    ])
+                }
+            } else {
+                ClientEventLogger.log("blob.serverCache.miss", detail: [
+                    "courseId": .string(courseId.uuidString),
+                    "device": .string("watch"),
+                    "trigger": .string("resumeRound")
+                ])
+            }
+        }
     }
 
     /// Fire-and-forget fetch of `courses.osm_polygons` for the given course
     /// id; on success, populates `osmCourseDataByCourse[courseId]`.
+    /// Resolved canonical green per hole_number for a course. Cached at
+    /// round-start so addNextHole can read without re-querying. Resolution:
+    ///   1. THIS user has a pick → use it
+    ///   2. ≥3 distinct users picked AND ≥75% share the same blob_id →
+    ///      that blob's centroid + modal par
+    ///   3. Else nil (placement view will appear)
+    /// Manual picks (blob_id == NULL) never participate in voting but
+    /// satisfy rule 1 for the picker themselves.
+    private(set) var canonicalHolePlacementsByCourse: [UUID: [Int: (lat: Double, lon: Double, par: Int?)]] = [:]
+
+    private struct PickRow: Decodable {
+        let user_id: UUID
+        let hole_number: Int
+        let blob_id: UUID?
+        let latitude: Double?
+        let longitude: Double?
+        let par: Int?
+    }
+
+    private func fetchCanonicalHolePlacements(courseId: UUID) async -> [Int: (lat: Double, lon: Double, par: Int?)] {
+        let myUserId = WatchAuthSession.shared.currentUserId.flatMap(UUID.init(uuidString:))
+        let blobs = await fetchServerCachedBlobs(courseId: courseId)
+        let blobsById: [UUID: HoleDetectionBlob] = Dictionary(uniqueKeysWithValues: (blobs?.blobs ?? []).map { ($0.id, $0) })
+        let picks: [PickRow]
+        do {
+            picks = try await SupabaseManager.shared
+                .from("course_hole_picks")
+                .select("user_id,hole_number,blob_id,latitude,longitude,par")
+                .eq("course_id", value: courseId.uuidString)
+                .execute()
+                .value
+        } catch {
+            ClientEventLogger.log("canonicalPlacements.fetchError", detail: [
+                "courseId": .string(courseId.uuidString),
+                "error": .string("\(error)")
+            ])
+            return [:]
+        }
+        let byHole = Dictionary(grouping: picks, by: { $0.hole_number })
+        var result: [Int: (lat: Double, lon: Double, par: Int?)] = [:]
+        for (hole, rows) in byHole {
+            // Rule 1: this user has a pick
+            if let mine = rows.first(where: { $0.user_id == myUserId }) {
+                if let bid = mine.blob_id, let blob = blobsById[bid] {
+                    let c = blob.centroidCoordinate
+                    result[hole] = (c.latitude, c.longitude, mine.par)
+                } else if let lat = mine.latitude, let lon = mine.longitude {
+                    result[hole] = (lat, lon, mine.par)
+                }
+                continue
+            }
+            // Rule 2: voting on blob_id (manual picks excluded)
+            let blobPicks = rows.compactMap { $0.blob_id }
+            let distinctVoters = Set(rows.compactMap { $0.blob_id != nil ? $0.user_id : nil }).count
+            guard distinctVoters >= 3 else { continue }
+            let counts = Dictionary(grouping: blobPicks, by: { $0 }).mapValues { $0.count }
+            guard let (modalBlob, modalCount) = counts.max(by: { $0.value < $1.value }) else { continue }
+            let share = Double(modalCount) / Double(distinctVoters)
+            guard share >= 0.75 else { continue }
+            guard let blob = blobsById[modalBlob] else { continue }
+            // Modal par among the agreeing voters
+            let agreeingPars = rows.filter { $0.blob_id == modalBlob }.compactMap { $0.par }
+            let parCounts = Dictionary(grouping: agreeingPars, by: { $0 }).mapValues { $0.count }
+            let modalPar = parCounts.max(by: { $0.value < $1.value })?.key
+            let c = blob.centroidCoordinate
+            result[hole] = (c.latitude, c.longitude, modalPar)
+        }
+        ClientEventLogger.log("canonicalPlacements.fetched", detail: [
+            "courseId": .string(courseId.uuidString),
+            "holeCount": .integer(result.count),
+            "pickRowCount": .integer(picks.count)
+        ])
+        return result
+    }
+
+    /// Direct PostgREST read of `courses.blob_detection_results`. Mirrors
+    /// the iPhone's `DataStore.fetchBlobDetectionResults`. Watch reads the
+    /// cache itself rather than asking the iPhone over WC, so blob overlays
+    /// work even when the iPhone is asleep / out of range.
+    private func fetchServerCachedBlobs(courseId: UUID) async -> CourseHoleDetectionData? {
+        struct Row: Decodable { let blob_detection_results: CourseHoleDetectionData? }
+        do {
+            let rows: [Row] = try await SupabaseManager.shared
+                .from("courses")
+                .select("blob_detection_results")
+                .eq("id", value: courseId.uuidString)
+                .limit(1)
+                .execute()
+                .value
+            return rows.first?.blob_detection_results
+        } catch {
+            ClientEventLogger.log("blob.serverCache.fetchError", detail: [
+                "courseId": .string(courseId.uuidString),
+                "error": .string("\(error)")
+            ])
+            return nil
+        }
+    }
+
     /// Called from `refreshCurrentRound` whenever a round becomes current
     /// without having gone through the resolver this session.
     private func hydrateOsmDataForCourse(_ courseId: UUID) {
@@ -157,6 +287,17 @@ class WatchDataStore: ObservableObject {
     @Published var pendingCoursePicker: [RoundResolver.CourseCandidate]?
     private var pendingCoursePickerCompletion: ((RoundResolver.CourseCandidate?) -> Void)?
 
+    /// Set after the resolver runs the GCAPI search — the user picks one of
+    /// the ranked candidates OR "Course not listed" (which completes with nil
+    /// → round starts without scorecard data, manual par + GPS yardage).
+    @Published var pendingScorecardPicker: PendingScorecardPicker?
+    fileprivate var pendingScorecardPickerCompletion: ((GCAPICourse?) -> Void)?
+
+    struct PendingScorecardPicker {
+        let originalName: String
+        let candidates: [RoundResolver.ScorecardCandidate]
+    }
+
     /// Set after the resolver completes with GolfCourseAPI scorecard data —
     /// the user picks a tee from the cached tee list before the round opens.
     @Published var pendingTeePicker: PendingTeePicker?
@@ -225,9 +366,16 @@ class WatchDataStore: ObservableObject {
 
     private func evaluateRoundLifecycle() {
         guard let round = currentRound else { return }
+        // Test mode: pass nil location so the off-course sweep is skipped.
+        // The simulated GPS pin won't be near the round's actual hole
+        // coordinates, which would otherwise auto-end every test round
+        // within a minute. Inactivity (>1h wall clock) still applies.
+        let location = LocationManager.shared.isTestModeEnabled
+            ? nil
+            : LocationManager.shared.location?.coordinate
         let decision = RoundLifecycleEvaluator.evaluate(
             round: round,
-            location: LocationManager.shared.location?.coordinate
+            location: location
         )
         if decision.shouldEnd {
             endRound(reason: decision.reason ?? "lifecycle")
@@ -534,7 +682,8 @@ class WatchDataStore: ObservableObject {
             coordinate: strokeCoordinate,
             clubId: clubId,
             isPenalty: isPenalty,
-            trajectoryHeading: trajectoryHeading
+            trajectoryHeading: trajectoryHeading,
+            relAltMeters: LocationManager.shared.currentRelativeAltitudeMeters
         )
         context.insert(stroke)
         round.strokes.append(stroke)
@@ -593,6 +742,26 @@ class WatchDataStore: ObservableObject {
         round.endedAt = Date()
         try? context.save()
         SupabaseSync.shared.upsertRound(round)
+        // Drain the upload queue in the background so the UI doesn't
+        // block on the final flush. The queue is disk-persistent, so a
+        // fire-and-forget Task is safe — incomplete drain just means
+        // the next round picks up the leftovers. After the drain, fold
+        // this round's altitude rows into the shared height map.
+        let foldInCourseId = round.courseId
+        let foldInRoundId = round.id
+        let skipFoldIn = round.locationTestModeEnabled == true
+        Task { @MainActor in
+            ElevationReadout.shared.stop()
+            HoleHeightCellCache.shared.clear()
+            HistoricalFirstStrokeCache.shared.clear()
+        }
+        Task {
+            await LocationManager.shared.stopPathRecording()
+            if !skipFoldIn {
+                await ElevationFoldIn.foldIn(courseId: foldInCourseId,
+                                             roundId: foldInRoundId)
+            }
+        }
         dprint("⌚ [WatchDataStore] Ended round \(round.id) — \(reason)")
         refreshCurrentRound()
         objectWillChange.send()
@@ -681,8 +850,10 @@ class WatchDataStore: ObservableObject {
                 self?.pendingBlobDetectionCourseIds.remove(detectionData.courseId)
             }
         }
-        // Watch is the authority for filter settings — push current value to iPhone on launch.
-        connectivity.sendHoleFilterSettings(holeFilterSettings)
+        // Phone is the authority for filter settings now (dev menu lives
+        // in iOS Settings → Developer → Green Filters). Watch only RECEIVES
+        // — its setupConnectivity assigns to holeFilterSettings on inbound,
+        // didSet persists to UserDefaults. No outbound push from watch.
     }
 
     // MARK: - UserDefaults persistence (small, non-relational state)
@@ -729,7 +900,22 @@ class WatchDataStore: ObservableObject {
             return
         }
         let nextHoleNumber = round.holes.count + 1
-        let newHole = Hole(number: nextHoleNumber)
+        // If canonical resolution covers this hole_number (this user's
+        // own pick or cross-user voting threshold), pre-populate so
+        // HolePlacementView is skipped.
+        let canonical = canonicalHolePlacementsByCourse[round.courseId]?[nextHoleNumber]
+        let newHole: Hole
+        if let pick = canonical {
+            let coord = CLLocationCoordinate2D(latitude: pick.lat, longitude: pick.lon)
+            newHole = Hole(number: nextHoleNumber, coordinate: coord, par: pick.par, teeId: round.selectedTeeId)
+            ClientEventLogger.log("addNextHole.canonicalHydrated", detail: [
+                "holeNumber": .integer(nextHoleNumber),
+                "lat": .double(pick.lat),
+                "lon": .double(pick.lon)
+            ])
+        } else {
+            newHole = Hole(number: nextHoleNumber)
+        }
         context.insert(newHole)
         round.holes.append(newHole)
         round.currentHoleIndex = nextHoleNumber - 1
@@ -811,6 +997,15 @@ class WatchDataStore: ObservableObject {
                     self?.pendingCoursePickerCompletion = choose
                 }
             },
+            scorecardPicker: { [weak self] originalName, ranked, choose in
+                DispatchQueue.main.async {
+                    self?.pendingScorecardPicker = PendingScorecardPicker(
+                        originalName: originalName,
+                        candidates: ranked
+                    )
+                    self?.pendingScorecardPickerCompletion = choose
+                }
+            },
             completion: { [weak self] resolution in
                 DispatchQueue.main.async {
                     guard let self = self else { return }
@@ -866,11 +1061,16 @@ class WatchDataStore: ObservableObject {
     /// Called by the watch's tee picker UI. `nil` = user cancelled / no tee
     /// (round still starts).
     func pickTee(_ tee: CachedCourseTee?) {
+        ClientEventLogger.log("pickTee.enter", detail: [
+            "teeId": .string(tee?.id.uuidString ?? "nil"),
+            "hasResolution": .bool(pendingTeePickerResolution != nil)
+        ])
         let resolution = pendingTeePickerResolution
         pendingTeePicker = nil
         pendingTeePickerResolution = nil
         guard let resolution = resolution else { return }
         startRound(from: resolution, selectedTeeId: tee?.id)
+        ClientEventLogger.log("pickTee.afterStartRound")
     }
 
     func pickCourseCandidate(_ candidate: RoundResolver.CourseCandidate?) {
@@ -880,16 +1080,66 @@ class WatchDataStore: ObservableObject {
         cb?(candidate)
     }
 
+    /// User picked a scorecard candidate from the picker (or "Course not
+    /// listed" → nil → round starts without a scorecard).
+    func pickScorecardCandidate(_ course: GCAPICourse?) {
+        let cb = pendingScorecardPickerCompletion
+        pendingScorecardPicker = nil
+        pendingScorecardPickerCompletion = nil
+        cb?(course)
+    }
+
     private func startRound(from resolution: RoundResolver.Resolution, selectedTeeId: UUID?) {
-        guard let context = context else { return }
+        // Tier-3 / OSM-greens-empty paths benefit from canonical-pick
+        // hydration so users skip placement view for holes they've already
+        // played OR for holes ≥3 users have agreed on. Pre-fetch off the
+        // main thread, then create the round with coords pre-populated.
+        // Tier-1 (full OSM) skips — never enters placement view.
+        let needsHydration: Bool = {
+            if resolution.tier == .full, let osm = resolution.osmData, !osm.greens.isEmpty {
+                return false
+            }
+            return true
+        }()
+        if !needsHydration {
+            performStartRound(from: resolution, selectedTeeId: selectedTeeId, canonicalPicks: [:])
+            return
+        }
+        let courseId = resolution.courseId
+        Task { [weak self] in
+            guard let self = self else { return }
+            let picks = await self.fetchCanonicalHolePlacements(courseId: courseId)
+            await MainActor.run {
+                self.canonicalHolePlacementsByCourse[courseId] = picks
+                self.performStartRound(from: resolution, selectedTeeId: selectedTeeId, canonicalPicks: picks)
+            }
+        }
+    }
+
+    private func performStartRound(from resolution: RoundResolver.Resolution,
+                                   selectedTeeId: UUID?,
+                                   canonicalPicks: [Int: (lat: Double, lon: Double, par: Int?)]) {
+        ClientEventLogger.log("perform.start.enter", detail: [
+            "courseId": .string(resolution.courseId.uuidString),
+            "tier": .string("\(resolution.tier)"),
+            "selectedTeeId": selectedTeeId.map { .string($0.uuidString) } ?? .null,
+            "canonicalPickCount": .integer(canonicalPicks.count)
+        ])
+        guard let context = context else {
+            ClientEventLogger.log("perform.start.bail.noContext")
+            return
+        }
         // Starting a new round implies any prior open round is finished.
         endAnyOngoingRound(reason: "new round starting")
+        ClientEventLogger.log("perform.start.afterEndPrior")
         if let osm = resolution.osmData {
             osmCourseDataByCourse[resolution.courseId] = osm
         }
 
         // Round.holes is a snapshot — built from OSM data when available,
         // otherwise a single placeholder hole the user fills in as they go.
+        // For the placeholder path, consult canonicalPicks so we skip
+        // HolePlacementView for hole 1 if it's resolved.
         let holes: [Hole]
         if resolution.tier == .full, let osm = resolution.osmData {
             holes = osm.holes
@@ -903,6 +1153,9 @@ class WatchDataStore: ObservableObject {
                 }
                 .sorted { $0.0 < $1.0 }
                 .map { $0.1 }
+        } else if let pick = canonicalPicks[1] {
+            let coord = CLLocationCoordinate2D(latitude: pick.lat, longitude: pick.lon)
+            holes = [Hole(number: 1, coordinate: coord, par: pick.par, teeId: selectedTeeId)]
         } else {
             holes = [Hole(number: 1, teeId: selectedTeeId)]
         }
@@ -935,6 +1188,9 @@ class WatchDataStore: ObservableObject {
             context.insert(course)
         }
 
+        ClientEventLogger.log("perform.start.afterCourseMirror", detail: [
+            "holeCount": .integer(holes.count)
+        ])
         let newRound = Round(
             courseId: resolution.courseId,
             courseName: resolution.courseName,
@@ -944,17 +1200,69 @@ class WatchDataStore: ObservableObject {
         for h in holes { context.insert(h) }
         context.insert(newRound)
         try? context.save()
+        ClientEventLogger.log("perform.start.afterContextSave", detail: [
+            "roundId": .string(newRound.id.uuidString)
+        ])
         refreshCurrentRound()
+        ClientEventLogger.log("perform.start.afterRefreshCurrentRound")
         // Only mirror our local Course edits to Supabase when the row was
         // already there (isExistingCourse=true). When isExistingCourse=false
-        // the resolver just INSERTed the canonical shared row carrying all
-        // the geo + osm_polygons fields — calling upsertCourse here would
-        // overwrite that with the thinner local mirror.
+        // AND the resolver had OSM data, the resolver itself INSERTed the
+        // canonical shared row carrying all the geo + osm_polygons fields —
+        // calling upsertCourse here would overwrite that with the thinner
+        // local mirror.
+        //
+        // Exception: manual ("Course not listed") and MapKit-fallback paths
+        // both have isExistingCourse=false AND osmData=nil — the resolver
+        // skipped the INSERT for them. iPhone-side blob detection needs a
+        // shared `courses` row to exist (it does fetchAndInsertCourse by
+        // id) so we upsert a thin row here for those paths.
         if resolution.isExistingCourse {
+            SupabaseSync.shared.upsertCourse(course)
+        } else if resolution.osmData == nil {
             SupabaseSync.shared.upsertCourse(course)
         }
         SupabaseSync.shared.upsertRound(newRound)
+        ClientEventLogger.log("perform.start.afterUpsertRound")
         dprint("⌚ [WatchDataStore] Started round at \(resolution.courseName) (tier=\(resolution.tier), \(holes.count) holes, tee=\(selectedTeeId?.uuidString ?? "none"), existing=\(resolution.isExistingCourse))")
+
+        // Path + altitude capture. Hole-number provider re-reads the live
+        // round each sample so every row is tagged with the hole the user
+        // is actually on at capture time, not at upload.
+        if let uid = WatchAuthSession.shared.currentUserId {
+            ClientEventLogger.log("perform.start.beforeStartPathRecording")
+            let roundId = newRound.id
+            LocationManager.shared.startPathRecording(roundId: roundId, userId: uid) { [weak self] in
+                guard let self, let r = self.currentRound, r.id == roundId else { return 1 }
+                let sorted = r.holes.sorted { $0.number < $1.number }
+                let idx = max(0, min(r.currentHoleIndex, sorted.count - 1))
+                return sorted.indices.contains(idx) ? sorted[idx].number : 1
+            }
+            ClientEventLogger.log("perform.start.afterStartPathRecording")
+        } else {
+            ClientEventLogger.log("altitude.recording.skipped.noUid", detail: [
+                "roundId": .string(newRound.id.uuidString)
+            ])
+        }
+
+        // Live elevation-to-green readout. Pre-load cells for this
+        // course's holes so the readout has data to consume on the very
+        // first path-sample tick.
+        let elevationRoundId = newRound.id
+        let elevationCourseId = newRound.courseId
+        let elevationHoleNumbers = newRound.holes.map { $0.number }
+        Task { @MainActor in
+            await HoleHeightCellCache.shared.loadForCourse(
+                courseId: elevationCourseId, holeNumbers: elevationHoleNumbers
+            )
+            ElevationReadout.shared.start(
+                roundId: elevationRoundId, courseId: elevationCourseId
+            )
+            await HistoricalFirstStrokeCache.shared.loadForCourse(
+                courseId: elevationCourseId
+            )
+        }
+
         // Hydrate per-hole yardage AND par for the selected tee. Yardage
         // drives the scorecard yardage readout on each new hole; par
         // drives the auto-skip of the par picker in HolePlacementView.
@@ -992,9 +1300,17 @@ class WatchDataStore: ObservableObject {
         //      are mapped but not greens/tees/holes. Without falling
         //      back here, the user lands in manual placement mode with
         //      nothing on the map to work with.
+        // Blob detection is needed unless OSM gave us a complete picture:
+        // tier == .full (hole refs exactly 1..N) AND every hole has its
+        // green polygon. Partial OSM (e.g. Sweetwater: 3 holes, 2 greens
+        // for an 18-hole course) used to short-circuit blob detection
+        // because `osm.greens.isEmpty` was false — but the 2 greens cover
+        // 2 holes, leaving 16 with nothing. Always pull blobs as a
+        // supplement when OSM isn't clean-full.
         let needsBlobDetection: Bool = {
             guard let osm = resolution.osmData else { return true }
-            return osm.greens.isEmpty
+            if osm.tier != .full { return true }
+            return osm.greens.count < osm.holes.count
         }()
         if needsBlobDetection {
             let reason: String = resolution.osmData == nil
@@ -1019,12 +1335,34 @@ class WatchDataStore: ObservableObject {
             }
             // Mark pending so HolePlacementView shows the waiting overlay
             // and disables manual placement until results arrive (or
-            // timeout). Cleared in `connectivity.onReceiveHoleDetectionData`.
+            // timeout). Cleared on direct-fetch hit OR via
+            // `connectivity.onReceiveHoleDetectionData` for the WC fallback.
             pendingBlobDetectionCourseIds.insert(resolution.courseId)
-            WatchConnectivityManager.shared.sendHoleDetectionRequest(courseId: resolution.courseId)
+            let courseId = resolution.courseId
+            // Server-cache direct fetch. The iPhone WC round-trip is only
+            // needed when no cached results exist and the analyzer has to
+            // run — analyzer is iPhone-only. If the cache hits, apply it
+            // here and skip WC entirely. On miss, fall back to the WC
+            // request so the iPhone runs the analyzer.
+            Task { @MainActor in
+                if let cached = await self.fetchServerCachedBlobs(courseId: courseId) {
+                    self.holeDetectionDataByCourse[courseId] = cached
+                    self.pendingBlobDetectionCourseIds.remove(courseId)
+                    ClientEventLogger.log("blob.serverCache.hit", detail: [
+                        "courseId": .string(courseId.uuidString),
+                        "blobCount": .integer(cached.blobs.count),
+                        "device": .string("watch")
+                    ])
+                    return
+                }
+                ClientEventLogger.log("blob.serverCache.miss", detail: [
+                    "courseId": .string(courseId.uuidString),
+                    "device": .string("watch")
+                ])
+                WatchConnectivityManager.shared.sendHoleDetectionRequest(courseId: courseId)
+            }
             // 60s safety timeout — if blobs never come back (iPhone offline,
             // analyzer error), unstick the UI so user can manually place.
-            let courseId = resolution.courseId
             DispatchQueue.main.asyncAfter(deadline: .now() + 60) { [weak self] in
                 guard let self = self else { return }
                 if self.pendingBlobDetectionCourseIds.contains(courseId)
@@ -1139,7 +1477,7 @@ class WatchDataStore: ObservableObject {
             out.append(contentsOf: osm.greens.map(Self.blob(fromOSMGreen:)))
         }
         if let detectionData = holeDetectionDataByCourse[courseId] {
-            out.append(contentsOf: detectionData.blobs.filter { $0.passesFilter(holeFilterSettings) })
+            out.append(contentsOf: holeFilterSettings.apply(to: detectionData.blobs))
         }
         return out
     }
@@ -1164,6 +1502,19 @@ class WatchDataStore: ObservableObject {
 
     func strokeCount(for hole: Hole) -> Int {
         currentRound?.strokes.filter { $0.holeNumber == hole.number }.count ?? 0
+    }
+
+    /// Putts taken on this hole — strokes whose club resolves to type
+    /// name "Putt". Same definition `AutoAdvanceMonitor` uses for its
+    /// putt-since-arrival gate, kept consistent so the UI count and the
+    /// auto-advance trigger never disagree.
+    func puttCount(for hole: Hole) -> Int {
+        guard let strokes = currentRound?.strokes else { return 0 }
+        return strokes.reduce(0) { count, stroke in
+            guard stroke.holeNumber == hole.number else { return count }
+            guard let club = availableClubs.first(where: { $0.id == stroke.clubId }) else { return count }
+            return getTypeName(for: club) == "Putt" ? count + 1 : count
+        }
     }
 
     func getClub(byId id: UUID) -> ClubData? {

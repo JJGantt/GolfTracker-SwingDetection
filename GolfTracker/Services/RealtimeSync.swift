@@ -113,51 +113,57 @@ final class RealtimeSync {
                 .value
 
             let roundIds: [String] = roundRows.compactMap { $0.objectValue?["id"]?.stringValue }
-            guard let context = context else { return }
 
-            for row in roundRows {
-                guard let dict = row.objectValue,
-                      let idStr = dict["id"]?.stringValue,
-                      let id = UUID(uuidString: idStr) else { continue }
-                applyRound(context: context, kind: .update, id: id, record: dict)
-            }
-
-            if !roundIds.isEmpty {
-                let holeRows: [AnyJSON] = try await supabase
+            // Pull child rows BEFORE touching the context. Networking stays
+            // off-main; ModelContext mutation is wrapped in MainActor.run
+            // below because the context was created on the main queue and
+            // SwiftData fatal-errors if it's mutated from a Task.
+            let holeRows: [AnyJSON]
+            let strokeRows: [AnyJSON]
+            if roundIds.isEmpty {
+                holeRows = []; strokeRows = []
+            } else {
+                holeRows = (try? await supabase
                     .from("round_holes")
                     .select()
                     .in("round_id", values: roundIds)
                     .execute()
-                    .value
+                    .value) ?? []
+                strokeRows = (try? await supabase
+                    .from("strokes")
+                    .select()
+                    .in("round_id", values: roundIds)
+                    .execute()
+                    .value) ?? []
+            }
+
+            await MainActor.run {
+                guard let context = context else { return }
+                for row in roundRows {
+                    guard let dict = row.objectValue,
+                          let idStr = dict["id"]?.stringValue,
+                          let id = UUID(uuidString: idStr) else { continue }
+                    applyRound(context: context, kind: .update, id: id, record: dict)
+                }
                 for row in holeRows {
                     guard let dict = row.objectValue,
                           let idStr = dict["id"]?.stringValue,
                           let id = UUID(uuidString: idStr) else { continue }
                     applyHole(context: context, kind: .update, id: id, record: dict)
                 }
-
-                let strokeRows: [AnyJSON] = try await supabase
-                    .from("strokes")
-                    .select()
-                    .in("round_id", values: roundIds)
-                    .execute()
-                    .value
                 for row in strokeRows {
                     guard let dict = row.objectValue,
                           let idStr = dict["id"]?.stringValue,
                           let id = UUID(uuidString: idStr) else { continue }
                     applyStroke(context: context, kind: .update, id: id, record: dict)
                 }
-            }
+                try? context.save()
+                ClientEventLogger.log("realtime.reconcile.ok", detail: [
+                    "rounds": .integer(roundRows.count)
+                ])
 
-            try? context.save()
-            ClientEventLogger.log("realtime.reconcile.ok", detail: [
-                "rounds": .integer(roundRows.count)
-            ])
-
-            // Push the platform store to refresh @Published arrays so the UI
-            // observes the new state — same pattern as `apply(...)`'s tail.
-            await MainActor.run {
+                // Push the platform store to refresh @Published arrays so the UI
+                // observes the new state — same pattern as `apply(...)`'s tail.
                 #if os(watchOS)
                 WatchDataStore.shared.refreshCurrentRound()
                 WatchDataStore.shared.objectWillChange.send()
@@ -479,6 +485,7 @@ final class RealtimeSync {
         let timestamp = record["timestamp"]?.stringValue.flatMap(Self.parseISODate) ?? Date()
         let isPenalty = record["is_penalty"]?.boolValue ?? false
         let traj = record["trajectory_heading"]?.doubleValue
+        let relAlt = record["rel_alt_meters"]?.doubleValue
         let coord = CLLocationCoordinate2D(latitude: lat, longitude: lon)
         let roundId = record["round_id"]?.stringValue.flatMap(UUID.init(uuidString:))
 
@@ -491,6 +498,7 @@ final class RealtimeSync {
             existing.timestamp = timestamp
             existing.isPenalty = isPenalty
             existing.trajectoryHeading = traj
+            existing.relAltMeters = relAlt
             if let roundId = roundId {
                 existing.roundIdRef = roundId
                 if existing.round == nil {
@@ -503,7 +511,7 @@ final class RealtimeSync {
         } else {
             let s = Stroke(id: id, holeNumber: holeNumber, strokeNumber: strokeNumber,
                            coordinate: coord, clubId: clubId, isPenalty: isPenalty,
-                           trajectoryHeading: traj, timestamp: timestamp)
+                           trajectoryHeading: traj, relAltMeters: relAlt, timestamp: timestamp)
             s.roundIdRef = roundId
             context.insert(s)
             if let roundId = roundId {

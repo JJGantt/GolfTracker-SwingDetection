@@ -30,8 +30,22 @@ struct ScorecardView: View {
 
     private var isMultiplayer: Bool { players.count >= 2 }
 
+    /// Source for scorecard rows. When the API supplies tee data we render
+    /// the union of round.holes hole_numbers + every hole_number in
+    /// teeHoles — so the full course shows even on Tier-3 rounds where
+    /// round.holes only contains the placeholder for the current hole.
+    /// Synthetic Hole instances back the rows that don't exist on the
+    /// round yet; their score column renders empty.
     private var holesSorted: [Hole] {
-        round.holes.sorted { $0.number < $1.number }
+        let real = round.holes
+        let realByNumber = Dictionary(uniqueKeysWithValues: real.map { ($0.number, $0) })
+        guard let teeHoles = teeHoles, !teeHoles.isEmpty else {
+            return real.sorted { $0.number < $1.number }
+        }
+        let allNumbers = Set(real.map { $0.number }).union(teeHoles.keys)
+        return allNumbers.sorted().map { n in
+            realByNumber[n] ?? Hole(number: n)
+        }
     }
 
     private var showsYardage: Bool { teeHoles != nil && teeName != nil }

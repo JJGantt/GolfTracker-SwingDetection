@@ -24,6 +24,23 @@ extension ActiveRoundView {
     /// (auto-advanced from another hole, restarted the app mid-walk, etc).
     var displayedDistanceToHole: Int? { distanceToHole }
 
+    /// True when the user's GPS is inside the current hole's green
+    /// polygon. Source-agnostic — uses the same `filteredGreenCandidates`
+    /// lookup `AutoAdvanceMonitor` does, so OSM and blob-detected
+    /// courses both work. The yardage readout flips its color based on
+    /// this — instant "you're here" signal without waiting for the
+    /// number itself to read 0.
+    var isUserOnCurrentGreen: Bool {
+        guard let userCoord = locationManager.location?.coordinate,
+              let round = store.currentRound,
+              let hole = store.currentHole,
+              let greenMarker = hole.coordinate else { return false }
+        let greenBlob = store.filteredGreenCandidates(for: round.courseId)
+            .first { $0.contains(greenMarker) }
+        guard let blob = greenBlob, !blob.polygon.isEmpty else { return false }
+        return blob.contains(userCoord)
+    }
+
     func distanceToTarget(_ target: CLLocationCoordinate2D) -> Int? {
         guard let userLocation = locationManager.location else { return nil }
 
@@ -49,9 +66,14 @@ extension ActiveRoundView {
                     // the background to drive auto-putter-select / auto-
                     // advance, it just doesn't change this readout.
                     VStack(alignment: .leading, spacing: 4) {
-                        Text(displayedDistanceToHole.map { String($0) } ?? "XXX")
-                            .font(.system(size: 32, weight: .bold, design: .rounded))
-                            .foregroundColor(.white)
+                        HStack(alignment: .firstTextBaseline, spacing: 4) {
+                            Text(displayedDistanceToHole.map { String($0) } ?? "XXX")
+                                .font(.system(size: 32, weight: .bold, design: .rounded))
+                                .foregroundColor(isUserOnCurrentGreen
+                                    ? Color(red: 0.4, green: 0.95, blue: 0.4)
+                                    : .white)
+                            ElevationDeltaLabel()
+                        }
 
                         HStack(spacing: 8) {
                             Text("H: \(hole.number)")
@@ -67,7 +89,9 @@ extension ActiveRoundView {
                     .clipShape(RoundedRectangle(cornerRadius: 8))
                     .fixedSize()
 
-                    // Separate strokes container
+                    // Strokes pill — total strokes on this hole. Same
+                    // green pill as before. Putts go on the map above
+                    // the green polygon, not here.
                     Text("S: \(store.strokeCount(for: hole))")
                         .font(.system(size: 14, weight: .bold))
                         .foregroundColor(Color(red: 0.55, green: 0.85, blue: 0.55))

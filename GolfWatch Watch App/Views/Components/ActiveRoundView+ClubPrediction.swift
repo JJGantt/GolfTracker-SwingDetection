@@ -15,6 +15,12 @@ extension ActiveRoundView {
     func applyClubPrediction() {
         guard store.clubPredictionMode != .off,
               let distance = distanceToHole else { return }
+        // On-green polygon override already auto-selected putter for this
+        // green and is the authoritative "use the putter" signal. Bail so
+        // we don't fight it — without this, recording a putt re-runs the
+        // distance-based predictor with Putt disabled (see below) and
+        // picks a wedge for the 2yd-from-pin reading.
+        if onGreenOverride { return }
         // Conditionally drop "Putt" from the candidate set when an OSM green
         // polygon exists for the current hole — polygon containment +
         // `greenPutterMarginYards` is the authoritative putter trigger in

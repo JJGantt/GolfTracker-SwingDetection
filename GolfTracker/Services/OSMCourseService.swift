@@ -56,6 +56,13 @@ struct OSMCourseCandidate: Hashable {
     var centroid: MapPoint
     var polygon: [MapPoint]  // Course bounding polygon, used to scope the
                              // second-pass holes/greens/tees query.
+    /// Sibling polygons from other OSM features that map to the same real
+    /// course. Common case: one mapper drew the course as a way under one
+    /// name in 2015, another drew a slightly different way under a slightly
+    /// different name in 2020, neither cleaned up. We collapse them to one
+    /// picker entry but keep all polygons here so the second-pass query
+    /// can union them when looking for sub-features.
+    var siblingPolygons: [[MapPoint]] = []
 }
 
 /// Bundled OSM data for a single course (after the user has picked which
@@ -85,6 +92,14 @@ struct OSMCourseData: Codable, Hashable {
     var fairways: [OSMPolygon]
     var bunkers: [OSMPolygon]
     var attribution: String
+    /// Course-level bounding polygon (assembled from the OSM relation's
+    /// outer-role member ways, or the way's own outline). Used to scope the
+    /// blob detection analyzer so two courses sharing one resort property
+    /// (Stonegate Cypress vs Oaks) don't cross-contaminate detection.
+    /// Optional for backward compat — old osm_polygons jsonb rows lack it.
+    /// Includes sibling polygons from grouped duplicates as a flat union;
+    /// containment test uses any-polygon-contains semantics.
+    var boundingPolygons: [[MapPoint]]?
 
     /// "Clean" iff every hole has a pure-integer ref, refs are unique, and they
     /// form a contiguous 1..N sequence. Bethpage umbrellas fail (5x dups);
@@ -153,13 +168,20 @@ final class OSMCourseService {
             "lon": .double(lon),
             "radius": .integer(r)
         ])
+        // `(_;>;)` recurses into relation members so we get their member
+        // ways' geometry inline. Without this, relations come back as
+        // bbox rectangles only — useless for telling apart Stonegate
+        // Cypress vs Oaks Course (same physical property, different
+        // course outlines, two relations sharing one bbox).
         let query = """
         [out:json][timeout:25];
         (
           way["leisure"="golf_course"]["name"](around:\(r),\(lat),\(lon));
           relation["leisure"="golf_course"]["name"](around:\(r),\(lat),\(lon));
-        );
-        out tags geom;
+        )->.cs;
+        .cs out tags;
+        (.cs;>;);
+        out body geom;
         """
         executeOverpass(query: query) { result in
             switch result {
@@ -170,11 +192,19 @@ final class OSMCourseService {
                 completion(.failure(e))
             case .success(let data):
                 do {
-                    let candidates = try Self.parseCandidates(data: data)
+                    let raw = try Self.parseCandidates(data: data)
+                    // Collapse near-duplicate OSM features that all describe
+                    // the same real-world course (multiple ways/relations
+                    // tagged with similar names by different mappers over
+                    // the years; some empty, some populated). One picker
+                    // entry per real course, with sibling polygons kept so
+                    // the second-pass sub-feature query can union them.
+                    let grouped = Self.groupCandidates(raw)
                     ClientEventLogger.log("osm.fetchCandidates.overpassOk", detail: [
-                        "candidateCount": .integer(candidates.count)
+                        "candidateCount": .integer(grouped.count),
+                        "rawCount": .integer(raw.count)
                     ])
-                    completion(.success(candidates))
+                    completion(.success(grouped))
                 } catch {
                     ClientEventLogger.log("osm.fetchCandidates.parseFailed", detail: [
                         "error": .string("\(error)")
@@ -185,6 +215,65 @@ final class OSMCourseService {
         }
     }
 
+    /// Cluster raw OSM candidates that describe the same real-world course.
+    /// Two candidates are "the same course" when their centroids are within
+    /// `clusterDistanceMeters` AND their stripped names share a discriminating
+    /// token (using the same strip rules as the GCAPI scorecard search).
+    /// Picks the canonical entry per cluster as the one with the largest
+    /// polygon (best geometry coverage), falls back to the longest name.
+    static let clusterDistanceMeters: Double = 500
+    private static func groupCandidates(_ raw: [OSMCourseCandidate]) -> [OSMCourseCandidate] {
+        var clusters: [[OSMCourseCandidate]] = []
+        outer: for cand in raw {
+            let candTokens = strippedTokens(cand.name)
+            for i in 0..<clusters.count {
+                guard let head = clusters[i].first else { continue }
+                let dist = distanceMeters(head.centroid, cand.centroid)
+                if dist > clusterDistanceMeters { continue }
+                let headTokens = strippedTokens(head.name)
+                if !candTokens.isDisjoint(with: headTokens) {
+                    clusters[i].append(cand)
+                    continue outer
+                }
+            }
+            clusters.append([cand])
+        }
+        return clusters.map { group -> OSMCourseCandidate in
+            // Canonical: largest polygon wins (best geometry); tie → longest name.
+            let canonical = group.max { l, r in
+                if l.polygon.count != r.polygon.count { return l.polygon.count < r.polygon.count }
+                return l.name.count < r.name.count
+            } ?? group[0]
+            let siblings = group.filter { $0.osmId != canonical.osmId }.map { $0.polygon }
+            var out = canonical
+            out.siblingPolygons = siblings
+            return out
+        }
+    }
+
+    /// Strip the same noise words the scorecard search uses, so candidates
+    /// that share the discriminating proper noun cluster together regardless
+    /// of "Country Club" vs "Golf Club" vs "Golf Course" suffix differences.
+    private static let osmNameStop: Set<String> = ["the","of","and","at","on","in","a","an","&"]
+    private static let osmNameJargon: Set<String> = [
+        "country","club","golf","course","courses","resort","national",
+        "international","municipal","championship","executive","public",
+        "gc","cc","center","centre"
+    ]
+    private static func strippedTokens(_ name: String) -> Set<String> {
+        var s = name.replacingOccurrences(of: #"\([^)]*\)"#, with: "", options: .regularExpression)
+        s = s.replacingOccurrences(of: #"[^\w\s'-]"#, with: " ", options: .regularExpression)
+        let toks = s.lowercased().split(whereSeparator: { $0.isWhitespace })
+            .map { t -> String in var x = String(t); if x.hasSuffix("'s") { x.removeLast(2) }; return x }
+            .filter { !$0.isEmpty && !osmNameStop.contains($0) && !osmNameJargon.contains($0) }
+        return Set(toks)
+    }
+
+    private static func distanceMeters(_ a: MapPoint, _ b: MapPoint) -> Double {
+        CLLocation(latitude: a.latitude, longitude: a.longitude)
+            .distance(from: CLLocation(latitude: b.latitude, longitude: b.longitude))
+    }
+
     /// Second pass — fetch holes/greens/tees/fairways/bunkers inside a course's
     /// bounding polygon. Cache-first by the course's OSM id.
     func fetchCourseGeometry(for candidate: OSMCourseCandidate,
@@ -193,19 +282,25 @@ final class OSMCourseService {
             "osmId": .integer(Int(candidate.osmId)),
             "name": .string(candidate.name)
         ])
-        // Build a poly:"lat lon lat lon ..." filter from the candidate's
-        // bounding polygon. Overpass docs use whitespace-separated lat/lon.
-        let polyString = candidate.polygon
-            .map { "\($0.latitude) \($0.longitude)" }
-            .joined(separator: " ")
+        // Build a `poly:"lat lon lat lon ..."` filter for EACH candidate
+        // polygon (canonical + siblings) and union them. Overpass evaluates
+        // each (poly:...) clause against the input set, so combining them in
+        // a `(...);` group is a logical OR. The grouping at fetchCandidates
+        // collapsed duplicate course features into one picker entry; here we
+        // gather sub-features inside the union of all those features'
+        // bounding polygons so we don't lose mapper-split coverage.
+        let allPolygons = ([candidate.polygon] + candidate.siblingPolygons).filter { !$0.isEmpty }
+        var clauses: [String] = []
+        for poly in allPolygons {
+            let polyString = poly.map { "\($0.latitude) \($0.longitude)" }.joined(separator: " ")
+            for tag in ["hole","green","tee","fairway","bunker"] {
+                clauses.append(#"way["golf"="\#(tag)"](poly:"\#(polyString)");"#)
+            }
+        }
         let query = """
         [out:json][timeout:25];
         (
-          way["golf"="hole"](poly:"\(polyString)");
-          way["golf"="green"](poly:"\(polyString)");
-          way["golf"="tee"](poly:"\(polyString)");
-          way["golf"="fairway"](poly:"\(polyString)");
-          way["golf"="bunker"](poly:"\(polyString)");
+        \(clauses.joined(separator: "\n  "))
         );
         out tags geom;
         """
@@ -217,7 +312,8 @@ final class OSMCourseService {
                     let parsed = try Self.parseCourseGeometry(
                         data: data,
                         center: candidate.centroid.coordinate,
-                        radiusMeters: self?.defaultRadiusMeters ?? 1500
+                        radiusMeters: self?.defaultRadiusMeters ?? 1500,
+                        boundingPolygons: ([candidate.polygon] + candidate.siblingPolygons).filter { !$0.isEmpty }
                     )
                     ClientEventLogger.log("osm.fetchGeometry.ok", detail: [
                         "osmId": .integer(Int(candidate.osmId)),
@@ -263,46 +359,54 @@ final class OSMCourseService {
               let elements = json["elements"] as? [[String: Any]] else {
             throw OSMError.parseFailure
         }
+        // Index ways by id so we can resolve relation members → polygons.
+        // The Overpass query uses `(_;>;)` recursion, so all member ways
+        // come back at the top level alongside the named relations.
+        var wayPolygonById: [Int64: [MapPoint]] = [:]
+        for el in elements where (el["type"] as? String) == "way" {
+            guard let id = (el["id"] as? Int64) ?? (el["id"] as? Int).map(Int64.init),
+                  let geom = el["geometry"] as? [[String: Any]] else { continue }
+            let pts: [MapPoint] = geom.compactMap {
+                guard let lat = $0["lat"] as? Double, let lon = $0["lon"] as? Double else { return nil }
+                return MapPoint(latitude: lat, longitude: lon)
+            }
+            if !pts.isEmpty { wayPolygonById[id] = pts }
+        }
+
         var out: [OSMCourseCandidate] = []
         for el in elements {
             guard let type = el["type"] as? String,
                   let osmId = (el["id"] as? Int64) ?? (el["id"] as? Int).map(Int64.init),
                   let tags = el["tags"] as? [String: Any],
-                  let name = tags["name"] as? String else { continue }
-            // Way: geometry is an array of {lat,lon}.
-            // Relation: geometry comes from `out geom` as `bounds` or member geoms;
-            // for our purposes, use the relation's bounds OR fall back to the
-            // first member with geometry.
+                  let name = tags["name"] as? String,
+                  (tags["leisure"] as? String) == "golf_course" else { continue }
             var polygon: [MapPoint] = []
             if type == "way", let geom = el["geometry"] as? [[String: Any]] {
+                // Way: inline geometry.
                 polygon = geom.compactMap {
                     guard let lat = $0["lat"] as? Double, let lon = $0["lon"] as? Double else { return nil }
                     return MapPoint(latitude: lat, longitude: lon)
                 }
             } else if type == "relation" {
-                // Concatenate all member ways' geometry into a flat polygon.
-                // Imperfect for complex multi-polygon relations but sufficient
-                // for the second-pass `(poly:"")` query — Overpass picks up any
-                // feature inside the convex hull of the points.
+                // Relation: assemble polygon from member ways. Members
+                // reference ways by id; we resolved those above. Outer
+                // members go first, inner (holes in the polygon) are
+                // ignored — for analyzer scoping we want the bounding
+                // outer outline, not the donut topology.
                 if let members = el["members"] as? [[String: Any]] {
                     for m in members {
-                        if let geom = m["geometry"] as? [[String: Any]] {
-                            polygon.append(contentsOf: geom.compactMap {
-                                guard let lat = $0["lat"] as? Double, let lon = $0["lon"] as? Double else { return nil }
-                                return MapPoint(latitude: lat, longitude: lon)
-                            })
-                        }
+                        let role = (m["role"] as? String) ?? ""
+                        guard role == "outer" || role.isEmpty,
+                              (m["type"] as? String) == "way",
+                              let ref = (m["ref"] as? Int64) ?? (m["ref"] as? Int).map(Int64.init),
+                              let pts = wayPolygonById[ref] else { continue }
+                        polygon.append(contentsOf: pts)
                     }
                 }
-                // Fallback: many course relations come back from Overpass with
-                // no inlined member geometry under `out tags geom;`. The
-                // relation still carries a `bounds` rect — use it as a
-                // 4-corner polygon. Coarse but the second-pass
-                // `(poly:"...")` query just needs an enclosing region, and
-                // Wekiva GC (relation 4052767) is an example of one that
-                // arrives in this shape. Without this fallback the candidate
-                // was silently dropped and we fell through to MapKit /
-                // manual mode.
+                // Last-resort fallback: the relation has bounds but no
+                // resolvable member geometry. A 4-corner bbox is coarse
+                // (covers neighbouring courses on the same property) but
+                // beats dropping the candidate entirely.
                 if polygon.isEmpty, let bounds = el["bounds"] as? [String: Any],
                    let minLat = bounds["minlat"] as? Double,
                    let minLon = bounds["minlon"] as? Double,
@@ -317,8 +421,6 @@ final class OSMCourseService {
                 }
             }
             guard polygon.count >= 3 else { continue }
-            // Centroid = simple average of polygon vertices. Good enough for
-            // the picker's "X meters away" sort.
             let avgLat = polygon.map(\.latitude).reduce(0, +) / Double(polygon.count)
             let avgLon = polygon.map(\.longitude).reduce(0, +) / Double(polygon.count)
             out.append(OSMCourseCandidate(
@@ -334,7 +436,8 @@ final class OSMCourseService {
 
     private static func parseCourseGeometry(data: Data,
                                             center: CLLocationCoordinate2D,
-                                            radiusMeters: Double) throws -> OSMCourseData {
+                                            radiusMeters: Double,
+                                            boundingPolygons: [[MapPoint]]? = nil) throws -> OSMCourseData {
         guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
               let elements = json["elements"] as? [[String: Any]] else {
             throw OSMError.parseFailure
@@ -385,19 +488,56 @@ final class OSMCourseService {
             }
         }
 
+        // Centroid-dedup at 3m. With sibling polygons unioned in the
+        // Overpass query, two mappers tagging the same physical green can
+        // come back as two near-identical OSMPolygons. 3m is well below
+        // any real course-feature spacing and well above OSM coordinate
+        // jitter, so it cleanly removes mapper-collision dupes without
+        // collapsing legitimately-adjacent features.
         return OSMCourseData(
             fetchedAt: Date(),
             center: MapPoint(center),
             radiusMeters: radiusMeters,
-            holes: holes,
-            greens: greens,
-            tees: tees,
-            fairways: fairways,
-            bunkers: bunkers,
-            attribution: "Map data © OpenStreetMap contributors (ODbL)"
+            holes: dedupHoles(holes),
+            greens: dedupPolygons(greens),
+            tees: dedupPolygons(tees),
+            fairways: dedupPolygons(fairways),
+            bunkers: dedupPolygons(bunkers),
+            attribution: "Map data © OpenStreetMap contributors (ODbL)",
+            boundingPolygons: boundingPolygons
         )
     }
 
+    private static let subFeatureDedupMeters: Double = 3.0
+
+    private static func centroid(_ points: [MapPoint]) -> MapPoint? {
+        guard !points.isEmpty else { return nil }
+        let lat = points.map(\.latitude).reduce(0, +) / Double(points.count)
+        let lon = points.map(\.longitude).reduce(0, +) / Double(points.count)
+        return MapPoint(latitude: lat, longitude: lon)
+    }
+
+    private static func dedupPolygons(_ polys: [OSMPolygon]) -> [OSMPolygon] {
+        var keptCentroids: [MapPoint] = []
+        var out: [OSMPolygon] = []
+        for p in polys {
+            guard let c = centroid(p.points) else { continue }
+            let dup = keptCentroids.contains { distanceMeters($0, c) <= subFeatureDedupMeters }
+            if !dup { keptCentroids.append(c); out.append(p) }
+        }
+        return out
+    }
+
+    private static func dedupHoles(_ holes: [OSMHole]) -> [OSMHole] {
+        var keptCentroids: [MapPoint] = []
+        var out: [OSMHole] = []
+        for h in holes {
+            guard let c = centroid(h.centerline) else { continue }
+            let dup = keptCentroids.contains { distanceMeters($0, c) <= subFeatureDedupMeters }
+            if !dup { keptCentroids.append(c); out.append(h) }
+        }
+        return out
+    }
 }
 
 // MARK: - Errors

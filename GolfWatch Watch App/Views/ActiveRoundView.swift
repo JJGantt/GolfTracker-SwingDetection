@@ -47,10 +47,9 @@ struct ActiveRoundView: View {
     @State var onGreenOverride = false          // True when auto-switched to putter for current green
     @State var navigateToViewSettings = false
     @State var navigateToClubRecommend = false
-    @State var navigateToPredictGreen = false
 
     enum SettingsSheet: String, Identifiable {
-        case viewSettings, clubRecommend, predictGreen
+        case viewSettings, clubRecommend
         var id: String { rawValue }
     }
     @State var activeSettingsSheet: SettingsSheet?
@@ -436,21 +435,36 @@ struct ActiveRoundView: View {
                     }
 
                     // Dev data zone — only visible when debug logging is on.
-                    // Currently shows steps-since-last-detected-swing (raw
-                    // integer, no label — developer reads it knowing what
-                    // it means). Sits above the scorecard button. Will hold
-                    // additional dev signals as we add them.
+                    // Three lines, no labels (developer reads by position):
+                    //   1. steps since last detected swing
+                    //   2. false-negative shapes buffered since last stroke
+                    //      (these are the rejected paired-shape candidates
+                    //      that would upload as a false_negative_group on
+                    //      the next manual stroke add)
+                    //   3. relative altimeter reading in cm (signed)
+                    // Sits above the scorecard button. TimelineView at 1Hz
+                    // polls all three values; the rejection buffer isn't
+                    // @Published so polling is how the pill stays current.
                     if ClientEventLogger.enabled {
-                        Text("\(swingDetector.stepsSinceLastDetectedSwing)")
+                        TimelineView(.periodic(from: .now, by: 1)) { _ in
+                            let altCm: Int? = LocationManager.shared.currentRelativeAltitudeMeters.map {
+                                Int(($0 * 100).rounded())
+                            }
+                            VStack(alignment: .center, spacing: 1) {
+                                Text("\(swingDetector.stepsSinceLastDetectedSwing)")
+                                Text("\(swingDetector.rejectedShapesSinceLastStroke.count)")
+                                Text(altCm.map { String(format: "%+d", $0) } ?? "—")
+                            }
                             .font(.system(size: 11, weight: .semibold, design: .monospaced))
                             .foregroundColor(.white.opacity(0.85))
-                            .frame(minWidth: 22)
+                            .frame(minWidth: 30)
                             .padding(.horizontal, 4)
                             .padding(.vertical, 2)
                             .background(
                                 RoundedRectangle(cornerRadius: 4)
                                     .fill(Color.black.opacity(0.6))
                             )
+                        }
                     }
 
                     // Scorecard button — opens the shared ScorecardView as a sheet.
@@ -660,7 +674,6 @@ struct ActiveRoundView: View {
             manualClubOverride: $manualClubOverride,
             navigateToViewSettings: $navigateToViewSettings,
             navigateToClubRecommend: $navigateToClubRecommend,
-            navigateToPredictGreen: $navigateToPredictGreen,
             isPlacingTarget: $isPlacingTarget,
             minimalScreenMode: $minimalScreenMode,
             selectedClubIndex: $selectedClubIndex,
@@ -717,6 +730,8 @@ struct ActiveRoundView: View {
             startPlaygroupChannelIfNeeded(userId: uid)
         }
 
+        pushElevationReadoutHole()
+
         // Pull any iPhone-side mutations to this round we missed while we
         // weren't subscribed to Realtime (which is the entire solo case).
         // HTTP-only — no WebSocket — so the watchOS-WS unreliability that
@@ -750,6 +765,21 @@ struct ActiveRoundView: View {
             // Hole index → 1-based hole number (round.currentHoleIndex is 0-based).
             PlaygroupChannel.shared.updateCurrentHole(round.currentHoleIndex + 1, userId: uid)
         }
+        pushElevationReadoutHole()
+    }
+
+    /// Forward the current hole + green coord into ElevationReadout so
+    /// the live Δ-to-green tracks the player's hole. Called on appear
+    /// and on every hole change. The "green" we pass is `Hole.coordinate`
+    /// (the hole marker — green centroid for OSM rounds, user-placed
+    /// pin for manual rounds).
+    func pushElevationReadoutHole() {
+        guard let round = store.currentRound else { return }
+        let sorted = round.holes.sorted { $0.number < $1.number }
+        let idx = max(0, min(round.currentHoleIndex, sorted.count - 1))
+        guard sorted.indices.contains(idx) else { return }
+        let hole = sorted[idx]
+        ElevationReadout.shared.updateHole(number: hole.number, green: hole.coordinate)
     }
 
     private func startPlaygroupChannelIfNeeded(userId: String) {
@@ -800,9 +830,9 @@ struct ActiveRoundView: View {
         MapReader { proxy in
             Map(position: $position, interactionModes: isInteractiveMapMode ? .all : []) {
                 // Breadcrumb trail — small dots behind the user that fade
-                // with age. Helps orient on a heading-less map.
-                ForEach(Array(locationManager.breadcrumbs.enumerated()), id: \.element.id) { idx, bc in
-                    let n = locationManager.breadcrumbs.count
+                // with age. Renders the most-recent slice of pathSamples.
+                ForEach(Array(Array(locationManager.pathSamples.suffix(60)).enumerated()), id: \.element.id) { idx, bc in
+                    let n = min(locationManager.pathSamples.count, 60)
                     let opacity = 0.08 + 0.55 * Double(idx) / Double(max(n - 1, 1))
                     Annotation("", coordinate: bc.coordinate) {
                         Circle()
@@ -888,12 +918,15 @@ struct ActiveRoundView: View {
                 .polygonCoordinates
         }()
         // OSM hole centerline — the tee→green linestring tagged `golf=hole`.
-        // Match by `ref` (hole number) to the current hole. Falls back to nil
-        // when the OSM data is partial (no clean ref) or the course has no
-        // OSM coverage; the line just doesn't draw in those cases.
+        // Only rendered when OSM coverage is complete (tier == .full). On
+        // partial-tier courses (Sweetwater: 3 holes mapped, refs "1","1","2"
+        // for an 18-hole course) the matched centerline is usually
+        // misleading or wrong-hole, so we skip it entirely rather than
+        // draw a yellow line through the wrong fairway.
         let osmCenterline: [CLLocationCoordinate2D]? = {
             guard let courseId = store.currentRound?.courseId,
-                  let osm = store.osmCourseData(forCourseId: courseId) else { return nil }
+                  let osm = store.osmCourseData(forCourseId: courseId),
+                  osm.tier == .full else { return nil }
             let match = osm.holes.first { Int($0.ref ?? "") == hole.number }
             guard let pts = match?.centerline, pts.count >= 2 else { return nil }
             return pts.map(\.coordinate)
@@ -935,21 +968,47 @@ struct ActiveRoundView: View {
                             style: StrokeStyle(lineWidth: 1.5, lineCap: .round, dash: [4, 3])
                         )
                 }
-                // Putt count, white integer at polygon centroid. Hidden when
-                // zero — no point showing "0" before any putts have happened.
-                if puttCount > 0, let center = polygonCentroid {
+                // "Putts: N" label rendered just above the green polygon.
+                // Hidden at zero. Anchored at the polygon vertex
+                // furthest from the user — in the rotated hole-at-top
+                // view that's the visually-top edge of the polygon —
+                // then offset upward in screen space so the label sits
+                // outside the green rather than inside it. Screen-space
+                // offset is rotation-independent so this stays above
+                // the green regardless of map orientation.
+                if puttCount > 0,
+                   let pts = osmPolygon, !pts.isEmpty,
+                   let userCoord = locationManager.location?.coordinate,
+                   let topVertex = pts.max(by: { a, b in
+                       let dA = CLLocation(latitude: userCoord.latitude, longitude: userCoord.longitude)
+                           .distance(from: CLLocation(latitude: a.latitude, longitude: a.longitude))
+                       let dB = CLLocation(latitude: userCoord.latitude, longitude: userCoord.longitude)
+                           .distance(from: CLLocation(latitude: b.latitude, longitude: b.longitude))
+                       return dA < dB
+                   }) {
+                    Annotation("", coordinate: topVertex) {
+                        Text("Putts: \(puttCount)")
+                            .font(.system(size: 12, weight: .bold, design: .rounded))
+                            .foregroundColor(.white)
+                            .shadow(color: .black, radius: 2)
+                            .offset(y: -14)
+                    }
+                } else if puttCount > 0, let center = polygonCentroid {
+                    // Fallback when no user location yet — render at
+                    // centroid with the screen-offset, accepting that
+                    // this may overlap the green slightly.
                     Annotation("", coordinate: center) {
-                        Text("\(puttCount)")
-                            .font(.system(size: 18, weight: .bold, design: .rounded))
+                        Text("Putts: \(puttCount)")
+                            .font(.system(size: 12, weight: .bold, design: .rounded))
                             .foregroundColor(.white)
                             .shadow(color: .black, radius: 2)
                     }
                 }
 
                 // Breadcrumb trail — small dots behind the user that fade
-                // with age.
-                ForEach(Array(locationManager.breadcrumbs.enumerated()), id: \.element.id) { idx, bc in
-                    let n = locationManager.breadcrumbs.count
+                // with age. Renders the most-recent slice of pathSamples.
+                ForEach(Array(Array(locationManager.pathSamples.suffix(60)).enumerated()), id: \.element.id) { idx, bc in
+                    let n = min(locationManager.pathSamples.count, 60)
                     let opacity = 0.08 + 0.55 * Double(idx) / Double(max(n - 1, 1))
                     Annotation("", coordinate: bc.coordinate) {
                         Circle()
@@ -1029,10 +1088,22 @@ struct ActiveRoundView: View {
                                     .opacity(0.9)
                                     .shadow(color: .black, radius: 2)
 
-                                // Show distance for all strokes in full view mode
+                                // Show distance for all strokes in full view mode.
+                                // For the LAST stroke (live distance to user),
+                                // suppress until the user has moved out of the
+                                // practice zone — within ignorePracticeRadius
+                                // yards AND below the step gate counts as
+                                // "still standing at the ball." Without this
+                                // the readout flickers between 0 and small
+                                // numbers while the user addresses the shot.
                                 let distance: Int? = {
                                     if let lastStroke = strokesForHole.last, stroke.id == lastStroke.id {
-                                        // Last stroke - dynamic distance to user
+                                        guard let userLoc = locationManager.location else { return nil }
+                                        let strokeLoc = CLLocation(latitude: stroke.coordinate.latitude, longitude: stroke.coordinate.longitude)
+                                        let yards = userLoc.distance(from: strokeLoc) * 1.09361
+                                        let withinPracticeRadius = yards < swingDetector.ignorePracticeRadius
+                                        let belowStepGate = swingDetector.stepsSinceLastDetectedSwing < swingDetector.stepGateThreshold
+                                        if withinPracticeRadius && belowStepGate { return nil }
                                         return distanceToTarget(stroke.coordinate)
                                     } else if let nextIndex = strokesForHole.firstIndex(where: { $0.id == stroke.id }),
                                               nextIndex + 1 < strokesForHole.count {
@@ -1045,17 +1116,22 @@ struct ActiveRoundView: View {
                                     return nil
                                 }()
 
+                                // Yardage to LEFT of dot, elevation Δ to
+                                // RIGHT. Both rendered as ZStack overlays so
+                                // the dot itself stays anchored to the
+                                // stroke's coordinate (HStack would shift
+                                // the dot off-center as text widths varied).
                                 if let dist = distance {
-                                    VStack {
-                                        Text("\(dist)")
-                                            .font(.system(size: 10, weight: .bold))
-                                            .foregroundColor(.white)
-                                            .shadow(color: .black, radius: 2)
-                                            .offset(y: -12)
-                                        Spacer()
-                                    }
-                                    .frame(height: 12)
+                                    Text("\(dist)")
+                                        .font(.system(size: 10, weight: .bold))
+                                        .foregroundColor(.white)
+                                        .shadow(color: .black, radius: 2)
+                                        .fixedSize()
+                                        .offset(x: -18)
                                 }
+                                ElevationDeltaLabel(coordinate: stroke.coordinate, fontSize: 10)
+                                    .fixedSize()
+                                    .offset(x: 18)
                             }
                         }
                     }
@@ -1108,14 +1184,17 @@ struct ActiveRoundView: View {
                             if let distance = distanceToTarget(target) {
                                 VStack {
                                     Spacer()
-                                    Text("\(distance)")
-                                        .font(.system(size: 10, weight: .bold))
-                                        .foregroundColor(.black)
-                                        .padding(.horizontal, 4)
-                                        .padding(.vertical, 2)
-                                        .background(Color.white.opacity(0.9))
-                                        .clipShape(RoundedRectangle(cornerRadius: 4))
-                                        .offset(y: 18) // Position below the scope icon
+                                    HStack(alignment: .firstTextBaseline, spacing: 3) {
+                                        Text("\(distance)")
+                                            .font(.system(size: 10, weight: .bold))
+                                            .foregroundColor(.black)
+                                        ElevationDeltaLabel(coordinate: target, fontSize: 9)
+                                    }
+                                    .padding(.horizontal, 4)
+                                    .padding(.vertical, 2)
+                                    .background(Color.white.opacity(0.9))
+                                    .clipShape(RoundedRectangle(cornerRadius: 4))
+                                    .offset(y: 18) // Position below the scope icon
                                 }
                                 .frame(height: 24)
                             }
@@ -1227,7 +1306,8 @@ struct ActiveRoundView: View {
         if isFullViewMode {
             let osmTee: CLLocationCoordinate2D? = {
                 guard let courseId = store.currentRound?.courseId,
-                      let osm = store.osmCourseData(forCourseId: courseId) else { return nil }
+                      let osm = store.osmCourseData(forCourseId: courseId),
+                      osm.tier == .full else { return nil }
                 let match = osm.holes.first { Int($0.ref ?? "") == hole.number }
                 return match?.centerline.first?.coordinate
             }()

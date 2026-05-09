@@ -135,9 +135,15 @@ class DataStore: ObservableObject {
 
     private func evaluateRoundLifecycle() {
         guard let round = currentRound else { return }
+        // Test mode: skip the off-course branch by passing nil location.
+        // Simulated GPS would otherwise be >2km from real hole coords and
+        // auto-end every test round.
+        let location = LocationManager.shared.isTestModeEnabled
+            ? nil
+            : LocationManager.shared.location?.coordinate
         let decision = RoundLifecycleEvaluator.evaluate(
             round: round,
-            location: LocationManager.shared.location?.coordinate
+            location: location
         )
         if decision.shouldEnd {
             endRound(round, reason: decision.reason ?? "lifecycle")
@@ -147,12 +153,13 @@ class DataStore: ObservableObject {
     private func setupWatchConnectivity() {
         // Round/Stroke sync moved to DB (Realtime + SwiftData). WC only retains
         // hole detection data + hole filter settings paths now.
-        WatchConnectivityManager.shared.onReceiveHoleFilterSettings = { [weak self] settings in
-            dprint("📱 [DataStore] Received hole filter settings from Watch")
-            DispatchQueue.main.async {
-                self?.holeFilterSettings = settings
-                self?.saveHoleFilterSettings()
-            }
+        // Phone is authority for filter settings — push current value to
+        // watch on every WC session activation so the watch picks up the
+        // latest after a launch / reconnect. The phone's GreenFiltersView
+        // also pushes on each individual change for live updates.
+        WatchConnectivityManager.shared.onSessionActivated = { [weak self] in
+            guard let self = self else { return }
+            WatchConnectivityManager.shared.sendHoleFilterSettings(self.holeFilterSettings)
         }
 
         // Watch-driven blob detection request. Watch hits this whenever it
@@ -672,9 +679,64 @@ class DataStore: ObservableObject {
 
     func filteredHoleDetectionBlobs(for courseId: UUID) -> [HoleDetectionBlob] {
         guard let data = holeDetectionDataByCourse[courseId] else { return [] }
-        return data.blobs.filter { $0.passesFilter(holeFilterSettings) }
+        return holeFilterSettings.apply(to: data.blobs)
     }
-    
+
+    /// Resolve the displayable type name for a club. Mirrors
+    /// WatchDataStore so cross-target callers (HoleMapView's putt count)
+    /// have the same API on both platforms.
+    func getTypeName(for club: ClubData) -> String {
+        clubTypes.first { $0.id == club.clubTypeId }?.name ?? club.name
+    }
+
+    /// Decoded OSM data for a course, sourced from `Course.osmPolygons`
+    /// (already populated by `RoundResolver` / `OSMCourseService`). The
+    /// watch keeps a separate `[UUID: OSMCourseData]` dict; on iOS we
+    /// just decode on demand from the SwiftData column. Returns nil if
+    /// the course has no OSM coverage or the payload fails to decode.
+    func osmCourseData(forCourseId id: UUID) -> OSMCourseData? {
+        guard let course = courses.first(where: { $0.id == id }),
+              let raw = course.osmPolygons else { return nil }
+        return try? JSONDecoder().decode(OSMCourseData.self, from: raw)
+    }
+
+    /// Source-agnostic green candidates for a course — OSM polygons
+    /// (when present) merged with blob-detection results passing the
+    /// active filter settings. Mirrors the watch's
+    /// `WatchDataStore.filteredGreenCandidates`. Drives map polygon
+    /// rendering, the on-green color flip, and any other "where is the
+    /// green for hole N" lookup.
+    func filteredGreenCandidates(for courseId: UUID?) -> [HoleDetectionBlob] {
+        guard let courseId else { return [] }
+        var out: [HoleDetectionBlob] = []
+        if let osm = osmCourseData(forCourseId: courseId) {
+            out.append(contentsOf: osm.greens.map(Self.blob(fromOSMGreen:)))
+        }
+        if let detectionData = holeDetectionDataByCourse[courseId] {
+            out.append(contentsOf: holeFilterSettings.apply(to: detectionData.blobs))
+        }
+        return out
+    }
+
+    /// Convert an OSM green polygon to the `HoleDetectionBlob` shape the
+    /// rest of the picker/map code consumes. Filter fields set high so
+    /// the OSM polygon always passes — it's mapper-curated, not
+    /// heuristic-detected. Same shape as watch's helper.
+    private static func blob(fromOSMGreen polygon: OSMPolygon) -> HoleDetectionBlob {
+        let avgLat = polygon.points.map(\.latitude).reduce(0, +) / Double(max(polygon.points.count, 1))
+        let avgLon = polygon.points.map(\.longitude).reduce(0, +) / Double(max(polygon.points.count, 1))
+        return HoleDetectionBlob(
+            id: UUID(),
+            area: 9_999,
+            minWidth: 999,
+            elongation: 1.0,
+            greennessScore: 9_999,
+            centroidLatitude: avgLat,
+            centroidLongitude: avgLon,
+            polygon: polygon.points
+        )
+    }
+
     func addCourse(name: String) {
         let course = Course(name: name, holes: [])
         courses.append(course)
@@ -830,6 +892,42 @@ class DataStore: ObservableObject {
         // Round + clubs now sync via DB (Realtime + SwiftData) — no WC push needed.
         SupabaseSync.shared.upsertRound(round)
 
+        // Start path + altitude capture for the round. Hole-number provider
+        // reads the round's currentHoleIndex live so each sample is tagged
+        // with the hole the user is actually on at capture time.
+        if let uid = AuthManager.shared.currentUserId {
+            let roundId = round.id
+            LocationManager.shared.startPathRecording(roundId: roundId, userId: uid) { [weak self] in
+                guard let self,
+                      let r = self.rounds.first(where: { $0.id == roundId }) else { return 1 }
+                let sorted = r.holes.sorted { $0.number < $1.number }
+                let idx = max(0, min(r.currentHoleIndex, sorted.count - 1))
+                return sorted.indices.contains(idx) ? sorted[idx].number : 1
+            }
+        } else {
+            ClientEventLogger.log("altitude.recording.skipped.noUid", detail: [
+                "roundId": .string(round.id.uuidString)
+            ])
+        }
+
+        // Live elevation-to-green readout. Load the cache for this
+        // course's holes (one batched query) then start the readout
+        // service so it'll publish a Δ as soon as enough crossings land.
+        let elevationRoundId = round.id
+        let elevationCourseId = course.id
+        let holeNumbers = round.holes.map { $0.number }
+        Task { @MainActor in
+            await HoleHeightCellCache.shared.loadForCourse(
+                courseId: elevationCourseId, holeNumbers: holeNumbers
+            )
+            ElevationReadout.shared.start(
+                roundId: elevationRoundId, courseId: elevationCourseId
+            )
+            await HistoricalFirstStrokeCache.shared.loadForCourse(
+                courseId: elevationCourseId
+            )
+        }
+
         if runHoleDetection {
             startHoleDetection(
                 for: course,
@@ -916,6 +1014,17 @@ class DataStore: ObservableObject {
         }
 
         let coverageRadius = holeDetectionCoverageRadius(for: course, center: center)
+        // Decode the OSM bounding polygon(s) if we have them — used to gate
+        // blob detection so two courses on the same property (Stonegate
+        // Cypress vs Oaks) don't cross-contaminate. Old courses rows
+        // without `boundingPolygons` (pre-fix) decode to nil and the
+        // analyzer falls back to the radius-only behavior.
+        let boundingPolygons: [[CLLocationCoordinate2D]]? = {
+            guard let data = course.osmPolygons,
+                  let osm = try? JSONDecoder().decode(OSMCourseData.self, from: data),
+                  let polys = osm.boundingPolygons, !polys.isEmpty else { return nil }
+            return polys.map { $0.map { CLLocationCoordinate2D(latitude: $0.latitude, longitude: $0.longitude) } }
+        }()
         holeDetectionRunStateByCourse[course.id] = HoleDetectionRunState(
             isRunning: true,
             message: "Starting hole detection...",
@@ -927,6 +1036,7 @@ class DataStore: ObservableObject {
             courseId: course.id,
             center: center,
             coverageRadiusMeters: coverageRadius,
+            boundingPolygons: boundingPolygons,
             progress: { [weak self] message, progress in
                 DispatchQueue.main.async {
                     self?.holeDetectionRunStateByCourse[course.id] = HoleDetectionRunState(
@@ -1007,7 +1117,14 @@ class DataStore: ObservableObject {
 
         let strokeNumber = Stroke.nextStrokeNumber(in: rounds[roundIndex], holeNumber: holeNumber)
 
-        let stroke = Stroke(holeNumber: holeNumber, strokeNumber: strokeNumber, coordinate: coordinate, clubId: clubId, trajectoryHeading: trajectoryHeading)
+        let stroke = Stroke(
+            holeNumber: holeNumber,
+            strokeNumber: strokeNumber,
+            coordinate: coordinate,
+            clubId: clubId,
+            trajectoryHeading: trajectoryHeading,
+            relAltMeters: LocationManager.shared.currentRelativeAltitudeMeters
+        )
         rounds[roundIndex].strokes.append(stroke)
         saveRounds()
 
@@ -1103,7 +1220,14 @@ class DataStore: ObservableObject {
         let strokesForHole = rounds[roundIndex].strokes.filter { $0.holeNumber == holeNumber }
         let strokeNumber = strokesForHole.count + 1
 
-        let stroke = Stroke(holeNumber: holeNumber, strokeNumber: strokeNumber, coordinate: coordinate, clubId: clubId, isPenalty: true)
+        let stroke = Stroke(
+            holeNumber: holeNumber,
+            strokeNumber: strokeNumber,
+            coordinate: coordinate,
+            clubId: clubId,
+            isPenalty: true,
+            relAltMeters: LocationManager.shared.currentRelativeAltitudeMeters
+        )
         rounds[roundIndex].strokes.append(stroke)
         saveRounds()
 
@@ -1169,6 +1293,26 @@ class DataStore: ObservableObject {
         saveRounds()
         dprint("📱 [DataStore] Ended round \(round.id) — \(reason)")
         SupabaseSync.shared.upsertRound(rounds[idx])
+        // Drain the upload queue in the background; queue is disk-
+        // persistent so the next round picks up any leftovers. After the
+        // drain completes, fold this round's altitude rows into the
+        // shared `hole_height_cells` table so future rounds (anyone's)
+        // can calibrate against them.
+        let foldInCourseId = rounds[idx].courseId
+        let foldInRoundId = rounds[idx].id
+        let skipFoldIn = rounds[idx].locationTestModeEnabled == true
+        Task { @MainActor in
+            ElevationReadout.shared.stop()
+            HoleHeightCellCache.shared.clear()
+            HistoricalFirstStrokeCache.shared.clear()
+        }
+        Task {
+            await LocationManager.shared.stopPathRecording()
+            if !skipFoldIn {
+                await ElevationFoldIn.foldIn(courseId: foldInCourseId,
+                                             roundId: foldInRoundId)
+            }
+        }
         if currentRoundId == round.id { currentRoundId = nil }
     }
 
@@ -1438,7 +1582,7 @@ private final class HoleDetectionAnalyzer {
     private let sandTolerance = 10
     private let sandScanRadius = 20
     private let sandWeight = 1.0
-    private let areaWeight = 0.2
+    private let areaWeight = 0.6
     private let widthWeight = 1.0
 
     private let tileDiameterMeters: Double = 2000.0
@@ -1454,6 +1598,7 @@ private final class HoleDetectionAnalyzer {
         courseId: UUID,
         center: CLLocationCoordinate2D,
         coverageRadiusMeters: Double,
+        boundingPolygons: [[CLLocationCoordinate2D]]? = nil,
         progress: @escaping (String, Double) -> Void,
         completion: @escaping (Result<HoleDetectionAnalyzeResult, Error>) -> Void
     ) {
@@ -1492,10 +1637,25 @@ private final class HoleDetectionAnalyzer {
                 progress("Merging overlaps...", 0.95)
                 let mergedBlobs = self.mergeDuplicateBlobs(blobs)
 
+                // Polygon gate: when the OSM relation gave us a course
+                // outline, drop any merged blob whose centroid sits
+                // outside ALL of the bounding polygons. Multiple polygons
+                // = canonical + sibling-relation outlines unioned (e.g.
+                // courses with two competing OSM features for the same
+                // physical course). When boundingPolygons is nil we fall
+                // back to the radius-only behaviour.
+                let scopedBlobs: [HoleDetectionBlob] = {
+                    guard let polys = boundingPolygons, !polys.isEmpty else { return mergedBlobs }
+                    return mergedBlobs.filter { blob in
+                        let pt = CLLocationCoordinate2D(latitude: blob.centroidLatitude, longitude: blob.centroidLongitude)
+                        return polys.contains { Self.pointInPolygon(pt, polygon: $0) }
+                    }
+                }()
+
                 let data = CourseHoleDetectionData(
                     courseId: courseId,
                     generatedAt: Date(),
-                    blobs: mergedBlobs
+                    blobs: scopedBlobs
                 )
                 let topGreenishColors = mergedGreenishColorCounts
                     .filter { $0.value >= self.diagnosticsColorCountThreshold }
@@ -1517,7 +1677,7 @@ private final class HoleDetectionAnalyzer {
                     totalGreenishPixels: totalGreenishPixels,
                     totalSwappedChannelExactPixels: totalSwappedChannelExactPixels,
                     preMergeBlobCount: blobs.count,
-                    mergedBlobCount: mergedBlobs.count,
+                    mergedBlobCount: scopedBlobs.count,
                     topGreenishColors: topGreenishColors
                 )
 
@@ -1913,6 +2073,26 @@ private final class HoleDetectionAnalyzer {
         let base = (areaContrib + widthContrib) / elongationPenalty
         let multiplier = sandSurroundPct > 1.0 ? sandSurroundPct : 1.0
         return Int((base * multiplier).rounded())
+    }
+
+    /// Standard ray-casting point-in-polygon. Used by the bounding-polygon
+    /// gate to drop blobs detected on neighboring courses. Same algorithm
+    /// as `HoleDetectionBlob.contains` — duplicated as a static here to
+    /// avoid leaking analyzer concerns into the model layer.
+    static func pointInPolygon(_ pt: CLLocationCoordinate2D, polygon: [CLLocationCoordinate2D]) -> Bool {
+        guard polygon.count >= 3 else { return false }
+        let x = pt.longitude, y = pt.latitude
+        var inside = false
+        var j = polygon.count - 1
+        for i in 0..<polygon.count {
+            let xi = polygon[i].longitude, yi = polygon[i].latitude
+            let xj = polygon[j].longitude, yj = polygon[j].latitude
+            if (yi > y) != (yj > y) && (x < (xj - xi) * (y - yi) / (yj - yi) + xi) {
+                inside.toggle()
+            }
+            j = i
+        }
+        return inside
     }
 
     private func mergeDuplicateBlobs(_ blobs: [HoleDetectionBlob]) -> [HoleDetectionBlob] {

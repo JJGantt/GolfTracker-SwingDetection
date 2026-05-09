@@ -142,6 +142,18 @@ struct WatchHomeView: View {
                 }
                 .interactiveDismissDisabled(true)
             }
+            .sheet(item: Binding(
+                get: { store.pendingScorecardPicker.map { ScorecardPickerWrapper(picker: $0) } },
+                set: { _ in /* dismiss only by picking — including "Course not listed" */ }
+            )) { wrapper in
+                ScorecardPickerView(
+                    originalName: wrapper.picker.originalName,
+                    candidates: wrapper.picker.candidates
+                ) { picked in
+                    store.pickScorecardCandidate(picked)
+                }
+                .interactiveDismissDisabled(true)
+            }
         }
     }
 }
@@ -175,6 +187,11 @@ private struct TeePickerView: View {
                     VStack(alignment: .leading, spacing: 2) {
                         HStack {
                             Text(tee.teeName).font(.body)
+                            if let gender = tee.gender {
+                                Text("(\(gender == "male" ? "M" : "F"))")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
                             Spacer()
                             if let yds = tee.totalYards {
                                 Text("\(yds) yd").font(.caption).foregroundColor(.secondary)
@@ -186,11 +203,6 @@ private struct TeePickerView: View {
                             }
                             if let rating = tee.courseRating, let slope = tee.slopeRating {
                                 Text("• \(rating, specifier: "%.1f")/\(slope)")
-                                    .font(.caption2)
-                                    .foregroundColor(.secondary)
-                            }
-                            if let gender = tee.gender {
-                                Text("• \(gender == "male" ? "M" : "W")")
                                     .font(.caption2)
                                     .foregroundColor(.secondary)
                             }
@@ -213,24 +225,124 @@ private struct CoursePickerView: View {
     let candidates: [RoundResolver.CourseCandidate]
     let onPick: (RoundResolver.CourseCandidate?) -> Void
 
+    private var realCandidates: [RoundResolver.CourseCandidate] {
+        candidates.filter {
+            if case .manual = $0.source { return false }
+            return true
+        }
+    }
+    private var manualCandidate: RoundResolver.CourseCandidate? {
+        candidates.first {
+            if case .manual = $0.source { return true }
+            return false
+        }
+    }
+
     var body: some View {
         NavigationStack {
-            List(candidates, id: \.self) { c in
-                Button {
-                    onPick(c)
-                } label: {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(c.name).font(.body)
-                        Text("\(Int(c.distanceMeters)) m")
-                            .font(.caption2)
-                            .foregroundColor(.secondary)
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Pick course")
+                    .font(.headline)
+                    .padding(.horizontal)
+                List {
+                    ForEach(realCandidates, id: \.self) { c in
+                        Button { onPick(c) } label: {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(c.name).font(.body)
+                                Text("\(Int(c.distanceMeters)) m")
+                                    .font(.caption2)
+                                    .foregroundColor(.secondary)
+                            }
+                        }
+                    }
+                    if let manual = manualCandidate {
+                        Section {
+                            Button { onPick(manual) } label: {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(manual.name).font(.body)
+                                    Text("Start a round here anyway.")
+                                        .font(.caption2)
+                                        .foregroundColor(.secondary)
+                                }
+                            }
+                        }
                     }
                 }
             }
-            .navigationTitle("Pick course")
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { onPick(nil) }
+                }
+            }
+        }
+    }
+}
+
+private struct ScorecardPickerWrapper: Identifiable {
+    let picker: WatchDataStore.PendingScorecardPicker
+    var id: String { picker.candidates.map { String($0.course.id) }.joined(separator: "|") + "|" + picker.originalName }
+}
+
+private struct ScorecardPickerView: View {
+    let originalName: String
+    let candidates: [RoundResolver.ScorecardCandidate]
+    let onPick: (GCAPICourse?) -> Void
+
+    var body: some View {
+        NavigationStack {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Pick scorecard")
+                    .font(.headline)
+                    .padding(.horizontal)
+                Text(originalName)
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+                    .padding(.horizontal)
+                List {
+                    ForEach(candidates, id: \.self) { c in
+                        Button { onPick(c.course) } label: {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(c.course.club_name ?? c.course.course_name ?? "Unnamed")
+                                    .font(.body)
+                                    .lineLimit(2)
+                                // Show course_name as a secondary line when
+                                // it differs from club_name — multi-course
+                                // resorts (Stonegate at Solivita: Oaks /
+                                // Cypress) share a club_name and would look
+                                // identical otherwise.
+                                if let course = c.course.course_name,
+                                   let club = c.course.club_name,
+                                   course != club, !course.isEmpty {
+                                    Text(course).font(.caption).foregroundColor(.secondary)
+                                }
+                                if let loc = c.course.location {
+                                    let locStr = [loc.city, loc.state].compactMap { $0 }.joined(separator: ", ")
+                                    if !locStr.isEmpty {
+                                        Text(locStr).font(.caption2).foregroundColor(.secondary)
+                                    }
+                                }
+                                let m = c.course.tees?.male?.count ?? 0
+                                let f = c.course.tees?.female?.count ?? 0
+                                if m + f == 0 {
+                                    Text("no scorecard data")
+                                        .font(.caption2)
+                                        .foregroundColor(.orange)
+                                }
+                            }
+                        }
+                    }
+                    Section {
+                        Button(role: .destructive) {
+                            onPick(nil)
+                        } label: {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Course not listed").font(.body)
+                                Text("Skip scorecard.")
+                                    .font(.caption2)
+                                    .foregroundColor(.secondary)
+                            }
+                        }
+                    }
                 }
             }
         }

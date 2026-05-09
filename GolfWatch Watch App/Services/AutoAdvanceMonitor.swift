@@ -12,17 +12,21 @@ import WatchKit
 /// There is no per-hole memory beyond that — strokes themselves live in
 /// `round.strokes` and we filter by timestamp.
 ///
-/// Gates:
-///   1. **Putted-since-arrival**: there exists a putter stroke for the
-///      current hole with `timestamp > currentHoleEnteredAt`. Old putts
-///      from a prior visit (back-nav case) don't count.
-///   2. **Distance**: user is `>= greenLeftThresholdYards` (default 10) from
-///      the green polygon perimeter.
-///   3. **Bonus accelerator**: when OSM provides next-hole tee data, also
-///      fires when user is within `teeBoxThresholdYards` (10) of the next
-///      tee centerline — same putted-since-arrival gate applies.
+/// Triggers (any one fires the advance):
+///   A. **Off-green**: user is `>= greenLeftThresholdYards` (default 10)
+///      from the current green polygon perimeter. Requires the
+///      putted-since-arrival gate — without it, walking past the green
+///      en route to elsewhere would falsely advance.
+///   B. **Near next-hole centerline (OSM)**: user within
+///      `teeBoxThresholdYards` (default 10) of the next hole's first
+///      centerline segment. No putt gate — being on the next centerline
+///      is itself the strong signal. Only when `osm.tier == .full`.
+///   C. **Near a historical first-stroke**: user within
+///      `historicalShotThresholdYards` (default 10) of any prior round's
+///      first-stroke location for the next hole, across all users at
+///      this course. No putt gate — same reasoning as B.
 ///
-/// All distances in yards. Thresholds chosen by Jared, not invented here.
+/// All distances in yards. Thresholds tunable via the dev menu.
 final class AutoAdvanceMonitor: ObservableObject {
     static let shared = AutoAdvanceMonitor()
 
@@ -39,9 +43,22 @@ final class AutoAdvanceMonitor: ObservableObject {
         let v = UserDefaults.standard.double(forKey: Self.greenLeftThresholdYardsKey)
         return v > 0 ? v : 10
     }
-    /// Yards from the next hole's tee point that counts as "arriving at the
-    /// next hole." Only used when OSM provides tee data for the next hole.
-    var teeBoxThresholdYards: Double = 10
+    /// Yards from the next hole's OSM centerline that counts as "arriving
+    /// at the next hole." Only used when OSM provides tee data for the
+    /// next hole. Read each evaluation so the dev-menu stepper tunes live.
+    static let teeBoxThresholdYardsKey = "autoAdvanceTeeBoxThresholdYards"
+    var teeBoxThresholdYards: Double {
+        let v = UserDefaults.standard.double(forKey: Self.teeBoxThresholdYardsKey)
+        return v > 0 ? v : 10
+    }
+    /// Yards from any historical first-stroke for the next hole that
+    /// counts as "playing that hole now." Cross-user, cross-round —
+    /// any prior round's first-stroke at this course is fair game.
+    static let historicalShotThresholdYardsKey = "autoAdvanceHistoricalShotThresholdYards"
+    var historicalShotThresholdYards: Double {
+        let v = UserDefaults.standard.double(forKey: Self.historicalShotThresholdYardsKey)
+        return v > 0 ? v : 10
+    }
 
     private var cancellables = Set<AnyCancellable>()
     /// Timestamp the user arrived at the current hole. Resets on every
@@ -95,9 +112,10 @@ final class AutoAdvanceMonitor: ObservableObject {
             lastSeenHoleIndex = idx
         }
 
-        // === Putt-since-arrival gate ===
-        // Filters by timestamp so back-nav doesn't satisfy this just because
-        // an old putt exists for the hole.
+        // Putt-since-arrival flag. Filtered by timestamp so back-nav
+        // doesn't satisfy this from an old putt. Used to gate Trigger A
+        // (off-green) only — Triggers B and C are strong-signal proximity
+        // checks that fire on their own.
         let arrivalTs = currentHoleEnteredAt
         let hasPuttedSinceArrival = round.strokes.contains { (stroke: Stroke) -> Bool in
             guard stroke.holeNumber == currentHole.number else { return false }
@@ -105,17 +123,23 @@ final class AutoAdvanceMonitor: ObservableObject {
             guard let club = store.availableClubs.first(where: { $0.id == stroke.clubId }) else { return false }
             return store.getTypeName(for: club) == "Putt"
         }
-        guard hasPuttedSinceArrival else { return }
 
-        // OSM data (if any) — used for the bonus next-tee accelerator only.
+        // OSM data (if any). Only trust full-tier OSM coverage; partial
+        // OSM (Sweetwater-style: a few mismapped holes with non-contiguous
+        // refs) points us at the wrong centerline.
         let osm = store.osmCourseData(forCourseId: round.courseId)
-        let nextOSMHole = nextHole.flatMap { nh in osm?.holes.first { Int($0.ref ?? "") == nh.number } }
+        let nextOSMHole = (osm?.tier == .full)
+            ? nextHole.flatMap { nh in osm?.holes.first { Int($0.ref ?? "") == nh.number } }
+            : nil
 
         // Source-agnostic green polygon — same lookup the round-play UI uses.
         let currentGreenBlob = store.filteredGreenCandidates(for: round.courseId)
             .first { $0.contains(currentGreenMarker) }
 
-        // === Trigger A: near next hole's tee centerline ===
+        // === Trigger B: near next hole's OSM centerline ===
+        // Fires without putt gate — being on the next centerline is the
+        // signal. The threshold's tight enough that crossing the next
+        // fairway en route to elsewhere doesn't trip it.
         if let next = nextHole, let nextTee = nextOSMHole?.teePoint {
             let line = nextOSMHole?.centerline ?? []
             let userLoc = CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude)
@@ -129,12 +153,37 @@ final class AutoAdvanceMonitor: ObservableObject {
                 return userLoc.distance(from: teeLoc) * 1.09361
             }()
             if yardsToLine <= teeBoxThresholdYards {
-                fire(from: currentHole, to: next, reason: "near next tee (\(Int(yardsToLine))yd)")
+                fire(from: currentHole, to: next, reason: "near next centerline (\(Int(yardsToLine))yd)")
                 return
             }
         }
 
-        // === Trigger B: ≥ greenLeftThresholdYards perpendicular from polygon edge ===
+        // === Trigger C: near a historical first-stroke for next hole ===
+        // Cross-user, cross-round. If anyone has ever teed off here for
+        // hole N+1 and the user is now standing there, advance.
+        if let next = nextHole {
+            let cache = HistoricalFirstStrokeCache.shared
+            let shots = cache.firstStrokes(forCourseId: round.courseId, holeNumber: next.number)
+            if !shots.isEmpty {
+                let userLoc = CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude)
+                var bestYards = Double.greatestFiniteMagnitude
+                for shot in shots {
+                    let d = userLoc.distance(from: CLLocation(latitude: shot.latitude, longitude: shot.longitude)) * 1.09361
+                    if d < bestYards { bestYards = d }
+                }
+                if bestYards <= historicalShotThresholdYards {
+                    fire(from: currentHole, to: next, reason: "near historical first-stroke (\(Int(bestYards))yd)")
+                    return
+                }
+            }
+        }
+
+        // Triggers A below requires putt gate. Bail early if the user
+        // hasn't putted on this hole since arriving — leaving the green
+        // without putting means they aren't done with this hole.
+        guard hasPuttedSinceArrival else { return }
+
+        // === Trigger A: ≥ greenLeftThresholdYards perpendicular from polygon edge ===
         // Inside polygon → 0yd. Outside → min perpendicular distance to any
         // edge segment (not vertex). Vertex-distance was wrong on typical
         // 25–30yd greens with 5–7yd vertex spacing — min-vertex from the
@@ -148,8 +197,8 @@ final class AutoAdvanceMonitor: ObservableObject {
                 let poly = blob.polygon
                 var minMeters = Double.greatestFiniteMagnitude
                 for i in 0..<poly.count {
-                    let a = poly[i]
-                    let b = poly[(i + 1) % poly.count]
+                    let a = poly[i].coordinate
+                    let b = poly[(i + 1) % poly.count].coordinate
                     let d = distanceMetersToSegment(point: coordinate, segA: a, segB: b)
                     if d < minMeters { minMeters = d }
                 }

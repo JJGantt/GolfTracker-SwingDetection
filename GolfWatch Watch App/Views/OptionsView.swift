@@ -3,6 +3,7 @@ import WatchKit
 
 struct OptionsView: View {
     @ObservedObject var store: WatchDataStore
+    @ObservedObject private var swingDetector = SwingDetectionManager.shared
     @Environment(\.dismiss) private var dismissSheet
 
     // Bindings for state that needs to be modified
@@ -13,7 +14,6 @@ struct OptionsView: View {
     @Binding var manualClubOverride: Bool
     @Binding var navigateToViewSettings: Bool
     @Binding var navigateToClubRecommend: Bool
-    @Binding var navigateToPredictGreen: Bool
     @Binding var isPlacingTarget: Bool
     @Binding var minimalScreenMode: Bool
 
@@ -266,18 +266,14 @@ struct OptionsView: View {
                         }
                     }
 
-                    settingsNavButton("Predict Green") {
-                        showingOptions = false
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                            navigateToPredictGreen = true
-                        }
-                    }
-
                     settingsNavButton("Multiplayer") {
                         showingMultiplayer = true
                     }
 
                     Toggle("Share live position", isOn: $liveDotsEnabled)
+                        .font(.system(size: 14))
+
+                    Toggle("Force 800Hz always-on", isOn: $swingDetector.forceRawAccelAlwaysOn)
                         .font(.system(size: 14))
                 }
             }
