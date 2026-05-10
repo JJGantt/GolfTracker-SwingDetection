@@ -19,6 +19,8 @@ struct SettingsView: View {
     @AppStorage("practiceStepGateThreshold") private var practiceStepGateThreshold: Int = 10
     @AppStorage("detectionMode") private var detectionMode: String = "Unif"
     @AppStorage("autoAdd") private var autoAdd: Bool = true
+    @AppStorage(ElevationReadout.decayTauKey) private var elevationTauMinutes: Double = ElevationReadout.defaultDecayTauMinutes
+    @AppStorage(LocationManager.forceFullGPSKey) private var elevationForceFullGPS: Bool = false
 
     @State private var currentName: String = ""
     /// Hidden developer section, revealed by long-pressing the Settings
@@ -172,6 +174,23 @@ struct SettingsView: View {
                         } label: {
                             Text("Blob filters")
                         }
+
+                        Stepper(value: $elevationTauMinutes, in: 5...60, step: 5) {
+                            Text("Elev calib τ: \(Int(elevationTauMinutes)) min")
+                                .font(.caption)
+                        }
+                        .onChange(of: elevationTauMinutes) { _, newValue in
+                            WatchConnectivityManager.shared.sendDevParam(
+                                key: ElevationReadout.decayTauKey, doubleValue: newValue
+                            )
+                        }
+
+                        Toggle("Force full-fidelity GPS during round", isOn: $elevationForceFullGPS)
+                            .onChange(of: elevationForceFullGPS) { _, newValue in
+                                WatchConnectivityManager.shared.sendDevParam(
+                                    key: LocationManager.forceFullGPSKey, boolValue: newValue
+                                )
+                            }
                     }
                 }
 

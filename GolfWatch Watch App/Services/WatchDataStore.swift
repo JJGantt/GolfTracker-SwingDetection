@@ -1248,16 +1248,13 @@ class WatchDataStore: ObservableObject {
         // Live elevation-to-green readout. Pre-load cells for this
         // course's holes so the readout has data to consume on the very
         // first path-sample tick.
-        let elevationRoundId = newRound.id
         let elevationCourseId = newRound.courseId
         let elevationHoleNumbers = newRound.holes.map { $0.number }
         Task { @MainActor in
             await HoleHeightCellCache.shared.loadForCourse(
                 courseId: elevationCourseId, holeNumbers: elevationHoleNumbers
             )
-            ElevationReadout.shared.start(
-                roundId: elevationRoundId, courseId: elevationCourseId
-            )
+            ElevationReadout.shared.start(courseId: elevationCourseId)
             await HistoricalFirstStrokeCache.shared.loadForCourse(
                 courseId: elevationCourseId
             )

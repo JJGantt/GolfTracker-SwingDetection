@@ -913,16 +913,13 @@ class DataStore: ObservableObject {
         // Live elevation-to-green readout. Load the cache for this
         // course's holes (one batched query) then start the readout
         // service so it'll publish a Δ as soon as enough crossings land.
-        let elevationRoundId = round.id
         let elevationCourseId = course.id
         let holeNumbers = round.holes.map { $0.number }
         Task { @MainActor in
             await HoleHeightCellCache.shared.loadForCourse(
                 courseId: elevationCourseId, holeNumbers: holeNumbers
             )
-            ElevationReadout.shared.start(
-                roundId: elevationRoundId, courseId: elevationCourseId
-            )
+            ElevationReadout.shared.start(courseId: elevationCourseId)
             await HistoricalFirstStrokeCache.shared.loadForCourse(
                 courseId: elevationCourseId
             )

@@ -61,6 +61,10 @@ class LocationManager: NSObject, ObservableObject {
         /// Number of altimeter readings averaged into `relAltMeters`. 1
         /// for walking-pace rows, many for stationary rows.
         let sampleCount: Int
+        /// Hole the user was on when this sample was emitted. `nil` when no
+        /// recording context is active (e.g. samples appended before
+        /// `startPathRecording`, or after `stopPathRecording`).
+        let holeNumber: Int?
     }
     @Published private(set) var pathSamples: [PathSample] = []
     private let pathSampleMinSpacingMeters: CLLocationDistance = 3
@@ -117,11 +121,13 @@ class LocationManager: NSObject, ObservableObject {
         pathAltSum = 0
         pathAltCount = 0
 
+        let holeNumberAtSample = recordingContext?.holeNumberProvider()
         let sample = PathSample(
             coordinate: loc.coordinate,
             timestamp: loc.timestamp,
             relAltMeters: avgAlt,
-            sampleCount: count
+            sampleCount: count,
+            holeNumber: holeNumberAtSample
         )
         pathSamples.append(sample)
 
@@ -137,7 +143,7 @@ class LocationManager: NSObject, ObservableObject {
                 "id": UUID().uuidString,
                 "round_id": ctx.roundId.uuidString,
                 "user_id": ctx.userId,
-                "hole_number": ctx.holeNumberProvider(),
+                "hole_number": sample.holeNumber ?? ctx.holeNumberProvider(),
                 "lat": sample.coordinate.latitude,
                 "lon": sample.coordinate.longitude,
                 "rel_alt_meters": sample.relAltMeters ?? 0,
@@ -312,7 +318,19 @@ class LocationManager: NSObject, ObservableObject {
         gpsPowerMode = .full
     }
 
+    /// Dev-menu UserDefaults key. When true, every `setGPSPowerMode`
+    /// call is coerced to `.full` — bypassing the distance / putter
+    /// heuristics that normally drop to `.moderate`. Useful for
+    /// elevation calibration validation, where 10 m GPS noise can push
+    /// samples into adjacent 3 m cells and miss historical crossings.
+    /// Off by default; on respects power-management when toggled off.
+    static let forceFullGPSKey = "elevationForceFullGPS"
+
     func setGPSPowerMode(_ mode: GPSPowerMode) {
+        // Dev-menu force-full overrides the requested mode. Power-mgmt
+        // callers stay unchanged — the override is applied here so any
+        // downgrade attempt is silently coerced back to `.full`.
+        let mode: GPSPowerMode = UserDefaults.standard.bool(forKey: Self.forceFullGPSKey) ? .full : mode
         guard mode != gpsPowerMode, !isTestModeEnabled else { return }
         gpsPowerMode = mode
 
