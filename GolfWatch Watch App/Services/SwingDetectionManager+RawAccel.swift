@@ -65,7 +65,7 @@ extension SwingDetectionManager {
             "selectedClubType": selectedClubTypeName.map { .string($0) } ?? .null,
             "workoutSessionState": .string("\(WorkoutManager.shared.session?.state.rawValue ?? -1)")
         ])
-        guard isPutterSelected else {
+        guard isPutterSelected || !raw800PutterOnly else {
             ClientEventLogger.log("rawAccel.setupStarted.bail.notPutter")
             return
         }
@@ -106,7 +106,7 @@ extension SwingDetectionManager {
             // forceRawAccelAlwaysOn (dev override) keeps 800Hz on for the
             // whole monitoring session in addition to the putter-triggered
             // path. See `SwingDetectionManager.forceRawAccelAlwaysOn`.
-            return batchedAccelForPutt || forceRawAccelAlwaysOn
+            return batchedAccelForPutt || !raw800PutterOnly
         case .off:
             return false
         }

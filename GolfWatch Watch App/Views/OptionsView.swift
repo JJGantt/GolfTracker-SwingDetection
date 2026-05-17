@@ -273,7 +273,7 @@ struct OptionsView: View {
                     Toggle("Share live position", isOn: $liveDotsEnabled)
                         .font(.system(size: 14))
 
-                    Toggle("Force 800Hz always-on", isOn: $swingDetector.forceRawAccelAlwaysOn)
+                    Toggle("Limit 800Hz to putter only", isOn: $swingDetector.raw800PutterOnly)
                         .font(.system(size: 14))
                 }
             }
