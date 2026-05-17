@@ -41,6 +41,14 @@ class SupabaseUploader {
         }
     }
 
+    private func motionStoragePath(eventId: UUID, userId: String) -> String {
+        "\(userId)/\(eventId.uuidString).csv"
+    }
+
+    private func rawAccelStoragePath(eventId: UUID, userId: String) -> String {
+        "\(userId)/\(eventId.uuidString)_raw.csv"
+    }
+
     // MARK: - Event Lifecycle
 
     /// Called from `fireSmartDetection` on every detection.
@@ -368,9 +376,10 @@ class SupabaseUploader {
             "rawAccelSampleCount": .integer(eventCopy.rawAccelSlice.count)
         ])
         Task { [weak self] in
-            await self?.uploadMetadata(event: eventCopy, userId: userId)
-            await self?.uploadMotionCSV(event: eventCopy, userId: userId)
-            await self?.uploadRawAccelCSV(event: eventCopy, userId: userId)
+            guard let self = self else { return }
+            let storagePath = await self.uploadMotionCSV(event: eventCopy, userId: userId)
+            await self.uploadMetadata(event: eventCopy, userId: userId, storagePath: storagePath)
+            await self.uploadRawAccelCSV(event: eventCopy, userId: userId)
         }
     }
 
@@ -380,8 +389,8 @@ class SupabaseUploader {
         let id: String
         let classification: String
         let swing_type: String
-        let label: String
-        let confidence: String
+        let label: String?
+        let confidence: String?
         let fs_peak_rot_mag: Double?
         let bs_peak_rot_mag: Double?
         let fs_bs_ratio: Double?
@@ -394,18 +403,19 @@ class SupabaseUploader {
         let bs_to_fs_gap: Double
         let club_type: String?
         let detection_mode: String
-        let storage_path: String
+        let storage_path: String?
     }
 
-    private func uploadMetadata(event: PendingEvent, userId: String) async {
+    private func uploadMetadata(event: PendingEvent, userId: String, storagePath: String?) async {
         let meta = event.metadata
-        let storagePath = "\(userId)/\(event.id.uuidString).csv"
+        let rowLabel = storagePath != nil ? event.label : nil
+        let rowConfidence = storagePath != nil ? event.confidence : nil
         let row = SwingEventRow(
             id: event.id.uuidString,
             classification: event.clubType ?? "unknown",
             swing_type: event.clubType ?? "unknown",
-            label: event.label,
-            confidence: event.confidence,
+            label: rowLabel,
+            confidence: rowConfidence,
             fs_peak_rot_mag: meta.fsPeakRotMag,
             bs_peak_rot_mag: meta.bsRotMag,
             fs_bs_ratio: meta.fsBsRatio,
@@ -423,43 +433,79 @@ class SupabaseUploader {
         do {
             try await supabase.from("swing_events").insert(row).execute()
             ClientEventLogger.log("swing.upload.metadata.ok", detail: [
-                "eventId": .string(event.id.uuidString)
+                "eventId": .string(event.id.uuidString),
+                "storagePath": storagePath != nil ? .string(storagePath!) : .null,
+                "label": rowLabel != nil ? .string(rowLabel!) : .null,
+                "confidence": rowConfidence != nil ? .string(rowConfidence!) : .null
             ])
             dprint("⌚ [SupabaseUploader] metadata(\(event.label)/\(event.confidence)) uploaded")
         } catch {
             ClientEventLogger.log("swing.upload.metadata.failed", detail: [
                 "eventId": .string(event.id.uuidString),
+                "storagePath": storagePath != nil ? .string(storagePath!) : .null,
+                "label": rowLabel != nil ? .string(rowLabel!) : .null,
+                "confidence": rowConfidence != nil ? .string(rowConfidence!) : .null,
                 "error": .string("\(error)")
             ])
             dprint("⌚ [SupabaseUploader] metadata upload failed: \(error)")
         }
     }
 
-    private func uploadMotionCSV(event: PendingEvent, userId: String) async {
+    private func uploadMotionCSV(event: PendingEvent, userId: String) async -> String? {
         guard !event.motionSlice.isEmpty else {
-            dprint("⌚ [SupabaseUploader] No motion data to upload")
-            return
+            ClientEventLogger.log("swing.upload.bail.noMotion", detail: [
+                "eventId": .string(event.id.uuidString),
+                "label": .string(event.label),
+                "confidence": .string(event.confidence),
+                "motionSampleCount": .integer(event.motionSlice.count),
+                "rawAccelSampleCount": .integer(event.rawAccelSlice.count)
+            ])
+            dprint("⌚ [SupabaseUploader] No motion data to upload for \(event.id.uuidString)")
+            return nil
         }
-        let storagePath = "\(userId)/\(event.id.uuidString).csv"
+        let storagePath = motionStoragePath(eventId: event.id, userId: userId)
         var csv = "SensorTime,UserAccelX,UserAccelY,UserAccelZ,UserAccelMag,RotationX,RotationY,RotationZ,RotationMag,GravityX,GravityY,GravityZ,Pitch,Roll,Yaw,MagAccuracy\n"
         let f = { (v: Double) -> String in String(format: "%.4f", v) }
         for dp in event.motionSlice {
             csv += "\(f(dp.sensorTime)),\(f(dp.userAccelX)),\(f(dp.userAccelY)),\(f(dp.userAccelZ)),\(f(dp.userAccelMag)),\(f(dp.rotationX)),\(f(dp.rotationY)),\(f(dp.rotationZ)),\(f(dp.rotationMag)),\(f(dp.gravityX)),\(f(dp.gravityY)),\(f(dp.gravityZ)),\(f(dp.pitch)),\(f(dp.roll)),\(f(dp.yaw)),\(dp.magAccuracy)\n"
         }
-        guard let csvData = csv.data(using: .utf8) else { return }
+        guard let csvData = csv.data(using: .utf8) else {
+            ClientEventLogger.log("swing.upload.bail.noMotion", detail: [
+                "eventId": .string(event.id.uuidString),
+                "label": .string(event.label),
+                "confidence": .string(event.confidence),
+                "motionSampleCount": .integer(event.motionSlice.count),
+                "rawAccelSampleCount": .integer(event.rawAccelSlice.count)
+            ])
+            dprint("⌚ [SupabaseUploader] Failed to encode motion CSV for \(event.id.uuidString)")
+            return nil
+        }
         do {
             _ = try await supabase.storage
                 .from(storageBucket)
                 .upload(storagePath, data: csvData, options: FileOptions(contentType: "text/csv"))
+            ClientEventLogger.log("swing.upload.motion.ok", detail: [
+                "eventId": .string(event.id.uuidString),
+                "storagePath": .string(storagePath),
+                "sampleCount": .integer(event.motionSlice.count)
+            ])
             dprint("⌚ [SupabaseUploader] motionCSV(\(event.motionSlice.count) samples) uploaded")
+            return storagePath
         } catch {
+            ClientEventLogger.log("swing.upload.motion.failed", detail: [
+                "eventId": .string(event.id.uuidString),
+                "storagePath": .string(storagePath),
+                "motionSampleCount": .integer(event.motionSlice.count),
+                "error": .string("\(error)")
+            ])
             dprint("⌚ [SupabaseUploader] motionCSV upload failed: \(error)")
+            return nil
         }
     }
 
     private func uploadRawAccelCSV(event: PendingEvent, userId: String) async {
         guard !event.rawAccelSlice.isEmpty else { return }
-        let storagePath = "\(userId)/\(event.id.uuidString)_raw.csv"
+        let storagePath = rawAccelStoragePath(eventId: event.id, userId: userId)
         var csv = "SensorTime,RawAccelX,RawAccelY,RawAccelZ,RawAccelMag\n"
         let f = { (v: Double) -> String in String(format: "%.4f", v) }
         for dp in event.rawAccelSlice {
@@ -470,8 +516,18 @@ class SupabaseUploader {
             _ = try await supabase.storage
                 .from(storageBucket)
                 .upload(storagePath, data: csvData, options: FileOptions(contentType: "text/csv"))
+            ClientEventLogger.log("swing.upload.raw.ok", detail: [
+                "eventId": .string(event.id.uuidString),
+                "storagePath": .string(storagePath),
+                "sampleCount": .integer(event.rawAccelSlice.count)
+            ])
             dprint("⌚ [SupabaseUploader] rawAccelCSV(\(event.rawAccelSlice.count) samples) uploaded")
         } catch {
+            ClientEventLogger.log("swing.upload.raw.failed", detail: [
+                "eventId": .string(event.id.uuidString),
+                "storagePath": .string(storagePath),
+                "error": .string("\(error)")
+            ])
             dprint("⌚ [SupabaseUploader] rawAccelCSV upload failed: \(error)")
         }
     }
