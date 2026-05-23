@@ -355,8 +355,12 @@ struct HolePlayView: View {
             #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
             #endif
-            .toolbar(.hidden, for: .tabBar)
             .toolbar(isAddingHole ? .hidden : .automatic, for: .navigationBar)
+            .onChange(of: isAddingHole) { _, newValue in
+                if !newValue && currentCourse.holes.isEmpty, let r = activeRound {
+                    store.deleteRound(r)
+                }
+            }
             .toolbar {
                 ToolbarItemGroup(placement: .navigationBarTrailing) {
                     viewToggleButton

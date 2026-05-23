@@ -10,7 +10,9 @@ struct PlayTabView: View {
     var body: some View {
         if let round = store.currentRound,
            let course = store.courses.first(where: { $0.id == round.courseId }) {
-            HolePlayView(store: store, course: course, resumingRound: round)
+            NavigationStack {
+                HolePlayView(store: store, course: course, resumingRound: round)
+            }
         } else {
             StartRoundView()
         }

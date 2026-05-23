@@ -1304,6 +1304,7 @@ class DataStore: ObservableObject {
         saveRounds()
         SupabaseSync.shared.deleteRound(id: round.id)
         rebuildPlayerStats()
+        if currentRoundId == round.id { currentRoundId = nil }
     }
 
     func hasRounds(for course: Course) -> Bool {

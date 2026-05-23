@@ -89,18 +89,8 @@ struct SettingsView: View {
                 }
 
                 Section("Multiplayer") {
-                    HStack {
-                        Label("Play with friends", systemImage: "person.2.fill")
-                            .foregroundColor(.secondary)
-                        Spacer()
-                        Text("Coming Soon")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 3)
-                            .background(Color.secondary.opacity(0.15))
-                            .cornerRadius(6)
-                    }
+                    Label("Play with friends", systemImage: "person.2.fill")
+                        .foregroundColor(.secondary)
                 }
 
                 if showingDeveloper {
