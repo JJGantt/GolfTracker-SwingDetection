@@ -24,6 +24,7 @@
 		6A62981D2F0A09F900303CB6 /* MapCalculations.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6A62981B2F0A09F900303CB6 /* MapCalculations.swift */; };
 		6A6298202F0A0A3700303CB6 /* StrokeDetailsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6A62981F2F0A0A3700303CB6 /* StrokeDetailsView.swift */; };
 		6A6298212F0A0A3700303CB6 /* FloatingButtonsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6A62981E2F0A0A3700303CB6 /* FloatingButtonsView.swift */; };
+		08E1A075561043D1B42373AB /* PlayTabView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 08CADF139E9D406193D3E267 /* PlayTabView.swift */; };
 		6AENDRND00000000000000A1 /* EndRoundButton.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6AENDRND00000000000000A0 /* EndRoundButton.swift */; };
 		6A7A65102026042200000001 /* DemoDataSeeder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6A7A65102026042200000002 /* DemoDataSeeder.swift */; };
 		6A7A65B12F147F4E00A58C9D /* WatchHomeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6A7A65B02F147F4E00A58C9D /* WatchHomeView.swift */; };
@@ -178,6 +179,7 @@
 		6A3253AA2EF2E9C80022829E /* EditHoleView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditHoleView.swift; sourceTree = "<group>"; };
 		6A62981B2F0A09F900303CB6 /* MapCalculations.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MapCalculations.swift; sourceTree = "<group>"; };
 		6A62981E2F0A0A3700303CB6 /* FloatingButtonsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FloatingButtonsView.swift; sourceTree = "<group>"; };
+		08CADF139E9D406193D3E267 /* PlayTabView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlayTabView.swift; sourceTree = "<group>"; };
 		6A62981F2F0A0A3700303CB6 /* StrokeDetailsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StrokeDetailsView.swift; sourceTree = "<group>"; };
 		6AENDRND00000000000000A0 /* EndRoundButton.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EndRoundButton.swift; sourceTree = "<group>"; };
 		6A7A65102026042200000002 /* DemoDataSeeder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DemoDataSeeder.swift; sourceTree = "<group>"; };
@@ -498,6 +500,7 @@
 			isa = PBXGroup;
 			children = (
 				6A62981E2F0A0A3700303CB6 /* FloatingButtonsView.swift */,
+				08CADF139E9D406193D3E267 /* PlayTabView.swift */,
 				6A62981F2F0A0A3700303CB6 /* StrokeDetailsView.swift */,
 				6AENDRND00000000000000A0 /* EndRoundButton.swift */,
 				6AD5EA882EE3A8CC00DDDCF0 /* Components */,
@@ -702,6 +705,7 @@
 				E4F925C1F0D4499B99626884 /* CourseDetailView.swift in Sources */,
 				6A6298202F0A0A3700303CB6 /* StrokeDetailsView.swift in Sources */,
 				6A6298212F0A0A3700303CB6 /* FloatingButtonsView.swift in Sources */,
+				08E1A075561043D1B42373AB /* PlayTabView.swift in Sources */,
 				6AENDRND00000000000000A1 /* EndRoundButton.swift in Sources */,
 				6AD5EA7F2EE3A5F000DDDCF0 /* EditModeViews.swift in Sources */,
 				6AB83CE52EDFB17500CE341C /* Models.swift in Sources */,

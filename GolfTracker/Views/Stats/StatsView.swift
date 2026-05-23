@@ -3,7 +3,6 @@ import CoreLocation
 
 struct StatsView: View {
     @EnvironmentObject var store: DataStore
-    @State private var showingClubManagement = false
 
     var body: some View {
         NavigationStack {
@@ -15,38 +14,6 @@ struct StatsView: View {
                 }
             }
             .navigationTitle("Stats")
-            .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    Button { showingClubManagement = true } label: {
-                        Image(systemName: "figure.golf")
-                    }
-                }
-                ToolbarItem(placement: .navigationBarLeading) {
-                    Menu {
-                        Button {
-                            store.rebuildPlayerStats()
-                        } label: {
-                            Label("Rebuild Stats", systemImage: "arrow.clockwise")
-                        }
-                        Divider()
-                        Button {
-                            store.seedDemoData()
-                        } label: {
-                            Label("Seed Demo Data", systemImage: "wand.and.stars")
-                        }
-                        Button(role: .destructive) {
-                            store.clearDemoData()
-                        } label: {
-                            Label("Clear Demo Data", systemImage: "trash")
-                        }
-                    } label: {
-                        Image(systemName: "ellipsis.circle")
-                    }
-                }
-            }
-            .sheet(isPresented: $showingClubManagement) {
-                ClubManagementView()
-            }
         }
     }
 

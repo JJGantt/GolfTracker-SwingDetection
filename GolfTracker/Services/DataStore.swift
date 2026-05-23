@@ -31,6 +31,28 @@ class DataStore: ObservableObject {
     /// effectively a forgotten round.
     static let currentRoundMaxAgeSeconds: TimeInterval = 8 * 60 * 60
 
+    // MARK: - GPS Round Start state
+
+    struct PendingScorecardPicker: Identifiable {
+        var id = UUID()
+        let originalName: String
+        let candidates: [RoundResolver.ScorecardCandidate]
+    }
+
+    struct PendingTeePicker: Identifiable {
+        var id = UUID()
+        let courseName: String
+        let tees: [CachedCourseTee]
+    }
+
+    @Published var roundStartStatus: String?
+    @Published var pendingCoursePicker: [RoundResolver.CourseCandidate]?
+    private var pendingCoursePickerCompletion: ((RoundResolver.CourseCandidate?) -> Void)?
+    @Published var pendingScorecardPicker: PendingScorecardPicker?
+    private var pendingScorecardPickerCompletion: ((GCAPICourse?) -> Void)?
+    @Published var pendingTeePicker: PendingTeePicker?
+    private var pendingTeePickerResolution: RoundResolver.Resolution?
+
     /// The user's currently-in-progress round, derived from the data — most
     /// recent Round started within `currentRoundMaxAgeSeconds`. Cross-device
     /// by design: rounds inserted by the watch arrive here via Realtime
@@ -935,6 +957,149 @@ class DataStore: ObservableObject {
         }
 
         return round
+    }
+
+    // MARK: - GPS Round Start
+
+    func startRoundAtCurrentLocation() {
+        guard let coordinate = LocationManager.shared.location?.coordinate else {
+            startManualQuickRound()
+            return
+        }
+        roundStartStatus = "Locating…"
+        RoundResolver.shared.resolve(
+            at: coordinate,
+            progress: { [weak self] step in
+                DispatchQueue.main.async { self?.roundStartStatus = Self.statusString(for: step) }
+            },
+            coursePicker: { [weak self] candidates, choose in
+                DispatchQueue.main.async {
+                    self?.pendingCoursePicker = candidates
+                    self?.pendingCoursePickerCompletion = choose
+                }
+            },
+            scorecardPicker: { [weak self] originalName, ranked, choose in
+                DispatchQueue.main.async {
+                    self?.pendingScorecardPicker = PendingScorecardPicker(originalName: originalName, candidates: ranked)
+                    self?.pendingScorecardPickerCompletion = choose
+                }
+            },
+            completion: { [weak self] resolution in
+                DispatchQueue.main.async {
+                    guard let self else { return }
+                    self.roundStartStatus = nil
+                    if let resolution {
+                        self.handleResolved(resolution)
+                    } else {
+                        self.startManualQuickRound()
+                    }
+                }
+            }
+        )
+    }
+
+    func pickCourseCandidate(_ candidate: RoundResolver.CourseCandidate?) {
+        let completion = pendingCoursePickerCompletion
+        pendingCoursePicker = nil
+        pendingCoursePickerCompletion = nil
+        completion?(candidate)
+    }
+
+    func pickScorecardCandidate(_ candidate: GCAPICourse?) {
+        let completion = pendingScorecardPickerCompletion
+        pendingScorecardPicker = nil
+        pendingScorecardPickerCompletion = nil
+        completion?(candidate)
+    }
+
+    func pickTee(_ tee: CachedCourseTee?) {
+        let resolution = pendingTeePickerResolution
+        pendingTeePicker = nil
+        pendingTeePickerResolution = nil
+        guard let resolution else { return }
+        startRound(from: resolution, selectedTeeId: tee?.id)
+    }
+
+    private func handleResolved(_ resolution: RoundResolver.Resolution) {
+        guard let scorecard = resolution.scorecardCourse else {
+            startRound(from: resolution, selectedTeeId: nil)
+            return
+        }
+        Task {
+            let tees = (try? await GolfCourseAPIService.shared.cachedTees(
+                forExternalCourseId: String(scorecard.id)
+            )) ?? []
+            await MainActor.run {
+                if tees.isEmpty {
+                    self.startRound(from: resolution, selectedTeeId: nil)
+                } else {
+                    self.pendingTeePickerResolution = resolution
+                    self.pendingTeePicker = PendingTeePicker(
+                        courseName: resolution.courseName,
+                        tees: tees
+                    )
+                }
+            }
+        }
+    }
+
+    private func startRound(from resolution: RoundResolver.Resolution, selectedTeeId: UUID?) {
+        let course: Course
+        if let existing = courses.first(where: { $0.id == resolution.courseId }) {
+            course = existing
+            if let osm = resolution.osmData, let encoded = try? JSONEncoder().encode(osm) {
+                course.osmPolygons = encoded
+                try? context?.save()
+            }
+        } else {
+            let osmEncoded = resolution.osmData.flatMap { try? JSONEncoder().encode($0) }
+            let newCourse = Course(
+                id: resolution.courseId,
+                name: resolution.courseName,
+                centerLat: resolution.courseCoordinate.latitude,
+                centerLon: resolution.courseCoordinate.longitude,
+                osmPolygons: osmEncoded
+            )
+            if resolution.tier == .full, let osm = resolution.osmData {
+                newCourse.holes = osm.holes
+                    .compactMap { h -> Hole? in
+                        guard let ref = h.ref, let n = Int(ref) else { return nil }
+                        return Hole(
+                            number: n,
+                            coordinate: CLLocationCoordinate2D(
+                                latitude: h.greenPoint.latitude,
+                                longitude: h.greenPoint.longitude
+                            ),
+                            par: h.par,
+                            teeId: selectedTeeId
+                        )
+                    }
+                    .sorted { $0.number < $1.number }
+            }
+            courses.append(newCourse)
+            saveCourses()
+            course = newCourse
+        }
+        _ = startRound(for: course, runHoleDetection: resolution.tier != .full)
+    }
+
+    func startManualQuickRound() {
+        let newCourse = Course(name: "Quick Start")
+        courses.append(newCourse)
+        saveCourses()
+        _ = startRound(for: newCourse, runHoleDetection: false)
+    }
+
+    private static func statusString(for step: RoundResolver.Step) -> String? {
+        switch step {
+        case .locating: return "Locating…"
+        case .searchingShared: return "Checking nearby courses…"
+        case .searchingPOIs: return "Searching nearby courses…"
+        case .picking: return "Pick a course"
+        case .loadingCourseData(let name): return "\(name) — loading…"
+        case .ready: return nil
+        case .failed(let msg): return msg
+        }
     }
 
     private func startHoleDetection(

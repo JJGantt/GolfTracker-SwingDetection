@@ -5,6 +5,7 @@ struct SettingsView: View {
     @ObservedObject private var auth = AuthManager.shared
     @Environment(\.dismiss) private var dismiss
 
+    @State private var showingClubManagement = false
     @State private var showingSignOutConfirm = false
     @State private var showingDeleteConfirm = false
     @State private var isDeleting = false
@@ -78,16 +79,28 @@ struct SettingsView: View {
                         .foregroundColor(.secondary)
                 }
 
-                Section("Multiplayer") {
-                    NavigationLink {
-                        MultiplayerView()
+                Section("Clubs") {
+                    Button {
+                        showingClubManagement = true
                     } label: {
-                        Label("Host or join a round", systemImage: "person.2.fill")
+                        Label("Manage Clubs & Sets", systemImage: "figure.golf")
+                            .foregroundColor(.primary)
                     }
-                    Toggle("Share my live position", isOn: $liveDotsEnabled)
-                    Text("When on, your playgroup partners see a moving dot for you on the map. Other players' dots are still visible to you either way.")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
+                }
+
+                Section("Multiplayer") {
+                    HStack {
+                        Label("Play with friends", systemImage: "person.2.fill")
+                            .foregroundColor(.secondary)
+                        Spacer()
+                        Text("Coming Soon")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 3)
+                            .background(Color.secondary.opacity(0.15))
+                            .cornerRadius(6)
+                    }
                 }
 
                 if showingDeveloper {
@@ -96,6 +109,21 @@ struct SettingsView: View {
                             TestModeView()
                         } label: {
                             Label("Test Mode (GPS sim)", systemImage: "scope")
+                        }
+                        Button {
+                            store.rebuildPlayerStats()
+                        } label: {
+                            Label("Rebuild Stats", systemImage: "arrow.clockwise")
+                        }
+                        Button {
+                            store.seedDemoData()
+                        } label: {
+                            Label("Seed Demo Data", systemImage: "wand.and.stars")
+                        }
+                        Button(role: .destructive) {
+                            store.clearDemoData()
+                        } label: {
+                            Label("Clear Demo Data", systemImage: "trash")
                         }
                         Toggle("Debug logging", isOn: $debugLoggingEnabled)
                             .onChange(of: debugLoggingEnabled) { _, newValue in
@@ -223,6 +251,9 @@ struct SettingsView: View {
                     let pre = p.displayName ?? p.firstName ?? ""
                     if currentName.isEmpty { currentName = pre }
                 }
+            }
+            .sheet(isPresented: $showingClubManagement) {
+                ClubManagementView()
             }
             .confirmationDialog("Sign out?", isPresented: $showingSignOutConfirm, titleVisibility: .visible) {
                 Button("Sign Out", role: .destructive) {

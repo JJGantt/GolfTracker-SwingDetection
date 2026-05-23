@@ -73,14 +73,14 @@ struct ContentView: View {
                     Label("Stats", systemImage: "chart.bar.fill")
                 }
 
-            CourseListView(store: store)
+            PlayTabView()
                 .tabItem {
-                    Label("Courses", systemImage: "map")
+                    Label("Play", systemImage: "figure.golf")
                 }
 
             RoundsHistoryView(store: store)
                 .tabItem {
-                    Label("Rounds", systemImage: "list.bullet.clipboard")
+                    Label("History", systemImage: "list.bullet.clipboard")
                 }
 
             SettingsView()
