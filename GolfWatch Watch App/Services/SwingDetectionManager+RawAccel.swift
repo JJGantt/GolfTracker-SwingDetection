@@ -103,10 +103,11 @@ extension SwingDetectionManager {
         }
         switch detectionMode {
         case .unifDetect:
-            // forceRawAccelAlwaysOn (dev override) keeps 800Hz on for the
-            // whole monitoring session in addition to the putter-triggered
-            // path. See `SwingDetectionManager.forceRawAccelAlwaysOn`.
-            return batchedAccelForPutt || !raw800PutterOnly
+            // Always setup-gated — hardware only runs during an active
+            // detection window (setup start → 3s after setup end or shape
+            // resolution). raw800PutterOnly only controls which club types
+            // trigger onUnifSetupStarted; it does NOT mean "always on."
+            return batchedAccelForPutt
         case .off:
             return false
         }
