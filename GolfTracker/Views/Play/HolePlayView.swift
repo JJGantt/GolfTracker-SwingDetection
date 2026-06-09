@@ -75,9 +75,16 @@ struct HolePlayView: View {
         store.courses.first { $0.id == course.id } ?? course
     }
 
+    /// SwiftData relationship arrays are unordered — always index holes
+    /// through this sorted view so `currentHoleIndex` means the same thing
+    /// here as on the watch (which sorts in `WatchDataStore.currentHole`).
+    var holesSorted: [Hole] {
+        currentCourse.holes.sorted { $0.number < $1.number }
+    }
+
     var currentHole: Hole? {
-        guard currentHoleIndex < currentCourse.holes.count else { return nil }
-        return currentCourse.holes[currentHoleIndex]
+        guard currentHoleIndex < holesSorted.count else { return nil }
+        return holesSorted[currentHoleIndex]
     }
 
     var currentRound: Round? {
@@ -139,8 +146,9 @@ struct HolePlayView: View {
 
         // Can undo if we just finished the previous hole (no strokes on current, previous is completed)
         if currentHoleIndex > 0,
+           currentHoleIndex - 1 < holesSorted.count,
            let round = currentRound {
-            let previousHoleNumber = currentCourse.holes[currentHoleIndex - 1].number
+            let previousHoleNumber = holesSorted[currentHoleIndex - 1].number
             return round.isHoleCompleted(previousHoleNumber)
         }
 
@@ -640,11 +648,11 @@ struct HolePlayView: View {
         // If there are strokes on current hole, delete the last one
         if let lastStroke = strokesForCurrentHole.last {
             store.deleteStroke(in: round, stroke: lastStroke)
-        } else if currentHoleIndex > 0 {
+        } else if currentHoleIndex > 0, currentHoleIndex - 1 < holesSorted.count {
             // No strokes on current hole - check if we just finished the previous hole
             // Only undo if: we're on a hole with no strokes AND the immediately previous hole is completed
             let previousHoleIdx = currentHoleIndex - 1
-            let previousHoleNumber = currentCourse.holes[previousHoleIdx].number
+            let previousHoleNumber = holesSorted[previousHoleIdx].number
 
             if currentRound?.isHoleCompleted(previousHoleNumber) == true {
                 // Undo the hole completion and go back to previous hole

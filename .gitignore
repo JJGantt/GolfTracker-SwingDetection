@@ -62,4 +62,5 @@ unified_detection/
 
 # Cache
 .cache/
+.dashboard-cache/
 supabase/.temp/

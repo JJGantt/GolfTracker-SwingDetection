@@ -342,66 +342,6 @@ class DataStore: ObservableObject {
         startHoleDetection(for: course, allowCache: true, persistResult: true)
     }
 
-    private func mergeStrokesFromWatch(_ strokes: [Stroke]) {
-        // Find the active round and add the strokes
-        guard let activeRoundIndex = rounds.firstIndex(where: { round in
-            // The most recent round is likely the active one
-            round.date == rounds.max(by: { $0.date < $1.date })?.date
-        }) else {
-            dprint("📱 [DataStore] ERROR: No active round found to add strokes to")
-            return
-        }
-
-        dprint("📱 [DataStore] Adding strokes to round: \(rounds[activeRoundIndex].courseName)")
-
-        for stroke in strokes {
-            // Check if stroke already exists (avoid duplicates)
-            let strokeExists = rounds[activeRoundIndex].strokes.contains(where: { $0.id == stroke.id })
-            if !strokeExists {
-                rounds[activeRoundIndex].strokes.append(stroke)
-                dprint("📱 [DataStore] Added stroke \(stroke.strokeNumber) on hole \(stroke.holeNumber)")
-            } else {
-                dprint("📱 [DataStore] Stroke already exists, skipping")
-            }
-        }
-
-        saveRounds()
-        dprint("📱 [DataStore] Saved round with \(rounds[activeRoundIndex].strokes.count) total strokes")
-    }
-
-    private func updateRoundFromWatch(_ watchRound: Round) {
-        // Find the round by ID
-        guard let roundIndex = rounds.firstIndex(where: { $0.id == watchRound.id }) else {
-            dprint("📱 [DataStore] ERROR: Round not found for update")
-            return
-        }
-
-        // Detect new holes before updating
-        let oldHoles = rounds[roundIndex].holes
-        let newHoles = watchRound.holes.filter { newHole in
-            !oldHoles.contains(where: { $0.number == newHole.number })
-        }
-
-        // Update everything from Watch
-        rounds[roundIndex].holes = watchRound.holes
-        rounds[roundIndex].completedHoles = watchRound.completedHoles
-        rounds[roundIndex].currentHoleIndex = watchRound.currentHoleIndex
-        rounds[roundIndex].targets = watchRound.targets
-        rounds[roundIndex].strokes = watchRound.strokes
-        rounds[roundIndex].holeDetectionEnabled = watchRound.holeDetectionEnabled
-        rounds[roundIndex].locationTestModeEnabled = watchRound.locationTestModeEnabled
-
-        // Also update the course with the new holes
-        if let courseIndex = courses.firstIndex(where: { $0.id == watchRound.courseId }) {
-            courses[courseIndex].holes = watchRound.holes
-            saveCourses()
-        }
-
-        saveRounds()
-        dprint("📱 [DataStore] Updated round from Watch: \(watchRound.strokes.count) strokes, \(watchRound.completedHoles.count) holes completed, current hole index: \(watchRound.currentHoleIndex)")
-
-    }
-
     private var holeDetectionFileURL: URL {
         FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
             .appendingPathComponent(holeDetectionFileName)
@@ -844,9 +784,11 @@ class DataStore: ObservableObject {
     func deleteHole(_ hole: Hole, from course: Course) {
         guard let courseIndex = courses.firstIndex(where: { $0.id == course.id }) else { return }
         courses[courseIndex].holes.removeAll { $0.id == hole.id }
-        // Renumber remaining holes
-        for i in courses[courseIndex].holes.indices {
-            courses[courseIndex].holes[i].number = i + 1
+        // Renumber remaining holes. SwiftData relationship arrays are
+        // unordered — sort by current number before reassigning.
+        let remaining = courses[courseIndex].holes.sorted { $0.number < $1.number }
+        for (i, h) in remaining.enumerated() {
+            h.number = i + 1
         }
         saveCourses()
         SupabaseSync.shared.deleteHole(id: hole.id)
@@ -866,22 +808,19 @@ class DataStore: ObservableObject {
     }
 
     func renumberHole(_ hole: Hole, in course: Course, newNumber: Int) {
-        guard let courseIndex = courses.firstIndex(where: { $0.id == course.id }),
-              let holeIndex = courses[courseIndex].holes.firstIndex(where: { $0.id == hole.id }) else { return }
+        guard let courseIndex = courses.firstIndex(where: { $0.id == course.id }) else { return }
 
-        // Ensure new number is valid
-        let clampedNumber = max(1, min(newNumber, courses[courseIndex].holes.count))
+        // SwiftData relationship arrays are unordered — work on a copy
+        // sorted by current number, move the hole, then reassign.
+        var sorted = courses[courseIndex].holes.sorted { $0.number < $1.number }
+        guard let holeIndex = sorted.firstIndex(where: { $0.id == hole.id }) else { return }
 
-        // Remove hole from current position
-        let removedHole = courses[courseIndex].holes.remove(at: holeIndex)
+        let clampedNumber = max(1, min(newNumber, sorted.count))
+        let removedHole = sorted.remove(at: holeIndex)
+        sorted.insert(removedHole, at: clampedNumber - 1)
 
-        // Insert at new position (newNumber - 1 because array is 0-indexed)
-        let newIndex = clampedNumber - 1
-        courses[courseIndex].holes.insert(removedHole, at: newIndex)
-
-        // Renumber all holes sequentially
-        for i in courses[courseIndex].holes.indices {
-            courses[courseIndex].holes[i].number = i + 1
+        for (i, h) in sorted.enumerated() {
+            h.number = i + 1
         }
 
         saveCourses()
@@ -1290,13 +1229,8 @@ class DataStore: ObservableObject {
         rounds[roundIndex].strokes.append(stroke)
         saveRounds()
 
-        // Send updated round to Watch
-        if let r = rounds.first(where: { $0.id == round.id }) ?? rounds.first { SupabaseSync.shared.upsertRound(r) }
-    }
-
-    func endRound(_ round: Round) {
-        saveRounds()
-        rebuildPlayerStats()
+        // Mirror to Supabase (Realtime fans out to the other device)
+        SupabaseSync.shared.upsertRound(rounds[roundIndex])
     }
 
     func deleteRound(_ round: Round) {
@@ -1373,8 +1307,8 @@ class DataStore: ObservableObject {
         saveRounds()
         SupabaseSync.shared.deleteStroke(id: stroke.id)
 
-        // Send updated round to Watch
-        if let r = rounds.first(where: { $0.id == round.id }) ?? rounds.first { SupabaseSync.shared.upsertRound(r) }
+        // Mirror to Supabase (Realtime fans out to the other device)
+        SupabaseSync.shared.upsertRound(rounds[roundIndex])
     }
 
     func addPenaltyStroke(to round: Round, holeNumber: Int, coordinate: CLLocationCoordinate2D, clubId: UUID) {
@@ -1394,8 +1328,8 @@ class DataStore: ObservableObject {
         rounds[roundIndex].strokes.append(stroke)
         saveRounds()
 
-        // Send updated round to Watch
-        if let r = rounds.first(where: { $0.id == round.id }) ?? rounds.first { SupabaseSync.shared.upsertRound(r) }
+        // Mirror to Supabase (Realtime fans out to the other device)
+        SupabaseSync.shared.upsertRound(rounds[roundIndex])
     }
 
     func renumberStroke(in round: Round, stroke: Stroke, newNumber: Int) {
@@ -1443,8 +1377,8 @@ class DataStore: ObservableObject {
         rounds[roundIndex].lastActivityAt = Date()
         saveRounds()
 
-        // Sync to Watch
-        if let r = rounds.first(where: { $0.id == round.id }) ?? rounds.first { SupabaseSync.shared.upsertRound(r) }
+        // Mirror to Supabase (Realtime fans out to the other device)
+        SupabaseSync.shared.upsertRound(rounds[roundIndex])
     }
 
     /// Mark a round finished. Manual button + lifecycle sweep both call this.
@@ -1493,8 +1427,8 @@ class DataStore: ObservableObject {
         rounds[roundIndex].completedHoles.insert(holeNumber)
         saveRounds()
 
-        // Sync to Watch
-        if let r = rounds.first(where: { $0.id == round.id }) ?? rounds.first { SupabaseSync.shared.upsertRound(r) }
+        // Mirror to Supabase (Realtime fans out to the other device)
+        SupabaseSync.shared.upsertRound(rounds[roundIndex])
     }
 
     func reopenHole(in round: Round, holeNumber: Int) {
@@ -1503,8 +1437,8 @@ class DataStore: ObservableObject {
         rounds[roundIndex].completedHoles.remove(holeNumber)
         saveRounds()
 
-        // Sync to Watch
-        if let r = rounds.first(where: { $0.id == round.id }) ?? rounds.first { SupabaseSync.shared.upsertRound(r) }
+        // Mirror to Supabase (Realtime fans out to the other device)
+        SupabaseSync.shared.upsertRound(rounds[roundIndex])
     }
 
     // MARK: - Club Type Management

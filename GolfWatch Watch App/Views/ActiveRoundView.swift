@@ -20,8 +20,6 @@ struct ActiveRoundView: View {
     @State var showingOptions = false
     @State var showingEditHole = false
     @State var isLastStrokeViewMode = false
-    @State var undoHoldProgress: Double = 0.0
-    @State var undoHoldTimer: Timer?
     // Defaults to full hole view (tee → green) — matches the multiplayer use
     // case (you want to see all players' positions across the hole) and also
     // helps solo players see the whole hole layout up front.
