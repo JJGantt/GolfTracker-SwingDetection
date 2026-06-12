@@ -116,6 +116,9 @@ struct GolfTrackerWatchApp: App {
         .onChange(of: scenePhase) { _, newPhase in
             if newPhase == .active {
                 swingDetector.checkAndRequestMotionAuthorization()
+                // Finish any elevation fold-in that got cut off by an app
+                // suspension at round end.
+                Task { await ElevationFoldIn.retryPending() }
             } else if newPhase == .inactive || newPhase == .background {
                 // Graceful exit — clear the live flag so next launch knows
                 // the previous session ended cleanly.

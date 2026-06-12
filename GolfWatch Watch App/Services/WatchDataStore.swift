@@ -758,8 +758,8 @@ class WatchDataStore: ObservableObject {
         Task {
             await LocationManager.shared.stopPathRecording()
             if !skipFoldIn {
-                await ElevationFoldIn.foldIn(courseId: foldInCourseId,
-                                             roundId: foldInRoundId)
+                await ElevationFoldIn.run(courseId: foldInCourseId,
+                                          roundId: foldInRoundId)
             }
         }
         dprint("⌚ [WatchDataStore] Ended round \(round.id) — \(reason)")
@@ -779,6 +779,14 @@ class WatchDataStore: ObservableObject {
         for r in open {
             r.endedAt = now
             SupabaseSync.shared.upsertRound(r)
+            // This path previously skipped the elevation fold-in entirely —
+            // rounds auto-ended by a new round start never reached the
+            // height map. Route them through the durable fold-in.
+            let courseId = r.courseId
+            let roundId = r.id
+            if r.locationTestModeEnabled != true {
+                Task { await ElevationFoldIn.run(courseId: courseId, roundId: roundId) }
+            }
         }
         if !open.isEmpty {
             try? context.save()
