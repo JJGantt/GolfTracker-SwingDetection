@@ -1,5 +1,10 @@
 import Foundation
 import Supabase
+#if os(watchOS)
+import WatchKit
+#else
+import UIKit
+#endif
 
 /// Lightweight fire-and-forget logger that writes to the `client_events`
 /// table in Supabase. Used to diagnose UI/sync timing issues on watch
@@ -41,6 +46,24 @@ enum ClientEventLogger {
         #else
         return "phone"
         #endif
+    }
+
+    /// Battery level at a hole transition. One row per hole change gives
+    /// per-hole burn rate over a round — the data for deciding GPS
+    /// fidelity policy empirically instead of by estimate.
+    static func logBattery(hole: Int) {
+        #if os(watchOS)
+        let device = WKInterfaceDevice.current()
+        device.isBatteryMonitoringEnabled = true
+        let level = device.batteryLevel
+        #else
+        UIDevice.current.isBatteryMonitoringEnabled = true
+        let level = UIDevice.current.batteryLevel
+        #endif
+        log("battery.holeChange", detail: [
+            "hole": .integer(hole),
+            "level": .double(Double(level))
+        ])
     }
 
     /// Log an event with optional small JSON-encodable detail dict. Don't

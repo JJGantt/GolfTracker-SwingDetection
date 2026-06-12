@@ -65,6 +65,10 @@ class LocationManager: NSObject, ObservableObject {
         /// recording context is active (e.g. samples appended before
         /// `startPathRecording`, or after `stopPathRecording`).
         let holeNumber: Int?
+        /// GPS horizontal accuracy (meters) of the fix this sample came
+        /// from. Drives accuracy weighting in elevation calibration —
+        /// full weight ≤5 m, taper to zero at 10 m. nil = invalid fix.
+        let horizontalAccuracyMeters: Double?
     }
     @Published private(set) var pathSamples: [PathSample] = []
     private let pathSampleMinSpacingMeters: CLLocationDistance = 3
@@ -127,7 +131,8 @@ class LocationManager: NSObject, ObservableObject {
             timestamp: loc.timestamp,
             relAltMeters: avgAlt,
             sampleCount: count,
-            holeNumber: holeNumberAtSample
+            holeNumber: holeNumberAtSample,
+            horizontalAccuracyMeters: loc.horizontalAccuracy >= 0 ? loc.horizontalAccuracy : nil
         )
         pathSamples.append(sample)
 
@@ -148,6 +153,7 @@ class LocationManager: NSObject, ObservableObject {
                 "lon": sample.coordinate.longitude,
                 "rel_alt_meters": sample.relAltMeters ?? 0,
                 "sample_count": sample.sampleCount,
+                "h_acc": sample.horizontalAccuracyMeters as Any? ?? NSNull(),
                 "recorded_at": Self.iso(sample.timestamp)
             ]
             pathQueueLock.lock()
@@ -326,11 +332,30 @@ class LocationManager: NSObject, ObservableObject {
     /// Off by default; on respects power-management when toggled off.
     static let forceFullGPSKey = "elevationForceFullGPS"
 
+    /// First-tee elevation sync hold. Set at round start; while active,
+    /// every `setGPSPowerMode` call is coerced to `.full` so the round's
+    /// first calibration crossings land at high fidelity (the first tee
+    /// has no prior-green sync to lean on). Released by ElevationReadout
+    /// once the offset solves (or the hole has no history to sync
+    /// against), with a hard 10-minute expiry as backstop.
+    private var elevationSyncHoldUntil: Date?
+
+    func releaseElevationSyncHold() {
+        elevationSyncHoldUntil = nil
+    }
+
     func setGPSPowerMode(_ mode: GPSPowerMode) {
         // Dev-menu force-full overrides the requested mode. Power-mgmt
         // callers stay unchanged — the override is applied here so any
         // downgrade attempt is silently coerced back to `.full`.
-        let mode: GPSPowerMode = UserDefaults.standard.bool(forKey: Self.forceFullGPSKey) ? .full : mode
+        var mode: GPSPowerMode = UserDefaults.standard.bool(forKey: Self.forceFullGPSKey) ? .full : mode
+        if let hold = elevationSyncHoldUntil {
+            if Date() < hold {
+                mode = .full
+            } else {
+                elevationSyncHoldUntil = nil
+            }
+        }
         guard mode != gpsPowerMode, !isTestModeEnabled else { return }
         gpsPowerMode = mode
 
@@ -406,6 +431,11 @@ class LocationManager: NSObject, ObservableObject {
             holeNumberProvider: holeNumberProvider
         )
         pathSamples = []
+        // First-tee sync hold: run full fidelity until the elevation
+        // calibration gets its first solid sync (or 10 min, whichever
+        // comes first). Subsequent holes re-sync at each green instead.
+        elevationSyncHoldUntil = Date().addingTimeInterval(10 * 60)
+        setGPSPowerMode(.full)
         // Drain any rows left over from a prior aborted session before
         // starting fresh — they belong to the previous round but the
         // server doesn't care, the row payload carries its own round_id.
@@ -453,6 +483,7 @@ class LocationManager: NSObject, ObservableObject {
             if !ok { break }
         }
         recordingContext = nil
+        elevationSyncHoldUntil = nil
         stopAltimeter()
         dprint("[LocationManager] Path recording stopped")
         ClientEventLogger.log("altitude.recording.stopped", detail: [

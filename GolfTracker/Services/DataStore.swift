@@ -1463,6 +1463,7 @@ class DataStore: ObservableObject {
         rounds[roundIndex].currentHoleIndex = newIndex
         rounds[roundIndex].lastActivityAt = Date()
         saveRounds()
+        ClientEventLogger.logBattery(hole: newIndex + 1)
 
         // Mirror to Supabase (Realtime fans out to the other device)
         SupabaseSync.shared.upsertRound(rounds[roundIndex])

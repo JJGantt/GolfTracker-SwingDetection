@@ -746,6 +746,7 @@ class WatchDataStore: ObservableObject {
         round.lastActivityAt = Date()
         try? context.save()
         SupabaseSync.shared.upsertRound(round)
+        ClientEventLogger.logBattery(hole: newIndex + 1)
         objectWillChange.send()
     }
 

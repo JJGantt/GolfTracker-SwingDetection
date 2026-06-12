@@ -55,10 +55,12 @@ extension ActiveRoundView {
         swingDetector.selectedClubTypeName = newTypeName
 
         if newTypeName == "Putt" {
-            // Putter forces moderate (10m filter). AutoAdvance needs GPS
-            // updates to detect walking off the green to the next tee, so
-            // we never fully stop the radio while putting.
-            locationManager.setGPSPowerMode(.moderate)
+            // Putter = on or beside the green — the densest cross-round
+            // overlap on the hole, i.e. the elevation pipeline's per-hole
+            // sync point. Run full fidelity so those crossings land in the
+            // right 3m cells. (Used to force .moderate for battery; the
+            // few minutes per green are worth the sync quality.)
+            locationManager.setGPSPowerMode(.full)
         } else {
             // Non-putter — let distance-based logic pick full vs moderate.
             updateGPSForDistance()
