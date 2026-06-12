@@ -362,6 +362,8 @@ class DataStore: ObservableObject {
         rounds = (try? context.fetch(FetchDescriptor<Round>(sortBy: [SortDescriptor(\.date, order: .reverse)]))) ?? []
     }
 
+    /// Persist locally only — mutation sites own their targeted Supabase
+    /// upserts (see saveRounds).
     func saveCourses() {
         guard let context = context else { return }
         // SwiftData tracks changes on @Model objects — just commit. Any
@@ -370,26 +372,18 @@ class DataStore: ObservableObject {
             context.insert(course)
         }
         try? context.save()
-        for course in courses {
-            SupabaseSync.shared.upsertCourse(course)
-        }
     }
 
+    /// Persist locally only. Supabase mirroring is the responsibility of
+    /// each mutation site (targeted upserts) — this used to re-upsert every
+    /// round, stroke, and target on every call, which fanned out into
+    /// hundreds of HTTP requests per recorded stroke.
     func saveRounds() {
         guard let context = context else { return }
         for round in rounds where round.modelContext == nil {
             context.insert(round)
         }
         try? context.save()
-        for round in rounds {
-            SupabaseSync.shared.upsertRound(round)
-            for stroke in round.strokes {
-                SupabaseSync.shared.upsertStroke(stroke, roundId: round.id)
-            }
-            for target in round.targets {
-                SupabaseSync.shared.upsertTarget(target, roundId: round.id)
-            }
-        }
     }
 
     /// Called by GolfTrackerApp at startup to wire SwiftData persistence.
@@ -703,6 +697,7 @@ class DataStore: ObservableObject {
         let course = Course(name: name, holes: [])
         courses.append(course)
         saveCourses()
+        SupabaseSync.shared.upsertCourse(course)
     }
 
     func deleteCourse(_ course: Course) {
@@ -717,6 +712,7 @@ class DataStore: ObservableObject {
         courses[index].rating = rating
         courses[index].slope = slope
         saveCourses()
+        SupabaseSync.shared.upsertCourse(courses[index])
     }
 
     func updateCourseCity(_ course: Course) {
@@ -735,6 +731,7 @@ class DataStore: ObservableObject {
                 if let currentIndex = self.courses.firstIndex(where: { $0.id == course.id }) {
                     self.courses[currentIndex].city = city
                     self.saveCourses()
+                    SupabaseSync.shared.upsertCourse(self.courses[currentIndex])
                 }
             }
         }
@@ -746,6 +743,7 @@ class DataStore: ObservableObject {
         let hole = Hole(number: holeNumber, coordinate: coordinate, par: par)
         courses[index].holes.append(hole)
         saveCourses()
+        SupabaseSync.shared.upsertHole(hole, courseId: course.id)
 
         dprint("📱 [DataStore] Added hole #\(holeNumber) to course \(course.name)")
 
@@ -792,6 +790,10 @@ class DataStore: ObservableObject {
         }
         saveCourses()
         SupabaseSync.shared.deleteHole(id: hole.id)
+        // The renumbered siblings changed too — push them to the holes table.
+        for h in remaining {
+            SupabaseSync.shared.upsertHole(h, courseId: course.id)
+        }
         updateActiveRoundHoles(for: course)
     }
 
@@ -804,6 +806,7 @@ class DataStore: ObservableObject {
             courses[courseIndex].holes[holeIndex].par = par
         }
         saveCourses()
+        SupabaseSync.shared.upsertHole(courses[courseIndex].holes[holeIndex], courseId: course.id)
         updateActiveRoundHoles(for: course)
     }
 
@@ -824,6 +827,9 @@ class DataStore: ObservableObject {
         }
 
         saveCourses()
+        for h in sorted {
+            SupabaseSync.shared.upsertHole(h, courseId: course.id)
+        }
         updateActiveRoundHoles(for: course)
     }
 
@@ -1017,6 +1023,7 @@ class DataStore: ObservableObject {
             }
             courses.append(newCourse)
             saveCourses()
+            SupabaseSync.shared.upsertCourse(newCourse)
             course = newCourse
         }
         _ = startRound(for: course, runHoleDetection: resolution.tier != .full)
@@ -1026,6 +1033,7 @@ class DataStore: ObservableObject {
         let newCourse = Course(name: "Quick Start")
         courses.append(newCourse)
         saveCourses()
+        SupabaseSync.shared.upsertCourse(newCourse)
         _ = startRound(for: newCourse, runHoleDetection: false)
     }
 
@@ -1230,15 +1238,51 @@ class DataStore: ObservableObject {
         saveRounds()
 
         // Mirror to Supabase (Realtime fans out to the other device)
+        SupabaseSync.shared.upsertStroke(stroke, roundId: round.id)
         SupabaseSync.shared.upsertRound(rounds[roundIndex])
     }
 
     func deleteRound(_ round: Round) {
+        let wasInProgress = round.endedAt == nil
         rounds.removeAll { $0.id == round.id }
         saveRounds()
         SupabaseSync.shared.deleteRound(id: round.id)
         rebuildPlayerStats()
         if currentRoundId == round.id { currentRoundId = nil }
+
+        // Deleting an in-progress round needs the same teardown as endRound,
+        // minus the elevation fold-in (the round's data is being discarded).
+        if wasInProgress {
+            Task { @MainActor in
+                ElevationReadout.shared.stop()
+                HoleHeightCellCache.shared.clear()
+                HistoricalFirstStrokeCache.shared.clear()
+            }
+            Task {
+                await LocationManager.shared.stopPathRecording()
+            }
+        }
+    }
+
+    /// Replace the target markers for one hole of a round. Owns both the
+    /// local mutation and the Supabase mirror (including deletes for
+    /// removed targets, which the blanket round upsert never covered).
+    func setTargets(for round: Round, holeNumber: Int, coordinates: [CLLocationCoordinate2D]) {
+        guard let roundIndex = rounds.firstIndex(where: { $0.id == round.id }) else { return }
+
+        let removed = rounds[roundIndex].targets.filter { $0.holeNumber == holeNumber }
+        rounds[roundIndex].targets.removeAll { $0.holeNumber == holeNumber }
+
+        let newTargets = coordinates.map { Target(holeNumber: holeNumber, coordinate: $0) }
+        rounds[roundIndex].targets.append(contentsOf: newTargets)
+        saveRounds()
+
+        for target in removed {
+            SupabaseSync.shared.deleteTarget(id: target.id)
+        }
+        for target in newTargets {
+            SupabaseSync.shared.upsertTarget(target, roundId: round.id)
+        }
     }
 
     func hasRounds(for course: Course) -> Bool {
@@ -1259,6 +1303,15 @@ class DataStore: ObservableObject {
         rounds.append(contentsOf: generated.rounds)
         saveCourses()
         saveRounds()
+        for course in generated.courses {
+            SupabaseSync.shared.upsertCourse(course)
+        }
+        for round in generated.rounds {
+            SupabaseSync.shared.upsertRound(round)
+            for stroke in round.strokes {
+                SupabaseSync.shared.upsertStroke(stroke, roundId: round.id)
+            }
+        }
         rebuildPlayerStats()
     }
 
@@ -1269,10 +1322,18 @@ class DataStore: ObservableObject {
             courses.filter { $0.name.hasPrefix(DemoDataSeeder.demoPrefix) }.map { $0.id }
         )
         guard !demoCourseIds.isEmpty else { return }
+        let demoRoundIds = rounds.filter { demoCourseIds.contains($0.courseId) }.map { $0.id }
         rounds.removeAll { demoCourseIds.contains($0.courseId) }
         courses.removeAll { demoCourseIds.contains($0.id) }
         saveCourses()
         saveRounds()
+        // Server cascades clean up child rows (strokes, holes, targets).
+        for id in demoRoundIds {
+            SupabaseSync.shared.deleteRound(id: id)
+        }
+        for id in demoCourseIds {
+            SupabaseSync.shared.deleteCourse(id: id)
+        }
         rebuildPlayerStats()
     }
 
@@ -1284,6 +1345,7 @@ class DataStore: ObservableObject {
         rounds[roundIndex].strokes[strokeIndex].longitude = newCoordinate.longitude
 
         saveRounds()
+        SupabaseSync.shared.upsertStroke(rounds[roundIndex].strokes[strokeIndex], roundId: round.id)
     }
 
     func deleteStroke(in round: Round, stroke: Stroke) {
@@ -1307,7 +1369,11 @@ class DataStore: ObservableObject {
         saveRounds()
         SupabaseSync.shared.deleteStroke(id: stroke.id)
 
-        // Mirror to Supabase (Realtime fans out to the other device)
+        // Mirror to Supabase (Realtime fans out to the other device).
+        // The surviving strokes on this hole were renumbered above.
+        for s in rounds[roundIndex].strokes where s.holeNumber == holeNumber {
+            SupabaseSync.shared.upsertStroke(s, roundId: round.id)
+        }
         SupabaseSync.shared.upsertRound(rounds[roundIndex])
     }
 
@@ -1329,6 +1395,7 @@ class DataStore: ObservableObject {
         saveRounds()
 
         // Mirror to Supabase (Realtime fans out to the other device)
+        SupabaseSync.shared.upsertStroke(stroke, roundId: round.id)
         SupabaseSync.shared.upsertRound(rounds[roundIndex])
     }
 
@@ -1366,6 +1433,9 @@ class DataStore: ObservableObject {
         }
 
         saveRounds()
+        for s in rounds[roundIndex].strokes where s.holeNumber == holeNumber {
+            SupabaseSync.shared.upsertStroke(s, roundId: round.id)
+        }
     }
 
     // MARK: - Round State Management (with automatic sync)
@@ -1406,8 +1476,8 @@ class DataStore: ObservableObject {
         Task {
             await LocationManager.shared.stopPathRecording()
             if !skipFoldIn {
-                await ElevationFoldIn.foldIn(courseId: foldInCourseId,
-                                             roundId: foldInRoundId)
+                await ElevationFoldIn.run(courseId: foldInCourseId,
+                                          roundId: foldInRoundId)
             }
         }
         if currentRoundId == round.id { currentRoundId = nil }

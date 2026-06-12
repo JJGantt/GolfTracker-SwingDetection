@@ -210,19 +210,26 @@ class SupabaseUploader {
             "strokeId": strokeId.map { .string($0.uuidString) } ?? .null
         ])
         Task { [weak self] in
-            await self?.insertFalseNegativeGroup(
+            guard let self else { return }
+            // Candidates FK-reference the group row; without it they'd all
+            // fail anyway, so bail on the whole batch.
+            guard await self.insertFalseNegativeGroup(
                 groupId: groupId, userId: userId,
                 roundId: roundId, strokeId: strokeId,
                 holeNumber: holeNumber, candidateCount: rejections.count
-            )
+            ) else { return }
             for (index, rejected) in rejections.enumerated() {
-                await self?.insertFalseNegativeCandidate(
+                // Skip the CSV when its DB row didn't land — orphaned
+                // Storage objects are invisible to the labeling pipeline.
+                let inserted = await self.insertFalseNegativeCandidate(
                     groupId: groupId, userId: userId,
                     position: index, rejected: rejected, clubType: clubType
                 )
-                await self?.uploadFalseNegativeCSV(
-                    groupId: groupId, userId: userId, position: index, rejected: rejected
-                )
+                if inserted {
+                    await self.uploadFalseNegativeCSV(
+                        groupId: groupId, userId: userId, position: index, rejected: rejected
+                    )
+                }
             }
         }
     }
@@ -240,7 +247,7 @@ class SupabaseUploader {
         groupId: UUID, userId: String,
         roundId: UUID?, strokeId: UUID?,
         holeNumber: Int?, candidateCount: Int
-    ) async {
+    ) async -> Bool {
         let row = FalseNegativeGroupRow(
             id: groupId.uuidString,
             user_id: userId,
@@ -254,10 +261,12 @@ class SupabaseUploader {
             ClientEventLogger.log("falseNeg.group.inserted", detail: [
                 "groupId": .string(groupId.uuidString)
             ])
+            return true
         } catch {
             ClientEventLogger.log("falseNeg.group.failed", detail: [
                 "error": .string("\(error)")
             ])
+            return false
         }
     }
 
@@ -287,7 +296,7 @@ class SupabaseUploader {
     private func insertFalseNegativeCandidate(
         groupId: UUID, userId: String, position: Int,
         rejected: SwingDetectionManager.RejectedShape, clubType: String?
-    ) async {
+    ) async -> Bool {
         let shape = rejected.shape
         let gate = rejected.gate
         let bsRotMag = sqrt(
@@ -321,12 +330,14 @@ class SupabaseUploader {
         )
         do {
             try await supabase.from("false_negative_candidates").insert(row).execute()
+            return true
         } catch {
             ClientEventLogger.log("falseNeg.candidate.failed", detail: [
                 "groupId": .string(groupId.uuidString),
                 "position": .integer(position),
                 "error": .string("\(error)")
             ])
+            return false
         }
     }
 
@@ -341,7 +352,12 @@ class SupabaseUploader {
         for dp in rejected.motionSlice {
             csv += "\(f(dp.sensorTime)),\(f(dp.userAccelX)),\(f(dp.userAccelY)),\(f(dp.userAccelZ)),\(f(dp.userAccelMag)),\(f(dp.rotationX)),\(f(dp.rotationY)),\(f(dp.rotationZ)),\(f(dp.rotationMag)),\(f(dp.gravityX)),\(f(dp.gravityY)),\(f(dp.gravityZ)),\(f(dp.pitch)),\(f(dp.roll)),\(f(dp.yaw)),\(dp.magAccuracy)\n"
         }
-        guard let csvData = csv.data(using: .utf8) else { return }
+        guard let csvData = csv.data(using: .utf8) else {
+            ClientEventLogger.log("falseNeg.csv.encodeFailed", detail: [
+                "storagePath": .string(storagePath)
+            ])
+            return
+        }
         do {
             _ = try await supabase.storage
                 .from(storageBucket)
@@ -378,8 +394,12 @@ class SupabaseUploader {
         Task { [weak self] in
             guard let self = self else { return }
             let storagePath = await self.uploadMotionCSV(event: eventCopy, userId: userId)
-            await self.uploadMetadata(event: eventCopy, userId: userId, storagePath: storagePath)
-            await self.uploadRawAccelCSV(event: eventCopy, userId: userId)
+            let metadataOK = await self.uploadMetadata(event: eventCopy, userId: userId, storagePath: storagePath)
+            // Don't upload the raw CSV if its DB row never landed — that
+            // leaves orphaned Storage objects with no swing_events row.
+            if metadataOK {
+                await self.uploadRawAccelCSV(event: eventCopy, userId: userId)
+            }
         }
     }
 
@@ -406,7 +426,8 @@ class SupabaseUploader {
         let storage_path: String?
     }
 
-    private func uploadMetadata(event: PendingEvent, userId: String, storagePath: String?) async {
+    @discardableResult
+    private func uploadMetadata(event: PendingEvent, userId: String, storagePath: String?) async -> Bool {
         let meta = event.metadata
         let rowLabel = storagePath != nil ? event.label : nil
         let rowConfidence = storagePath != nil ? event.confidence : nil
@@ -439,6 +460,7 @@ class SupabaseUploader {
                 "confidence": rowConfidence != nil ? .string(rowConfidence!) : .null
             ])
             dprint("⌚ [SupabaseUploader] metadata(\(event.label)/\(event.confidence)) uploaded")
+            return true
         } catch {
             ClientEventLogger.log("swing.upload.metadata.failed", detail: [
                 "eventId": .string(event.id.uuidString),
@@ -448,6 +470,7 @@ class SupabaseUploader {
                 "error": .string("\(error)")
             ])
             dprint("⌚ [SupabaseUploader] metadata upload failed: \(error)")
+            return false
         }
     }
 
@@ -511,7 +534,12 @@ class SupabaseUploader {
         for dp in event.rawAccelSlice {
             csv += "\(f(dp.sensorTime)),\(f(dp.rawAccelX)),\(f(dp.rawAccelY)),\(f(dp.rawAccelZ)),\(f(dp.rawAccelMag))\n"
         }
-        guard let csvData = csv.data(using: .utf8) else { return }
+        guard let csvData = csv.data(using: .utf8) else {
+            ClientEventLogger.log("swing.upload.raw.encodeFailed", detail: [
+                "eventId": .string(event.id.uuidString)
+            ])
+            return
+        }
         do {
             _ = try await supabase.storage
                 .from(storageBucket)

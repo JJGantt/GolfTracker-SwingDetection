@@ -167,21 +167,7 @@ struct HolePlayView: View {
             set: { newCoordinates in
                 guard let round = self.activeRound,
                       let hole = self.currentHole else { return }
-
-                // Remove old targets for this hole
-                var updatedRound = self.store.rounds.first { $0.id == round.id } ?? round
-                updatedRound.targets.removeAll { $0.holeNumber == hole.number }
-
-                // Add new targets
-                let newTargets = newCoordinates.map { Target(holeNumber: hole.number, coordinate: $0) }
-                updatedRound.targets.append(contentsOf: newTargets)
-
-                // Update in store
-                if let index = self.store.rounds.firstIndex(where: { $0.id == round.id }) {
-                    self.store.rounds[index] = updatedRound
-                    self.store.saveRounds()
-                    // Round sync now flows via DB (Realtime) — no WC push needed.
-                }
+                self.store.setTargets(for: round, holeNumber: hole.number, coordinates: newCoordinates)
             }
         )
     }
