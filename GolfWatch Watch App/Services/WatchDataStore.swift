@@ -377,7 +377,23 @@ class WatchDataStore: ObservableObject {
             round: round,
             location: location
         )
-        if decision.shouldEnd {
+        guard decision.shouldEnd else { return }
+        if RoundLifecycleEvaluator.isInactivityReason(decision.reason) {
+            // Local lastActivityAt may be stale (user scoring on the phone
+            // while the watch sat idle — solo rounds have no Realtime on
+            // watch) — verify against the server before ending. Offline →
+            // trust local, as before.
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                if let fresh = await RoundLifecycleEvaluator.serverLastActivityAt(roundId: round.id),
+                   Date().timeIntervalSince(fresh) <= RoundLifecycleEvaluator.inactivityThreshold {
+                    round.lastActivityAt = fresh
+                    try? self.context?.save()
+                    return
+                }
+                self.endRound(reason: decision.reason ?? "lifecycle")
+            }
+        } else {
             endRound(reason: decision.reason ?? "lifecycle")
         }
     }

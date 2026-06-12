@@ -101,8 +101,9 @@ final class ClubSet {
 final class Course {
     @Attribute(.unique) var id: UUID
     var name: String
-    /// Course's authoritative hole list. Round snapshots this at start so that
-    /// edits to the course don't retroactively rewrite history.
+    /// Course's authoritative hole list. Rounds share these Hole instances
+    /// (see Round.holes) — hole edits are corrections and apply everywhere,
+    /// past rounds included.
     @Relationship(deleteRule: .cascade, inverse: \Hole.course) var holes: [Hole]
     var rating: Double?
     var slope: Int?
@@ -291,9 +292,12 @@ final class Round {
     var courseName: String
     var date: Date
     @Relationship(deleteRule: .cascade, inverse: \Stroke.round) var strokes: [Stroke]
-    /// Round-time snapshot of course holes — separate ownership from Course.holes
-    /// so edits to the parent course don't rewrite history.
-    @Relationship(deleteRule: .cascade, inverse: \Hole.round) var holes: [Hole]
+    /// The round's holes — intentionally the SAME Hole instances the parent
+    /// course owns (rounds inherit pars/locations from the course; course
+    /// edits are corrections, greens don't physically move). Delete rule is
+    /// nullify, NOT cascade: deleting a round must never delete the course's
+    /// holes out from under it.
+    @Relationship(deleteRule: .nullify, inverse: \Hole.round) var holes: [Hole]
     /// Stored as [Int] (SwiftData support for Set<Int> is flaky); exposed as
     /// Set<Int> via `completedHoles` computed property below.
     var completedHolesArray: [Int]

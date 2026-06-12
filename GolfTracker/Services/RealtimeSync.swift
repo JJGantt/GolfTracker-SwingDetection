@@ -149,7 +149,7 @@ final class RealtimeSync {
                     guard let dict = row.objectValue,
                           let idStr = dict["id"]?.stringValue,
                           let id = UUID(uuidString: idStr) else { continue }
-                    applyHole(context: context, kind: .update, id: id, record: dict)
+                    applyHole(context: context, kind: .update, id: id, record: dict, fromRoundHoles: true)
                 }
                 for row in strokeRows {
                     guard let dict = row.objectValue,
@@ -273,8 +273,8 @@ final class RealtimeSync {
         switch table {
         case "rounds":   applyRound(context: context, kind: kind, id: id, record: record)
         case "courses":  applyCourse(context: context, kind: kind, id: id, record: record)
-        case "holes":    applyHole(context: context, kind: kind, id: id, record: record)
-        case "round_holes": applyHole(context: context, kind: kind, id: id, record: record)
+        case "holes":    applyHole(context: context, kind: kind, id: id, record: record, fromRoundHoles: false)
+        case "round_holes": applyHole(context: context, kind: kind, id: id, record: record, fromRoundHoles: true)
         case "strokes":  applyStroke(context: context, kind: kind, id: id, record: record)
         case "targets":  applyTarget(context: context, kind: kind, id: id, record: record)
         case "club_types":  applyClubType(context: context, kind: kind, id: id, record: record)
@@ -422,11 +422,21 @@ final class RealtimeSync {
         }
     }
 
-    private func applyHole(context: ModelContext, kind: ChangeKind, id: UUID, record: [String: AnyJSON]) {
+    private func applyHole(context: ModelContext, kind: ChangeKind, id: UUID, record: [String: AnyJSON], fromRoundHoles: Bool) {
         let descriptor = FetchDescriptor<Hole>(predicate: #Predicate { $0.id == id })
         let existing = (try? context.fetch(descriptor))?.first
         if kind == .delete {
-            if let existing = existing { context.delete(existing) }
+            guard let existing else { return }
+            if fromRoundHoles, existing.course != nil {
+                // Rounds share the course's Hole instances. A deleted round
+                // cascades its round_holes rows server-side — that must
+                // detach the hole from the round, never delete the course's
+                // hole out from under it.
+                existing.round = nil
+                existing.roundIdRef = nil
+            } else {
+                context.delete(existing)
+            }
             return
         }
         let number = record["number"]?.intValue ?? 0

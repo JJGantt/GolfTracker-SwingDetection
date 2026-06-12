@@ -167,7 +167,24 @@ class DataStore: ObservableObject {
             round: round,
             location: location
         )
-        if decision.shouldEnd {
+        guard decision.shouldEnd else { return }
+        if RoundLifecycleEvaluator.isInactivityReason(decision.reason) {
+            // Local lastActivityAt may be stale (other device was the writer
+            // while we were backgrounded) — verify against the server before
+            // ending. Offline → server unreachable → trust local, as before.
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                if let fresh = await RoundLifecycleEvaluator.serverLastActivityAt(roundId: round.id),
+                   Date().timeIntervalSince(fresh) <= RoundLifecycleEvaluator.inactivityThreshold {
+                    if let idx = self.rounds.firstIndex(where: { $0.id == round.id }) {
+                        self.rounds[idx].lastActivityAt = fresh
+                        self.saveRounds()
+                    }
+                    return
+                }
+                self.endRound(round, reason: decision.reason ?? "lifecycle")
+            }
+        } else {
             endRound(round, reason: decision.reason ?? "lifecycle")
         }
     }
