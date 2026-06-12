@@ -113,15 +113,24 @@ final class RealtimeSync {
                 .value
 
             let roundIds: [String] = roundRows.compactMap { $0.objectValue?["id"]?.stringValue }
+            let courseIds: [String] = Array(Set(
+                roundRows.compactMap { $0.objectValue?["course_id"]?.stringValue }
+            ))
 
             // Pull child rows BEFORE touching the context. Networking stays
             // off-main; ModelContext mutation is wrapped in MainActor.run
             // below because the context was created on the main queue and
             // SwiftData fatal-errors if it's mutated from a Task.
+            // Courses (and their holes) are included: a round recovered via
+            // reconcile is unrenderable without its course row — the live
+            // courses INSERT is easy to miss since it fires once, at
+            // resolve time, often while this device is backgrounded.
             let holeRows: [AnyJSON]
             let strokeRows: [AnyJSON]
+            let courseRows: [AnyJSON]
+            let courseHoleRows: [AnyJSON]
             if roundIds.isEmpty {
-                holeRows = []; strokeRows = []
+                holeRows = []; strokeRows = []; courseRows = []; courseHoleRows = []
             } else {
                 holeRows = (try? await supabase
                     .from("round_holes")
@@ -135,10 +144,35 @@ final class RealtimeSync {
                     .in("round_id", values: roundIds)
                     .execute()
                     .value) ?? []
+                courseRows = (try? await supabase
+                    .from("courses")
+                    .select()
+                    .in("id", values: courseIds)
+                    .execute()
+                    .value) ?? []
+                courseHoleRows = (try? await supabase
+                    .from("holes")
+                    .select()
+                    .in("course_id", values: courseIds)
+                    .execute()
+                    .value) ?? []
             }
 
             await MainActor.run {
                 guard let context = context else { return }
+                // Courses before rounds/holes so parent linkage resolves.
+                for row in courseRows {
+                    guard let dict = row.objectValue,
+                          let idStr = dict["id"]?.stringValue,
+                          let id = UUID(uuidString: idStr) else { continue }
+                    applyCourse(context: context, kind: .update, id: id, record: dict)
+                }
+                for row in courseHoleRows {
+                    guard let dict = row.objectValue,
+                          let idStr = dict["id"]?.stringValue,
+                          let id = UUID(uuidString: idStr) else { continue }
+                    applyHole(context: context, kind: .update, id: id, record: dict, fromRoundHoles: false)
+                }
                 for row in roundRows {
                     guard let dict = row.objectValue,
                           let idStr = dict["id"]?.stringValue,
@@ -169,6 +203,7 @@ final class RealtimeSync {
                 WatchDataStore.shared.objectWillChange.send()
                 #else
                 DataStore.shared.loadRounds()
+                DataStore.shared.loadCourses()
                 DataStore.shared.objectWillChange.send()
                 #endif
             }

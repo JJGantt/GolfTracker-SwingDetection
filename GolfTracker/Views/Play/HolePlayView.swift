@@ -67,6 +67,11 @@ struct HolePlayView: View {
         self.runHoleDetectionWithTestCoordinates = runHoleDetectionWithTestCoordinates
         if let holeNumber = startingHoleNumber {
             _currentHoleIndex = State(initialValue: holeNumber - 1)
+        } else if let resuming = resumingRound {
+            // Resume on the round's actual hole. Without this the view
+            // defaults to hole 1 and onAppear's index push would yank the
+            // other device (which set the real index) back to hole 1.
+            _currentHoleIndex = State(initialValue: resuming.currentHoleIndex)
         }
     }
 
