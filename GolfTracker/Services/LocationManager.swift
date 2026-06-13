@@ -336,12 +336,13 @@ class LocationManager: NSObject, ObservableObject {
     /// every `setGPSPowerMode` call is coerced to `.full` so the round's
     /// first calibration crossings land at high fidelity (the first tee
     /// has no prior-green sync to lean on). Released by ElevationReadout
-    /// once the offset solves (or the hole has no history to sync
-    /// against), with a hard 10-minute expiry as backstop.
-    private var elevationSyncHoldUntil: Date?
+    /// once the offset solves, the hole has no history to sync against,
+    /// or the round's first hole is played through. No time cap — a round
+    /// can sit in a parking lot a while before reaching the first tee.
+    private var elevationSyncHoldActive = false
 
     func releaseElevationSyncHold() {
-        elevationSyncHoldUntil = nil
+        elevationSyncHoldActive = false
     }
 
     func setGPSPowerMode(_ mode: GPSPowerMode) {
@@ -349,13 +350,7 @@ class LocationManager: NSObject, ObservableObject {
         // callers stay unchanged — the override is applied here so any
         // downgrade attempt is silently coerced back to `.full`.
         var mode: GPSPowerMode = UserDefaults.standard.bool(forKey: Self.forceFullGPSKey) ? .full : mode
-        if let hold = elevationSyncHoldUntil {
-            if Date() < hold {
-                mode = .full
-            } else {
-                elevationSyncHoldUntil = nil
-            }
-        }
+        if elevationSyncHoldActive { mode = .full }
         guard mode != gpsPowerMode, !isTestModeEnabled else { return }
         gpsPowerMode = mode
 
@@ -432,9 +427,11 @@ class LocationManager: NSObject, ObservableObject {
         )
         pathSamples = []
         // First-tee sync hold: run full fidelity until the elevation
-        // calibration gets its first solid sync (or 10 min, whichever
-        // comes first). Subsequent holes re-sync at each green instead.
-        elevationSyncHoldUntil = Date().addingTimeInterval(10 * 60)
+        // calibration gets its first solid sync, the round's first hole
+        // is played through, or the current hole has no history to sync
+        // against (all released by ElevationReadout). No time cap.
+        // Subsequent holes re-sync at each green instead.
+        elevationSyncHoldActive = true
         setGPSPowerMode(.full)
         // Drain any rows left over from a prior aborted session before
         // starting fresh — they belong to the previous round but the
@@ -483,7 +480,7 @@ class LocationManager: NSObject, ObservableObject {
             if !ok { break }
         }
         recordingContext = nil
-        elevationSyncHoldUntil = nil
+        elevationSyncHoldActive = false
         stopAltimeter()
         dprint("[LocationManager] Path recording stopped")
         ClientEventLogger.log("altitude.recording.stopped", detail: [
