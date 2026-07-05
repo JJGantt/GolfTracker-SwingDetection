@@ -93,7 +93,7 @@ class WatchDataStore: ObservableObject {
             guard let self = self else { return }
             if let cached = await self.fetchServerCachedBlobs(courseId: courseId) {
                 await MainActor.run {
-                    self.holeDetectionDataByCourse[courseId] = cached
+                    self.applyBlobDetectionResults(cached, courseId: courseId)
                     ClientEventLogger.log("blob.serverCache.hit", detail: [
                         "courseId": .string(courseId.uuidString),
                         "blobCount": .integer(cached.blobs.count),
@@ -109,6 +109,39 @@ class WatchDataStore: ObservableObject {
                 ])
             }
         }
+    }
+
+    /// Store arrived blob results and unstick the placement UI. Single
+    /// funnel for every delivery path (up-front cache hit, pending-window
+    /// poll, WC receive, resume hydrate) so they all also re-assert the
+    /// round's `holeDetectionEnabled` flag.
+    func applyBlobDetectionResults(_ data: CourseHoleDetectionData, courseId: UUID) {
+        holeDetectionDataByCourse[courseId] = data
+        pendingBlobDetectionCourseIds.remove(courseId)
+        ensureHoleDetectionEnabled(forCourse: courseId)
+    }
+
+    /// Re-assert `holeDetectionEnabled` on the current round when blob data
+    /// is applied for its course. The flag is flipped on at blob-request
+    /// time, but a cross-device round upsert can clobber it back to false —
+    /// the iPhone's reconcile races the watch's flip (seen live at Wolf
+    /// Hollow 2026-07-05: the round row carried false 36s after the watch
+    /// wrote true). The picker gate (AddHoleNavigationView) returns zero
+    /// candidates while the flag is off, so without this heal, blobs arrive
+    /// and stay invisible. Re-writing at data-apply time converges every
+    /// clobber source: our upsert carries true and realtime propagates it
+    /// back to the other device.
+    func ensureHoleDetectionEnabled(forCourse courseId: UUID) {
+        guard let round = currentRound,
+              round.courseId == courseId,
+              round.holeDetectionEnabled != true else { return }
+        round.holeDetectionEnabled = true
+        try? context?.save()
+        SupabaseSync.shared.upsertRound(round)
+        ClientEventLogger.log("blob.holeDetectionEnabled.healed", detail: [
+            "roundId": .string(round.id.uuidString)
+        ])
+        objectWillChange.send()
     }
 
     /// Fire-and-forget fetch of `courses.osm_polygons` for the given course
@@ -871,8 +904,7 @@ class WatchDataStore: ObservableObject {
                 "blobCount": .integer(detectionData.blobs.count)
             ])
             DispatchQueue.main.async {
-                self?.holeDetectionDataByCourse[detectionData.courseId] = detectionData
-                self?.pendingBlobDetectionCourseIds.remove(detectionData.courseId)
+                self?.applyBlobDetectionResults(detectionData, courseId: detectionData.courseId)
             }
         }
         // Phone is the authority for filter settings now (dev menu lives
@@ -1368,8 +1400,7 @@ class WatchDataStore: ObservableObject {
             // request so the iPhone runs the analyzer.
             Task { @MainActor in
                 if let cached = await self.fetchServerCachedBlobs(courseId: courseId) {
-                    self.holeDetectionDataByCourse[courseId] = cached
-                    self.pendingBlobDetectionCourseIds.remove(courseId)
+                    self.applyBlobDetectionResults(cached, courseId: courseId)
                     ClientEventLogger.log("blob.serverCache.hit", detail: [
                         "courseId": .string(courseId.uuidString),
                         "blobCount": .integer(cached.blobs.count),
@@ -1382,6 +1413,27 @@ class WatchDataStore: ObservableObject {
                     "device": .string("watch")
                 ])
                 WatchConnectivityManager.shared.sendHoleDetectionRequest(courseId: courseId)
+                // Keep polling the server cache while pending. The iPhone
+                // analyzer typically finishes and uploads in ~20s, but its
+                // WC delivery is a file transfer above 50KB — opportunistic,
+                // can take minutes. A single up-front cache check loses that
+                // race (Wolf Hollow 2026-07-05: upload landed 22s after the
+                // check; the picker opened empty and never looked again).
+                for _ in 0..<5 {
+                    try? await Task.sleep(nanoseconds: 10_000_000_000)
+                    guard self.pendingBlobDetectionCourseIds.contains(courseId),
+                          self.holeDetectionDataByCourse[courseId] == nil else { return }
+                    if let cached = await self.fetchServerCachedBlobs(courseId: courseId) {
+                        self.applyBlobDetectionResults(cached, courseId: courseId)
+                        ClientEventLogger.log("blob.serverCache.hit", detail: [
+                            "courseId": .string(courseId.uuidString),
+                            "blobCount": .integer(cached.blobs.count),
+                            "device": .string("watch"),
+                            "trigger": .string("pendingPoll")
+                        ])
+                        return
+                    }
+                }
             }
             // 60s safety timeout — if blobs never come back (iPhone offline,
             // analyzer error), unstick the UI so user can manually place.
