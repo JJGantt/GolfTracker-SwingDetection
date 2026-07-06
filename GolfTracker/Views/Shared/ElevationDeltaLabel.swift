@@ -60,3 +60,118 @@ struct ElevationDeltaLabel: View {
         return "\(abs(feet)) feet \(feet > 0 ? "uphill" : "downhill") to green"
     }
 }
+
+/// Club-trajectory-aware "plays like" math, shared by the display stack
+/// (both platforms) and the watch's club predictor.
+///
+/// Model: Δcarry = Δh / tan(descent angle). A wedge dropping steeply at
+/// the target shrugs off elevation; a driver's flat descent feels it
+/// most. Angles are the widely published TrackMan PGA Tour averages per
+/// club (tour trajectories; amateur flights land a touch shallower, so
+/// these under-adjust slightly — tunable against real data later).
+enum PlaysLike {
+    /// Landing angle (degrees) for a club-type name, parsed loosely so
+    /// user-defined names ("7 Iron", "3W", "Sand Wedge") all resolve.
+    /// Returns nil for the putter — a rolling ball is different physics
+    /// and gets no plays-like number.
+    static func descentAngleDegrees(forClubTypeName name: String) -> Double? {
+        // Default type names are terse — "Drive", "3-Wood", "4-Hyb",
+        // "Pitch", "Gap", "Sand", "Lob", "Putt" — so match on fragments
+        // loose enough to also catch user-defined variants.
+        let n = name.lowercased()
+        if n.contains("putt") { return nil }
+        if n.contains("drive") { return 38 }
+        if n.contains("hyb") || n.contains("rescue") { return 47 }
+        let digit = n.first(where: \.isNumber).flatMap { Int(String($0)) }
+        if n.contains("wood") || (n.hasSuffix("w") && digit != nil) {
+            switch digit {
+            case 3: return 43
+            case 5: return 47
+            case 7: return 48
+            default: return 45
+            }
+        }
+        if n.contains("pitch") || n == "pw" { return 52 }
+        if n.contains("gap") || n.contains("approach") || n == "gw" || n == "aw" { return 53 }
+        if n.contains("sand") || n == "sw" { return 54 }
+        if n.contains("lob") || n == "lw" { return 55 }
+        if n.contains("wedge") { return 53 }
+        if n.contains("iron") || (n.hasSuffix("i") && digit != nil) {
+            switch digit {
+            case 2: return 44
+            case 3: return 46
+            case 4: return 48
+            case 5: return 49
+            case 6, 7, 8: return 50
+            case 9: return 51
+            default: return 47
+            }
+        }
+        // Unknown club name: the classic 45° = 1-for-1 baseline.
+        return 45
+    }
+
+    static func yards(distanceYards: Int, deltaMeters: Double, angleDegrees: Double) -> Int {
+        let deltaYards = deltaMeters * 1.09361
+        let adjustment = deltaYards / tan(angleDegrees * .pi / 180)
+        return distanceYards + Int(adjustment.rounded())
+    }
+
+    /// Self-consistent club pick: score each candidate against plays-like
+    /// computed with THAT club's own landing angle — "if I hit this club,
+    /// does the shot it produces match the shot I need?" No dependence on
+    /// the currently selected club, so predictor and display can't
+    /// feedback-loop.
+    static func bestCandidate<T>(distanceYards: Int,
+                                 deltaMeters: Double?,
+                                 candidates: [(item: T, typeName: String, averageYards: Int)]) -> T? {
+        guard !candidates.isEmpty else { return nil }
+        let scored: [(item: T, error: Int)] = candidates.map { c in
+            let target: Int
+            if let delta = deltaMeters, let angle = descentAngleDegrees(forClubTypeName: c.typeName) {
+                target = yards(distanceYards: distanceYards, deltaMeters: delta, angleDegrees: angle)
+            } else {
+                target = distanceYards
+            }
+            return (c.item, abs(c.averageYards - target))
+        }
+        return scored.min { $0.error < $1.error }?.item
+    }
+}
+
+/// Stacked "plays like" yardage over the elevation delta, sized to sit
+/// beside the big yardage readout and together match its height. "≈"
+/// marks the adjusted number so it can't be confused with the measured
+/// yardage next to it. The adjustment uses the given club's landing
+/// angle (see `PlaysLike`).
+///
+/// Degrades to the bare `ElevationDeltaLabel` when there's no distance
+/// or the club is the putter, and renders nothing when the readout has
+/// no elevation solution — same disappearing behavior the delta label
+/// already has.
+struct PlaysLikeStack: View {
+    @ObservedObject private var readout = ElevationReadout.shared
+
+    var distanceYards: Int?
+    /// Club-type name whose trajectory shapes the adjustment.
+    var clubTypeName: String?
+    var playsLikeFontSize: CGFloat = 15
+    var deltaFontSize: CGFloat = 13
+
+    var body: some View {
+        if let dist = distanceYards,
+           let meters = readout.deltaToGreenMeters,
+           let angle = clubTypeName.flatMap({ PlaysLike.descentAngleDegrees(forClubTypeName: $0) }) {
+            let adjusted = PlaysLike.yards(distanceYards: dist, deltaMeters: meters, angleDegrees: angle)
+            VStack(alignment: .leading, spacing: 0) {
+                Text("\u{2248}\(adjusted)")
+                    .font(.system(size: playsLikeFontSize, weight: .bold, design: .rounded))
+                    .foregroundColor(.white.opacity(0.95))
+                    .accessibilityLabel("Plays like \(adjusted) yards")
+                ElevationDeltaLabel(fontSize: deltaFontSize)
+            }
+        } else {
+            ElevationDeltaLabel(fontSize: deltaFontSize)
+        }
+    }
+}

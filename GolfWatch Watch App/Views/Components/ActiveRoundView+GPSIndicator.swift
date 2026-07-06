@@ -66,13 +66,14 @@ extension ActiveRoundView {
                     // the background to drive auto-putter-select / auto-
                     // advance, it just doesn't change this readout.
                     VStack(alignment: .leading, spacing: 4) {
-                        HStack(alignment: .firstTextBaseline, spacing: 4) {
+                        HStack(alignment: .center, spacing: 4) {
                             Text(displayedDistanceToHole.map { String($0) } ?? "XXX")
                                 .font(.system(size: 32, weight: .bold, design: .rounded))
                                 .foregroundColor(isUserOnCurrentGreen
                                     ? Color(red: 0.4, green: 0.95, blue: 0.4)
                                     : .white)
-                            ElevationDeltaLabel()
+                            PlaysLikeStack(distanceYards: displayedDistanceToHole,
+                                           clubTypeName: selectedClub.map { store.getTypeName(for: $0) })
                         }
 
                         HStack(spacing: 8) {

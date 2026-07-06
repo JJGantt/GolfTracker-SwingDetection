@@ -33,6 +33,7 @@ extension ActiveRoundView {
         }
         if let predictedIndex = ClubPredictionManager.shared.predictClubIndex(
             forDistance: distance,
+            deltaMeters: ElevationReadout.shared.deltaToGreenMeters,
             clubs: clubs,
             clubTypes: store.clubTypes,
             mode: store.clubPredictionMode,

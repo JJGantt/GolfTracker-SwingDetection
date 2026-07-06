@@ -1638,7 +1638,13 @@ class ClubPredictionManager {
         }
     }
 
-    func predictClubIndex(forDistance yards: Int, clubs: [ClubData], clubTypes: [ClubTypeData], mode: ClubPredictionMode, customAverages: [String: Int] = [:], disabledClubs: Set<String> = []) -> Int? {
+    /// `deltaMeters` — elevation delta to the target from ElevationReadout.
+    /// When present, each candidate is scored against the plays-like
+    /// distance computed with that club's own landing angle (self-
+    /// consistent, no dependence on the currently selected club) instead
+    /// of the raw yardage. Nil (no elevation solution) falls back to the
+    /// raw-distance match.
+    func predictClubIndex(forDistance yards: Int, deltaMeters: Double? = nil, clubs: [ClubData], clubTypes: [ClubTypeData], mode: ClubPredictionMode, customAverages: [String: Int] = [:], disabledClubs: Set<String> = []) -> Int? {
         guard mode != .off, !clubs.isEmpty else { return nil }
 
         var clubDistances: [(index: Int, average: Int, name: String)] = []
@@ -1650,7 +1656,11 @@ class ClubPredictionManager {
             clubDistances.append((index, average, clubType.name))
         }
         guard !clubDistances.isEmpty else { return nil }
-        let closest = clubDistances.min { abs($0.average - yards) < abs($1.average - yards) }
+        let closest = PlaysLike.bestCandidate(
+            distanceYards: yards,
+            deltaMeters: deltaMeters,
+            candidates: clubDistances.map { (item: $0, typeName: $0.name, averageYards: $0.average) }
+        )
         return closest?.index
     }
 }

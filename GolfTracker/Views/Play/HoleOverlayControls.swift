@@ -15,6 +15,32 @@ struct HoleOverlayControls: View {
     let onNext: () -> Void
     let onAddHole: () -> Void
 
+    /// Whole yards from the user to the flag — numeric twin of
+    /// `formattedDistance`, feeds the plays-like calculation.
+    private var distanceYardsToHole: Int? {
+        guard let user = userLocation, let coord = hole.coordinate else { return nil }
+        let target = CLLocation(latitude: coord.latitude, longitude: coord.longitude)
+        return Int(user.distance(from: target) * 1.09361)
+    }
+
+    /// Club the plays-like readout assumes. The iOS play screen has no
+    /// club selection (that lives on the watch), so pick the
+    /// self-consistent best match across the user's club types — the
+    /// club whose average distance matches the plays-like number that
+    /// club itself would produce. See `PlaysLike.bestCandidate`.
+    private var playsLikeClubTypeName: String? {
+        guard let d = distanceYardsToHole else { return nil }
+        let candidates: [(item: String, typeName: String, averageYards: Int)] = store.clubTypes
+            .filter { $0.name != "Putt" }
+            .compactMap { t in
+                guard let avg = t.averageDistance else { return nil }
+                return (t.name, t.name, avg)
+            }
+        return PlaysLike.bestCandidate(distanceYards: d,
+                                       deltaMeters: ElevationReadout.shared.deltaToGreenMeters,
+                                       candidates: candidates)
+    }
+
     /// True when the user's GPS sits inside the current hole's green
     /// polygon. Source-agnostic — same `filteredGreenCandidates` lookup
     /// used elsewhere. Drives the on-green color flip on the big
@@ -35,13 +61,16 @@ struct HoleOverlayControls: View {
             VStack(spacing: 0) {
                 // Distance display section
             VStack(spacing: 8) {
-                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                HStack(alignment: .center, spacing: 8) {
                     Text(formattedDistance)
                         .font(.system(size: 60, weight: .bold, design: .rounded))
                         .foregroundColor(isUserOnCurrentGreen
                             ? Color(red: 0.4, green: 0.95, blue: 0.4)
                             : .white)
-                    ElevationDeltaLabel()
+                    PlaysLikeStack(distanceYards: distanceYardsToHole,
+                                   clubTypeName: playsLikeClubTypeName,
+                                   playsLikeFontSize: 28,
+                                   deltaFontSize: 22)
                 }
 
                 if let errorMessage = errorMessage {
