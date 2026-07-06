@@ -26,13 +26,20 @@ class LocationManager: NSObject, ObservableObject {
     /// for one-shot consumers (e.g. capturing alt on a stroke). Updated on
     /// every CMAltimeter callback (~1 Hz).
     private var latestRelativeAltitudeMeters: Double?
-    /// Running sum + count of altimeter readings since the last path
-    /// sample was emitted. Each new path sample takes the mean of these
-    /// and resets. Standing-still rows accumulate many readings (cleaner
+    /// Altimeter readings (~1 Hz) collected since the last path sample
+    /// was emitted. Each new path sample takes the MEDIAN of these and
+    /// resets. Median, not mean: the wrist barometer reads wrist height,
+    /// and bend-downs (teeing up, retrieving the ball — reads ~1 m low)
+    /// and wrist-raises (reads high) are 2-3s transients that are a
+    /// minority of the window's readings — the median never elects them,
+    /// where the old mean let them bias every tee and cup cell in the
+    /// height map. Standing-still rows accumulate many readings (cleaner
     /// signal); walking rows get 2-3. The modeling layer weights by
-    /// count downstream.
-    private var pathAltSum: Double = 0
-    private var pathAltCount: Int = 0
+    /// count downstream. Capped so a long idle stretch can't grow it
+    /// unbounded (stationary ⇒ true elevation constant, so a wide
+    /// window stays valid).
+    private var pathAltWindow: [Double] = []
+    private let pathAltWindowCap = 600
 
     /// Read-only accessor for callers who want the most recent altimeter
     /// reading at a specific moment (stroke recording, etc.). Same anchor
@@ -120,22 +127,28 @@ class LocationManager: NSObject, ObservableObject {
                                   longitude: last.coordinate.longitude)
             if loc.distance(from: prev) < pathSampleMinSpacingMeters { return }
         }
-        // Take the mean of altimeter readings collected since the last
-        // emit, then reset. When stationary, this captures the dozens of
-        // readings that would otherwise be discarded between path samples
-        // — much cleaner signal at the points where the user actually
-        // pauses (tees, greens). When walking, this still works for the
-        // 2-3 readings collected during the ~2s it takes to cover 3m.
-        let avgAlt: Double? = pathAltCount > 0 ? pathAltSum / Double(pathAltCount) : latestRelativeAltitudeMeters
-        let count = max(pathAltCount, 1)
-        pathAltSum = 0
-        pathAltCount = 0
+        // Take the MEDIAN of altimeter readings collected since the last
+        // emit, then reset (see pathAltWindow for why median beats mean:
+        // bend-down / wrist-raise transients). When stationary, this
+        // captures the dozens of readings that would otherwise be
+        // discarded between path samples — much cleaner signal at the
+        // points where the user actually pauses (tees, greens). When
+        // walking, this still works for the 2-3 readings collected
+        // during the ~2s it takes to cover 3m.
+        let windowAlt: Double? = {
+            guard !pathAltWindow.isEmpty else { return latestRelativeAltitudeMeters }
+            let sorted = pathAltWindow.sorted()
+            let mid = sorted.count / 2
+            return sorted.count % 2 == 1 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2
+        }()
+        let count = max(pathAltWindow.count, 1)
+        pathAltWindow.removeAll(keepingCapacity: true)
 
         let holeNumberAtSample = recordingContext?.holeNumberProvider()
         let sample = PathSample(
             coordinate: loc.coordinate,
             timestamp: loc.timestamp,
-            relAltMeters: avgAlt,
+            relAltMeters: windowAlt,
             sampleCount: count,
             holeNumber: holeNumberAtSample,
             horizontalAccuracyMeters: loc.horizontalAccuracy >= 0 ? loc.horizontalAccuracy : nil
@@ -608,8 +621,9 @@ class LocationManager: NSObject, ObservableObject {
             guard let self, let data else { return }
             let v = data.relativeAltitude.doubleValue
             self.latestRelativeAltitudeMeters = v
-            self.pathAltSum += v
-            self.pathAltCount += 1
+            if self.pathAltWindow.count < self.pathAltWindowCap {
+                self.pathAltWindow.append(v)
+            }
         }
         altimeterRunning = true
     }
@@ -619,8 +633,7 @@ class LocationManager: NSObject, ObservableObject {
         altimeter.stopRelativeAltitudeUpdates()
         altimeterRunning = false
         latestRelativeAltitudeMeters = nil
-        pathAltSum = 0
-        pathAltCount = 0
+        pathAltWindow.removeAll()
     }
 
     private static func iso(_ date: Date) -> String {
