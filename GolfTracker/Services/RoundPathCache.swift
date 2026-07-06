@@ -192,9 +192,14 @@ final class GhostRoundStore: ObservableObject {
         }
     }
 
-    /// Most recent ended round at the course by this user, excluding the
-    /// active round and any test-mode rounds. Nil result (first-ever
-    /// round at a course) just leaves the overlay empty.
+    /// Most recent ended round at the course by this user that actually
+    /// has strokes, excluding the active round and any test-mode rounds.
+    /// The stroke-existence gate matters more than the test flag in
+    /// practice: the per-round test flag is legacy and unreliably
+    /// stamped (watch test rounds carry false), but a stroke-less round
+    /// — throwaway, abandoned at the first tee, queue-drain — is never
+    /// a useful ghost regardless of why it exists. Nil result
+    /// (first-ever round at a course) just leaves the overlay empty.
     private func resolveGhostRound(courseId: UUID, excludingRoundId: UUID) async {
         struct Row: Decodable {
             let id: UUID
@@ -213,7 +218,20 @@ final class GhostRoundStore: ObservableObject {
                 .limit(5)
                 .execute()
                 .value
-            ghostRoundId = rows.first { $0.location_test_mode_enabled != true }?.id
+            let candidates = rows.filter { $0.location_test_mode_enabled != true }.map(\.id)
+            if candidates.isEmpty {
+                ghostRoundId = nil
+            } else {
+                struct StrokeRow: Decodable { let round_id: UUID }
+                let strokeRows: [StrokeRow] = try await SupabaseManager.shared.client
+                    .from("strokes")
+                    .select("round_id")
+                    .in("round_id", values: candidates.map(\.uuidString))
+                    .execute()
+                    .value
+                let withStrokes = Set(strokeRows.map(\.round_id))
+                ghostRoundId = candidates.first { withStrokes.contains($0) }
+            }
             ClientEventLogger.log("ghostround.resolved", detail: [
                 "courseId": .string(courseId.uuidString),
                 "ghostRoundId": .string(ghostRoundId?.uuidString ?? "none")
