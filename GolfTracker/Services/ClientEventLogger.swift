@@ -60,16 +60,22 @@ enum ClientEventLogger {
         UIDevice.current.isBatteryMonitoringEnabled = true
         let level = UIDevice.current.batteryLevel
         #endif
+        // Bypasses the logger toggle: one row per hole change is negligible
+        // volume, and the 2026-07-05 dead-watch round had zero battery data
+        // to audit because the toggle had been off since May. Burn-rate
+        // telemetry needs to exist even when diagnostics are off.
         log("battery.holeChange", detail: [
             "hole": .integer(hole),
             "level": .double(Double(level))
-        ])
+        ], force: true)
     }
 
     /// Log an event with optional small JSON-encodable detail dict. Don't
     /// pass huge payloads — this hits the network on every call.
-    static func log(_ event: String, detail: [String: AnyJSON]? = nil) {
-        guard enabled else { return }
+    /// `force` skips the enabled-toggle gate for low-volume telemetry that
+    /// must always record (battery burn rate).
+    static func log(_ event: String, detail: [String: AnyJSON]? = nil, force: Bool = false) {
+        guard enabled || force else { return }
         let now = Date()
         Task.detached(priority: .background) {
             let userId = await currentUserId()

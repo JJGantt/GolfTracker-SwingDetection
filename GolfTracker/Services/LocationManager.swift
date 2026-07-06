@@ -106,6 +106,12 @@ class LocationManager: NSObject, ObservableObject {
     /// Set during an in-flight flush so a 30s tick can't double-fire
     /// while we're still sending the previous batch.
     private var pathFlushInFlight: Bool = false
+    /// When the in-flight flush began. A single hung request once held the
+    /// flag for an entire round (2026-07-05: uploads stopped 13 min in and
+    /// every later tick early-returned — holes 2-15 never flushed), so
+    /// ticks reclaim the flag once it's been held past this deadline.
+    private var pathFlushStartedAt: Date?
+    private let pathFlushStaleSeconds: TimeInterval = 90
     private var uploadFlushTimer: Timer?
 
     private func appendPathSample(_ loc: CLLocation) {
@@ -516,9 +522,26 @@ class LocationManager: NSObject, ObservableObject {
         // Take a chunk under the lock so we don't race with a
         // concurrent appendPathSample.
         pathQueueLock.lock()
-        if pathFlushInFlight { pathQueueLock.unlock(); return true } // someone else has it
-        guard !pendingUploadRows.isEmpty else { pathQueueLock.unlock(); return true }
+        if pathFlushInFlight {
+            // Reclaim a wedged flag: if the in-flight request hung past the
+            // deadline (its await never resumed), assume it dead and take
+            // over. The upload is an ignore-duplicates upsert on client-side
+            // ids, so a zombie request that lands later is harmless.
+            if let started = pathFlushStartedAt,
+               Date().timeIntervalSince(started) > pathFlushStaleSeconds {
+                dprint("[LocationManager] Reclaiming wedged path flush (held \(Int(Date().timeIntervalSince(started)))s)")
+            } else {
+                pathQueueLock.unlock(); return true // someone else has it
+            }
+        }
+        guard !pendingUploadRows.isEmpty else {
+            pathFlushInFlight = false
+            pathFlushStartedAt = nil
+            pathQueueLock.unlock()
+            return true
+        }
         pathFlushInFlight = true
+        pathFlushStartedAt = Date()
         let chunkCount = min(pathUploadChunkSize, pendingUploadRows.count)
         let chunk = Array(pendingUploadRows.prefix(chunkCount))
         pendingUploadRows.removeFirst(chunkCount)
@@ -528,14 +551,32 @@ class LocationManager: NSObject, ObservableObject {
         do {
             let json = try JSONSerialization.data(withJSONObject: chunk)
             let anyJson = try JSONDecoder().decode(AnyJSON.self, from: json)
-            try await SupabaseManager.shared.from("round_altitude_readings")
-                .insert(anyJson).execute()
+            // Hard 30s cap on the request. URLSession's own timeout didn't
+            // save the 2026-07-05 round — the await simply never resumed —
+            // so race the upload against a deadline and treat a loss as a
+            // normal failure (requeue + retry next tick). Rows carry
+            // client-side UUIDs and go up as ignore-duplicates upserts, so
+            // a timed-out request that lands server-side anyway can't make
+            // the retry fail with a conflict.
+            try await withThrowingTaskGroup(of: Void.self) { group in
+                group.addTask {
+                    try await SupabaseManager.shared.from("round_altitude_readings")
+                        .upsert(anyJson, onConflict: "id", ignoreDuplicates: true)
+                        .execute()
+                }
+                group.addTask {
+                    try await Task.sleep(nanoseconds: 30_000_000_000)
+                    throw PathFlushTimeoutError()
+                }
+                try await group.next()
+                group.cancelAll()
+            }
             dprint("[LocationManager] Uploaded \(chunk.count) altitude readings")
             ClientEventLogger.log("altitude.flush.ok", detail: [
                 "rowCount": .integer(chunk.count),
                 "remaining": .integer(pendingUploadRows.count)
             ])
-            pathQueueLock.lock(); pathFlushInFlight = false; pathQueueLock.unlock()
+            pathQueueLock.lock(); pathFlushInFlight = false; pathFlushStartedAt = nil; pathQueueLock.unlock()
             return true
         } catch {
             // Put the chunk back at the front and persist again so the
@@ -545,6 +586,7 @@ class LocationManager: NSObject, ObservableObject {
             pendingUploadRows.insert(contentsOf: chunk, at: 0)
             savePathQueueLocked()
             pathFlushInFlight = false
+            pathFlushStartedAt = nil
             pathQueueLock.unlock()
             dprint("[LocationManager] Altitude upload failed (\(chunk.count) rows requeued): \(error)")
             ClientEventLogger.log("altitude.flush.failed", detail: [
@@ -587,6 +629,10 @@ class LocationManager: NSObject, ObservableObject {
         return f.string(from: date)
     }
 }
+
+/// Thrown when a path-upload request exceeds its deadline — treated as a
+/// normal flush failure so the chunk requeues and the in-flight flag clears.
+private struct PathFlushTimeoutError: Error {}
 
 extension LocationManager: CLLocationManagerDelegate {
     func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
