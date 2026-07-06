@@ -151,6 +151,9 @@ final class GhostRoundStore: ObservableObject {
         let id = UUID()
         let coordinate: CLLocationCoordinate2D
         let strokeNumber: Int
+        /// Club used, for putt filtering at render time (putts render as
+        /// nothing, matching the live stroke markers). Nil on legacy rows.
+        let clubId: UUID?
     }
 
     @Published private(set) var pathByHole: [Int: [CLLocationCoordinate2D]] = [:]
@@ -258,6 +261,7 @@ final class GhostRoundStore: ObservableObject {
             let latitude: Double
             let longitude: Double
             let stroke_number: Int
+            let club_id: UUID?
         }
         do {
             let pathRows: [PathRow] = try await SupabaseManager.shared.client
@@ -270,7 +274,7 @@ final class GhostRoundStore: ObservableObject {
                 .value
             let strokeRows: [StrokeRow] = try await SupabaseManager.shared.client
                 .from("strokes")
-                .select("latitude,longitude,stroke_number")
+                .select("latitude,longitude,stroke_number,club_id")
                 .eq("round_id", value: ghostRoundId.uuidString)
                 .eq("hole_number", value: holeNumber)
                 .eq("is_penalty", value: false)
@@ -283,7 +287,8 @@ final class GhostRoundStore: ObservableObject {
             strokesByHole[holeNumber] = strokeRows.map {
                 GhostStroke(
                     coordinate: CLLocationCoordinate2D(latitude: $0.latitude, longitude: $0.longitude),
-                    strokeNumber: $0.stroke_number
+                    strokeNumber: $0.stroke_number,
+                    clubId: $0.club_id
                 )
             }
         } catch {

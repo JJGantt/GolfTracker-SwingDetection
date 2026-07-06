@@ -29,7 +29,7 @@ struct ElevationDeltaLabel: View {
             let feet = Int((meters * 3.28084).rounded())
             Text(formatted(feet))
                 .font(.system(size: fontSize, weight: .semibold, design: .rounded))
-                .foregroundColor(color(for: feet))
+                .foregroundColor(Self.color(forFeet: feet))
                 .accessibilityLabel(accessibilityText(feet))
         }
     }
@@ -49,7 +49,10 @@ struct ElevationDeltaLabel: View {
         return "\(arrow)\(abs(feet))"
     }
 
-    private func color(for feet: Int) -> Color {
+    /// Uphill red / downhill cyan / flat dim-white. Shared so the watch's
+    /// plays-like yardage mode can wear the same color as the delta —
+    /// the tint alone signals "adjusted number" and the direction.
+    static func color(forFeet feet: Int) -> Color {
         if feet > 0 { return .red.opacity(0.85) }
         if feet < 0 { return .cyan.opacity(0.9) }
         return .white.opacity(0.7)

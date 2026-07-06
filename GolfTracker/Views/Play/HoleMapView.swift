@@ -159,18 +159,40 @@ struct HoleMapView: View {
                                 style: StrokeStyle(lineWidth: 1.5, lineCap: .round, dash: [2, 5])
                             )
                     }
-                    ForEach(ghost.strokesByHole[hole.number] ?? []) { gs in
+                    // Same treatment as the live markers: putts filtered
+                    // out, each dot labeled with the distance THAT shot
+                    // went — to the next non-putt stroke, or (for the
+                    // last one) to the first putt.
+                    let ghostAll = ghost.strokesByHole[hole.number] ?? []
+                    let ghostShots = ghostAll.filter { gs in
+                        guard let cid = gs.clubId,
+                              let club = DataStore.shared.availableClubs.first(where: { $0.id == cid }) else { return true }
+                        return DataStore.shared.getTypeName(for: club) != "Putt"
+                    }
+                    let ghostFirstPutt = ghostAll.first { gs in
+                        guard let cid = gs.clubId,
+                              let club = DataStore.shared.availableClubs.first(where: { $0.id == cid }) else { return false }
+                        return DataStore.shared.getTypeName(for: club) == "Putt"
+                    }?.coordinate
+                    ForEach(Array(ghostShots.enumerated()), id: \.element.id) { gi, gs in
                         Annotation("", coordinate: gs.coordinate) {
                             ZStack {
                                 Circle()
                                     .fill(.gray.opacity(0.55))
                                     .frame(width: 8, height: 8)
-                                Text("\(gs.strokeNumber)")
-                                    .font(.system(size: 12, weight: .semibold, design: .rounded))
-                                    .foregroundColor(.gray.opacity(0.9))
-                                    .shadow(color: .black, radius: 1.5)
-                                    .fixedSize()
-                                    .offset(x: 14)
+                                let nextCoord: CLLocationCoordinate2D? = gi + 1 < ghostShots.count
+                                    ? ghostShots[gi + 1].coordinate
+                                    : ghostFirstPutt
+                                if let next = nextCoord {
+                                    let from = CLLocation(latitude: gs.coordinate.latitude, longitude: gs.coordinate.longitude)
+                                    let to = CLLocation(latitude: next.latitude, longitude: next.longitude)
+                                    Text("\(Int(from.distance(from: to) * 1.09361))")
+                                        .font(.system(size: 12, weight: .semibold, design: .rounded))
+                                        .foregroundColor(.gray.opacity(0.9))
+                                        .shadow(color: .black, radius: 1.5)
+                                        .fixedSize()
+                                        .offset(x: 16)
+                                }
                             }
                         }
                     }

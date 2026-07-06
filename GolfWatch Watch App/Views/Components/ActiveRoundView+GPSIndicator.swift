@@ -66,14 +66,41 @@ extension ActiveRoundView {
                     // the background to drive auto-putter-select / auto-
                     // advance, it just doesn't change this readout.
                     VStack(alignment: .leading, spacing: 4) {
+                        // One big number, tap to flip measured ⇄ plays-like.
+                        // Plays-like mode is signaled by COLOR only (no
+                        // prefix): the number wears the same tint as the
+                        // elevation delta — red uphill, cyan downhill.
+                        // Falls back to measured (white) when plays-like
+                        // isn't computable (putter selected, no elevation
+                        // solution, test mode). The tiny ↑/↓ delta stays
+                        // visible in both modes.
                         HStack(alignment: .center, spacing: 4) {
-                            Text(displayedDistanceToHole.map { String($0) } ?? "XXX")
+                            let deltaMeters = ElevationReadout.shared.deltaToGreenMeters
+                            let playsLike: Int? = {
+                                guard yardageShowsPlaysLike,
+                                      let d = displayedDistanceToHole,
+                                      let meters = deltaMeters,
+                                      let club = selectedClub,
+                                      let angle = PlaysLike.descentAngleDegrees(forClubTypeName: store.getTypeName(for: club))
+                                else { return nil }
+                                return PlaysLike.yards(distanceYards: d, deltaMeters: meters, angleDegrees: angle)
+                            }()
+                            let numberColor: Color = {
+                                if isUserOnCurrentGreen { return Color(red: 0.4, green: 0.95, blue: 0.4) }
+                                guard playsLike != nil, let meters = deltaMeters else { return .white }
+                                return ElevationDeltaLabel.color(forFeet: Int((meters * 3.28084).rounded()))
+                            }()
+                            Text(playsLike.map { String($0) }
+                                 ?? displayedDistanceToHole.map { String($0) }
+                                 ?? "XXX")
                                 .font(.system(size: 32, weight: .bold, design: .rounded))
-                                .foregroundColor(isUserOnCurrentGreen
-                                    ? Color(red: 0.4, green: 0.95, blue: 0.4)
-                                    : .white)
-                            PlaysLikeStack(distanceYards: displayedDistanceToHole,
-                                           clubTypeName: selectedClub.map { store.getTypeName(for: $0) })
+                                .foregroundColor(numberColor)
+                                .contentShape(Rectangle())
+                                .onTapGesture {
+                                    yardageShowsPlaysLike.toggle()
+                                    WKInterfaceDevice.current().play(.click)
+                                }
+                            ElevationDeltaLabel(fontSize: 11)
                         }
 
                         HStack(spacing: 8) {
