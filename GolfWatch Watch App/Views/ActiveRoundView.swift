@@ -8,6 +8,7 @@ struct ActiveRoundView: View {
     @StateObject var swingDetector = SwingDetectionManager.shared
     @StateObject var workoutManager = WorkoutManager.shared
     @ObservedObject var playgroupChannel = PlaygroupChannel.shared
+    @ObservedObject var ghost = GhostRoundStore.shared
     @Environment(\.scenePhase) var scenePhase
     @Environment(\.dismiss) var dismiss
     @AppStorage("minimalScreenMode") var minimalScreenMode: Bool = false
@@ -618,6 +619,13 @@ struct ActiveRoundView: View {
         return !hole.hasLocation
     }
 
+    /// Kick the ghost-round store for the current hole. Safe to call
+    /// repeatedly; the store no-ops when disabled or already cached.
+    func loadGhostForCurrentHole() {
+        guard let round = store.currentRound, let hole = store.currentHole else { return }
+        ghost.loadIfNeeded(courseId: round.courseId, excludingRoundId: round.id, holeNumber: hole.number)
+    }
+
     var activeRoundContent: some View {
         GeometryReader { geometry in
             mainContent(geometry: geometry)
@@ -647,6 +655,12 @@ struct ActiveRoundView: View {
                 "holesCount": store.currentRound.map { .integer($0.holes.count) } ?? .null
             ])
         }
+        // Ghost-round overlay data — lazy per-hole fetch, re-checked on
+        // appear and hole change (toggle-on mid-hole is handled inside
+        // the store via its remembered last request). No-ops when
+        // disabled or already cached.
+        .onAppear { loadGhostForCurrentHole() }
+        .onChange(of: store.currentHoleIndex) { _, _ in loadGhostForCurrentHole() }
         // Inbound "X is talking…" pill — small, top-trailing so it doesn't
         // clobber the yardage display at the top center. Hides when no one
         // is speaking, so most of the time it's invisible. The push-to-talk
@@ -965,6 +979,35 @@ struct ActiveRoundView: View {
                             .yellow.opacity(0.7),
                             style: StrokeStyle(lineWidth: 1.5, lineCap: .round, dash: [4, 3])
                         )
+                }
+                // Ghost round — the previous completed round at this
+                // course, rendered UNDER the live content: dim dotted
+                // grey walk path + dimmed grey stroke markers with
+                // stroke numbers. Distinct from the yellow OSM
+                // centerline (dashes) and the white live connector.
+                if ghost.enabled {
+                    if let ghostPath = ghost.pathByHole[hole.number], ghostPath.count >= 2 {
+                        MapPolyline(coordinates: ghostPath)
+                            .stroke(
+                                .gray.opacity(0.5),
+                                style: StrokeStyle(lineWidth: 1.2, lineCap: .round, dash: [2, 4])
+                            )
+                    }
+                    ForEach(ghost.strokesByHole[hole.number] ?? []) { gs in
+                        Annotation("", coordinate: gs.coordinate) {
+                            ZStack {
+                                Circle()
+                                    .fill(.gray.opacity(0.55))
+                                    .frame(width: 5, height: 5)
+                                Text("\(gs.strokeNumber)")
+                                    .font(.system(size: 9, weight: .semibold, design: .rounded))
+                                    .foregroundColor(.gray.opacity(0.85))
+                                    .shadow(color: .black, radius: 1.5)
+                                    .fixedSize()
+                                    .offset(x: 10)
+                            }
+                        }
+                    }
                 }
                 // "Putts: N" label rendered just above the green polygon.
                 // Hidden at zero. Anchored at the polygon vertex

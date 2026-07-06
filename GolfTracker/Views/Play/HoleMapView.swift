@@ -25,6 +25,11 @@ struct HoleMapView: View {
     /// + hole change; this view just reads.
     @ObservedObject private var roundPath = RoundPathCache.shared
 
+    /// Ghost-round overlay data (previous completed round at this
+    /// course). Loaded by `HolePlayView` alongside the breadcrumb
+    /// refresh; this view just reads.
+    @ObservedObject private var ghost = GhostRoundStore.shared
+
     private var isHoleCompleted: Bool {
         currentRound?.isHoleCompleted(hole.number) ?? false
     }
@@ -139,6 +144,35 @@ struct HoleMapView: View {
                             .foregroundColor(.white)
                             .shadow(color: .black, radius: 2)
                             .offset(y: -16)
+                    }
+                }
+
+                // Ghost round — previous completed round at this course:
+                // dim dotted grey path + dimmed grey numbered stroke
+                // markers, rendered under the live content. Same
+                // treatment as the watch map.
+                if ghost.enabled {
+                    if let ghostPath = ghost.pathByHole[hole.number], ghostPath.count >= 2 {
+                        MapPolyline(coordinates: ghostPath)
+                            .stroke(
+                                .gray.opacity(0.5),
+                                style: StrokeStyle(lineWidth: 1.5, lineCap: .round, dash: [2, 5])
+                            )
+                    }
+                    ForEach(ghost.strokesByHole[hole.number] ?? []) { gs in
+                        Annotation("", coordinate: gs.coordinate) {
+                            ZStack {
+                                Circle()
+                                    .fill(.gray.opacity(0.55))
+                                    .frame(width: 8, height: 8)
+                                Text("\(gs.strokeNumber)")
+                                    .font(.system(size: 12, weight: .semibold, design: .rounded))
+                                    .foregroundColor(.gray.opacity(0.9))
+                                    .shadow(color: .black, radius: 1.5)
+                                    .fixedSize()
+                                    .offset(x: 14)
+                            }
+                        }
                     }
                 }
 

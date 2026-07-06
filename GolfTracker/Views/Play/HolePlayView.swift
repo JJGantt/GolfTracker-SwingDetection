@@ -888,5 +888,12 @@ struct HolePlayView: View {
             holeNumber: hole.number,
             forceRefresh: isCurrentHole
         )
+        // Ghost overlay rides the same refresh points (appear, hole
+        // change, toggle flip). No-ops when the overlay is off.
+        GhostRoundStore.shared.loadIfNeeded(
+            courseId: round.courseId,
+            excludingRoundId: round.id,
+            holeNumber: hole.number
+        )
     }
 }

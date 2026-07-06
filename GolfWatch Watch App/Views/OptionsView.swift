@@ -4,6 +4,7 @@ import WatchKit
 struct OptionsView: View {
     @ObservedObject var store: WatchDataStore
     @ObservedObject private var swingDetector = SwingDetectionManager.shared
+    @ObservedObject private var ghost = GhostRoundStore.shared
     @Environment(\.dismiss) private var dismissSheet
 
     // Bindings for state that needs to be modified
@@ -177,6 +178,26 @@ struct OptionsView: View {
                     .buttonStyle(PlainButtonStyle())
                 }
                 .padding(.horizontal, 8)
+
+                // Ghost-round overlay toggle — previous round's path +
+                // stroke positions rendered dim/grey under the live map.
+                Button(action: {
+                    ghost.enabled.toggle()
+                    WKInterfaceDevice.current().play(.click)
+                }) {
+                    HStack(spacing: 8) {
+                        Image(systemName: "clock.arrow.circlepath")
+                            .font(.system(size: 14, weight: .bold))
+                        Text("History")
+                            .font(.system(size: 13, weight: .semibold))
+                    }
+                    .foregroundColor(.white)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 12)
+                    .background(ghost.enabled ? Color.blue.opacity(0.9) : Color.gray.opacity(0.9))
+                    .cornerRadius(8)
+                }
+                .buttonStyle(PlainButtonStyle())
 
                 // Home — moved to its own row below to make room for the
                 // Battery toggle one row up.

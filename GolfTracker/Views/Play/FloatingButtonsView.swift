@@ -15,6 +15,7 @@ struct FloatingButtonsView: View {
     // playgroup so the stack doesn't grow during solo rounds.
     @ObservedObject private var walkie = WalkieTalkie.shared
     @ObservedObject private var playgroup = PlaygroupChannel.shared
+    @ObservedObject private var ghost = GhostRoundStore.shared
 
     // Actions
     let onFinishHole: () -> Void
@@ -110,6 +111,23 @@ struct FloatingButtonsView: View {
                             )
                             .accessibilityLabel("Push to talk")
                         }
+
+                        // Ghost-round overlay toggle — previous round's
+                        // path + strokes rendered dim grey on the hole
+                        // map. Blue when active.
+                        Button(action: { ghost.enabled.toggle() }) {
+                            ZStack {
+                                Circle()
+                                    .fill((ghost.enabled ? Color.blue : Color.gray).opacity(0.9))
+                                    .frame(width: 60, height: 60)
+                                    .shadow(color: .black.opacity(0.3), radius: 8, x: 0, y: 4)
+                                Image(systemName: "clock.arrow.circlepath")
+                                    .font(.title2)
+                                    .fontWeight(.semibold)
+                                    .foregroundColor(.white)
+                            }
+                        }
+                        .accessibilityLabel("Previous round overlay")
 
                         // Scorecard button (top)
                         Button(action: onShowScorecard) {
