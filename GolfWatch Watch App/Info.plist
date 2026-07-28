@@ -19,7 +19,7 @@
 	<key>CFBundleShortVersionString</key>
 	<string>0.9.0</string>
 	<key>CFBundleVersion</key>
-	<string>1</string>
+	<string>6</string>
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
 	<key>NSHealthShareUsageDescription</key>
@@ -28,10 +28,10 @@
 	<string>Golf Tracker needs access to save your golf rounds as workouts to track your fitness activity.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>Golf Tracker needs your location to track your position on the course and calculate distances to holes.</string>
-	<key>NSMotionUsageDescription</key>
-	<string>Golf Tracker uses motion sensors to detect swings and putts during your round.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Golf Tracker uses the microphone for push-to-talk voice messages with your playgroup partners during a round.</string>
+	<key>NSMotionUsageDescription</key>
+	<string>Golf Tracker uses motion sensors to detect swings and putts during your round.</string>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>location</string>
