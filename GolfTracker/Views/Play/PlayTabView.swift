@@ -106,6 +106,56 @@ private struct StartRoundView: View {
             }
             .interactiveDismissDisabled(true)
         }
+        // Name-this-course prompt — nothing identified where the user is.
+        .sheet(isPresented: $store.pendingCourseNamePrompt) {
+            IOSCourseNamePromptView { name in
+                store.submitCourseName(name)
+            }
+            .interactiveDismissDisabled(true)
+        }
+    }
+}
+
+// MARK: - Name this course
+
+/// Shown when nothing identified where the user is. Naming it once stores the
+/// course at their GPS, so the next round here matches by proximity and comes
+/// back under the same name instead of creating another anonymous entry.
+private struct IOSCourseNamePromptView: View {
+    let onSubmit: (String?) -> Void
+    @State private var name: String = ""
+    @FocusState private var focused: Bool
+
+    private var trimmed: String { name.trimmingCharacters(in: .whitespacesAndNewlines) }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    TextField("Course name", text: $name)
+                        .textInputAutocapitalization(.words)
+                        .submitLabel(.done)
+                        .focused($focused)
+                        .onSubmit { if !trimmed.isEmpty { onSubmit(trimmed) } }
+                } header: {
+                    Text("Name this course")
+                } footer: {
+                    Text("We'll remember it for next time you play here.")
+                }
+            }
+            .navigationTitle("New Course")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { onSubmit(nil) }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Start") { onSubmit(trimmed) }
+                        .disabled(trimmed.isEmpty)
+                }
+            }
+            .onAppear { focused = true }
+        }
     }
 }
 

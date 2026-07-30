@@ -326,6 +326,15 @@ class WatchDataStore: ObservableObject {
     @Published var pendingScorecardPicker: PendingScorecardPicker?
     fileprivate var pendingScorecardPickerCompletion: ((GCAPICourse?) -> Void)?
 
+    /// Name-this-course prompt. Set when the resolver hits the `.manual`
+    /// path — nothing identified where the user is, so they name it and the
+    /// course is stored at their GPS for next time. A name is REQUIRED;
+    /// completing with nil cancels the round rather than falling back to a
+    /// throwaway placeholder course.
+    @Published var pendingCourseNamePrompt: Bool = false
+    private var pendingCourseNameCompletion: ((String?) -> Void)?
+
+
     struct PendingScorecardPicker {
         let originalName: String
         let candidates: [RoundResolver.ScorecardCandidate]
@@ -1060,15 +1069,24 @@ class WatchDataStore: ObservableObject {
                     self?.pendingScorecardPickerCompletion = choose
                 }
             },
+            courseNamePrompt: { [weak self] complete in
+                DispatchQueue.main.async {
+                    self?.pendingCourseNameCompletion = complete
+                    self?.pendingCourseNamePrompt = true
+                }
+            },
             completion: { [weak self] resolution in
                 DispatchQueue.main.async {
                     guard let self = self else { return }
                     self.roundStartStatus = nil
                     if let resolution = resolution {
                         self.handleResolved(resolution)
-                    } else {
-                        self.startManualQuickRound()
                     }
+                    // A nil resolution means the user backed out — cancelled
+                    // the course picker, or cancelled the name prompt on the
+                    // manual path. Start nothing. This used to fall back to
+                    // startManualQuickRound, which now prompts for a name and
+                    // would re-open the prompt the user just dismissed.
                 }
             }
         )
@@ -1447,19 +1465,39 @@ class WatchDataStore: ObservableObject {
         }
     }
 
+    /// Answer the name-this-course prompt. Nil or blank cancels the round.
+    func submitCourseName(_ name: String?) {
+        let cb = pendingCourseNameCompletion
+        pendingCourseNamePrompt = false
+        pendingCourseNameCompletion = nil
+        cb?(name)
+    }
+
+    /// Start a round with no GPS fix at all. The user still names the course,
+    /// but with no coordinate there's nothing to anchor it to, so it can't be
+    /// matched by proximity next time — it'll be re-named on the next visit.
+    ///
+    /// This used to create `Round(courseId: UUID(), courseName: "Quick Start")`
+    /// with NO Course row anywhere, which is why those rounds ended up
+    /// orphaned in Supabase pointing at a course id that never existed.
     func startManualQuickRound() {
-        guard let context = context else { return }
-        let firstHole = Hole(number: 1)
-        let newRound = Round(
-            courseId: UUID(),
-            courseName: "Quick Start",
-            holes: [firstHole]
-        )
-        context.insert(firstHole)
-        context.insert(newRound)
-        try? context.save()
-        refreshCurrentRound()
-        SupabaseSync.shared.upsertRound(newRound)
+        pendingCourseNameCompletion = { [weak self] entered in
+            guard let self = self, let context = self.context else { return }
+            let name = (entered ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !name.isEmpty else { return }   // cancelled — no round
+
+            let course = Course(name: name)
+            context.insert(course)
+            let firstHole = Hole(number: 1)
+            let newRound = Round(courseId: course.id, courseName: name, holes: [firstHole])
+            context.insert(firstHole)
+            context.insert(newRound)
+            try? context.save()
+            self.refreshCurrentRound()
+            SupabaseSync.shared.upsertCourse(course)
+            SupabaseSync.shared.upsertRound(newRound)
+        }
+        pendingCourseNamePrompt = true
     }
 
     func startQuickRound() { startRoundAtCurrentLocation() }

@@ -53,6 +53,7 @@ final class RoundResolver {
     /// runs at a time on watchOS (gated by user interaction), so a single
     /// shared slot is fine. Cleared after use.
     private var activeScorecardPicker: ScorecardPicker?
+    private var activeCourseNamePrompt: CourseNamePrompt?
     private var activeOriginalName: String?
 
     private init() {}
@@ -108,13 +109,19 @@ final class RoundResolver {
             /// MapKit fallback (OSM coverage gap). No polygon data, no INSERT
             /// to shared courses.
             case mapKit
-            /// User explicitly opted out of course identification. No OSM,
-            /// no scorecard, no shared-courses INSERT — just a placeholder
-            /// round anchored at the user's current GPS, with blob detection
-            /// as the only source of hole geometry. Always appended as the
-            /// last candidate in the picker so the user can pick it when
-            /// none of the surfaced courses is where they actually are
-            /// (or when they're not on a course at all).
+            /// User is somewhere we can't identify — nothing nearby in the
+            /// shared table, OSM, or MapKit. No OSM data and no scorecard;
+            /// blob detection is the only source of hole geometry.
+            ///
+            /// The user NAMES it (see `courseNamePrompt`) and it is INSERTed
+            /// into shared courses anchored at their current GPS, so the next
+            /// round at the same place finds it by proximity under that name.
+            /// It used to create a throwaway "Unlisted course" instead, which
+            /// meant every visit made another anonymous entry and the Stats
+            /// screen listed them as if they were venues.
+            ///
+            /// Always appended last in the picker, for when none of the
+            /// surfaced courses is where the user actually is.
             case manual
         }
 
@@ -167,11 +174,19 @@ final class RoundResolver {
                                  _ candidates: [ScorecardCandidate],
                                  _ choose: @escaping (GCAPICourse?) -> Void) -> Void
 
+    /// Ask the user to name the place they're playing. Called only on the
+    /// `.manual` path, where nothing identified the course. Completing with
+    /// nil cancels the round — a name is required, because an unnamed course
+    /// can't be recognised on the next visit and clutters Stats as a
+    /// pseudo-venue.
+    typealias CourseNamePrompt = (_ complete: @escaping (String?) -> Void) -> Void
+
     func resolve(
         at currentLocation: CLLocationCoordinate2D,
         progress: @escaping (Step) -> Void,
         coursePicker: @escaping ([CourseCandidate], @escaping (CourseCandidate?) -> Void) -> Void,
         scorecardPicker: @escaping ScorecardPicker,
+        courseNamePrompt: @escaping CourseNamePrompt,
         completion: @escaping (Resolution?) -> Void
     ) {
         // Stash on the singleton so the deeper resolveScorecard call sites
@@ -179,6 +194,7 @@ final class RoundResolver {
         // single resolve() is in flight at a time on watchOS (round-start
         // is gated by user interaction), so this is safe.
         self.activeScorecardPicker = scorecardPicker
+        self.activeCourseNamePrompt = courseNamePrompt
         self.activeOriginalName = nil
         progress(.searchingShared)
         Task {
@@ -409,28 +425,82 @@ final class RoundResolver {
                 completion(resolution)
             }
         case .manual:
-            // User is at a real course that isn't in our data (OSM didn't
-            // map it, MapKit POI didn't surface it, no shared row exists
-            // yet). Skip OSM lookup, scorecard search, and shared-courses
-            // INSERT — start a fresh local-only round anchored at their
-            // current GPS. Blob detection still runs (Stage 4 sets
-            // needsBlobDetection when osmData == nil). Per-hole pars and
-            // coords come from the user via HolePlacementView.
+            // User is at a real course that isn't in our data (OSM didn't map
+            // it, MapKit POI didn't surface it, no shared row exists yet).
+            // Skip OSM lookup and scorecard search; blob detection still runs
+            // (Stage 4 sets needsBlobDetection when osmData == nil) and
+            // per-hole pars/coords come from HolePlacementView.
+            //
+            // The user names it and we DO insert a shared course row anchored
+            // at their GPS, so the next round here matches by proximity under
+            // that name. This replaces the old throwaway "Unlisted course":
+            // that made a new anonymous course every visit, none of which
+            // could ever be re-recognised, and Stats listed each one as if it
+            // were a venue.
             ClientEventLogger.log("resolver.manual.picked", detail: [
                 "lat": .double(candidate.coordinate.latitude),
                 "lon": .double(candidate.coordinate.longitude)
             ])
-            let resolution = Resolution(
-                courseId: UUID(),
-                courseName: "Unlisted course",
-                courseCoordinate: candidate.coordinate,
-                osmData: nil,
-                tier: .none,
-                isExistingCourse: false,
-                scorecardCourse: nil
-            )
-            progress(.ready(resolution))
-            completion(resolution)
+            guard let prompt = activeCourseNamePrompt else {
+                ClientEventLogger.log("resolver.manual.noNamePrompt")
+                progress(.failed("Couldn't name this course"))
+                completion(nil)
+                return
+            }
+            prompt { [weak self] enteredName in
+                guard let self else { return }
+                let name = (enteredName ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+                // A name is required — cancelling or submitting blank aborts
+                // the round rather than silently recreating a placeholder.
+                guard !name.isEmpty else {
+                    ClientEventLogger.log("resolver.manual.nameCancelled")
+                    progress(.failed("Round cancelled"))
+                    completion(nil)
+                    return
+                }
+                let courseId = UUID()
+                self.insertUserNamedCourse(id: courseId, name: name, center: candidate.coordinate)
+                let resolution = Resolution(
+                    courseId: courseId,
+                    courseName: name,
+                    courseCoordinate: candidate.coordinate,
+                    osmData: nil,
+                    tier: .none,
+                    isExistingCourse: false,
+                    scorecardCourse: nil
+                )
+                progress(.ready(resolution))
+                completion(resolution)
+            }
+        }
+    }
+
+    /// INSERT a course the user named themselves. No `osm_id`, so this upserts
+    /// on the primary key rather than `insertSharedCourse`'s `osm_id` conflict
+    /// target. `center_lat`/`center_lon` are what `fetchSharedCoursesNear`
+    /// matches on, so storing them is what makes the course re-findable on the
+    /// next visit — that's the entire point of naming it.
+    func insertUserNamedCourse(id: UUID, name: String, center: CLLocationCoordinate2D) {
+        struct Row: Encodable {
+            let id: String
+            let name: String
+            let center_lat: Double
+            let center_lon: Double
+        }
+        let row = Row(id: id.uuidString, name: name,
+                      center_lat: center.latitude, center_lon: center.longitude)
+        Task {
+            do {
+                try await supabase.from("courses").upsert(row, onConflict: "id").execute()
+                ClientEventLogger.log("resolver.userNamedCourseInserted", detail: [
+                    "courseId": .string(id.uuidString),
+                    "name": .string(name)
+                ])
+            } catch {
+                ClientEventLogger.log("resolver.userNamedCourseInsertFailed", detail: [
+                    "error": .string("\(error)")
+                ])
+            }
         }
     }
 

@@ -59,7 +59,7 @@ struct MultiplayerView: View {
                             .font(.caption)
                             .foregroundColor(.secondary)
                     } else if !currentRoundHasRealCourse {
-                        Text("Multiplayer requires a recognized golf course. Quick Start rounds (off-course / manual play) can't be hosted — start a round at a course detected via GPS to use multiplayer.")
+                        Text("This round isn't linked to a saved course yet.")
                             .font(.caption)
                             .foregroundColor(.secondary)
                     }
@@ -177,11 +177,15 @@ struct MultiplayerView: View {
         #endif
     }
 
-    /// True only when the current round's `courseId` references an actual
-    /// `Course` row (resolver-created via OSM/GolfCourseAPI), not a synthetic
-    /// Quick Start placeholder. Multiplayer hosting depends on this because
-    /// `playgroups.course_id` has a FK to `courses(id)` AND because the
-    /// feature only makes sense at a real shared course.
+    /// True when the current round's `courseId` references an actual `Course`
+    /// row. Multiplayer hosting depends on it because `playgroups.course_id`
+    /// has a FK to `courses(id)`.
+    ///
+    /// Every round now has a real course — resolver-created from OSM /
+    /// GolfCourseAPI, or user-named on the manual path — so this only fails
+    /// when the row is genuinely missing (a round that synced ahead of its
+    /// course). It used to exist to exclude synthetic "Quick Start"
+    /// placeholders, which no longer get created.
     private var currentRoundHasRealCourse: Bool {
         guard let roundId = currentRoundId else { return false }
         #if os(watchOS)

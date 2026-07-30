@@ -61,6 +61,17 @@ struct WatchHomeView: View {
                 .buttonStyle(.plain)
                 .disabled(store.roundStartStatus != nil)
 
+                // General-purpose data-collection mode (not golf-specific).
+                NavigationLink(destination: SensorCaptureView()) {
+                    Label("Sensor Capture", systemImage: "waveform.path.ecg")
+                        .frame(maxWidth: .infinity)
+                        .padding()
+                        .background(Color.gray.opacity(0.3))
+                        .foregroundColor(.white)
+                        .cornerRadius(10)
+                }
+                .buttonStyle(.plain)
+
                 // Resolver status while a round-start is in flight.
                 if let status = store.roundStartStatus {
                     HStack(spacing: 6) {
@@ -153,6 +164,44 @@ struct WatchHomeView: View {
                     store.pickScorecardCandidate(picked)
                 }
                 .interactiveDismissDisabled(true)
+            }
+            .sheet(isPresented: $store.pendingCourseNamePrompt) {
+                CourseNamePromptView { name in
+                    store.submitCourseName(name)
+                }
+                .interactiveDismissDisabled(true)
+            }
+        }
+    }
+}
+
+/// Name-this-course prompt. Shown when nothing identified where the user is,
+/// so instead of starting an anonymous round we ask once and store the course
+/// at their GPS — the next round here matches it by proximity and the name
+/// carries forward.
+private struct CourseNamePromptView: View {
+    let onSubmit: (String?) -> Void
+    @State private var name: String = ""
+
+    private var trimmed: String { name.trimmingCharacters(in: .whitespacesAndNewlines) }
+
+    var body: some View {
+        NavigationStack {
+            VStack(spacing: 8) {
+                Text("Name this course")
+                    .font(.headline)
+                // watchOS routes this to dictation / scribble / keyboard.
+                TextField("Course name", text: $name)
+                    .textInputAutocapitalization(.words)
+                Button("Start Round") { onSubmit(trimmed) }
+                    .disabled(trimmed.isEmpty)
+                    .buttonStyle(.borderedProminent)
+            }
+            .padding(.horizontal)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { onSubmit(nil) }
+                }
             }
         }
     }
