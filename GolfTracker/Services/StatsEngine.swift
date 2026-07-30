@@ -106,7 +106,6 @@ struct StatsEngine {
         var puttsByLength: [Int: [Int]] = [:]         // holeCount → [putts that round]
         var puttCountsPerHole: [Double] = []
         var girResults: [Bool] = []
-        var deviations: [Double] = []
         var clubTypeSamples: [UUID: [Double]] = [:]   // typeId → [yards]
         var clubSamples: [UUID: [Double]] = [:]       // clubId → [yards]
         var scoredCountByCourse: [UUID: Int] = [:]
@@ -155,16 +154,6 @@ struct StatsEngine {
                 if let firstPutt = putts.first {
                     girResults.append(firstPutt.strokeNumber <= hole.par - 1)
                 }
-
-                // Tee-shot deviation: par 4/5, tee shot has heading, hole has
-                // a coordinate.
-                if hole.par >= 4,
-                   let teeShot = hole.nonPenalty.first,
-                   let heading = teeShot.trajectoryHeading,
-                   let holeCoord = holes(for: round)[hole.number]?.coordinate {
-                    let idealBearing = MapCalculations.calculateBearing(from: teeShot.coordinate, to: holeCoord)
-                    deviations.append(abs(angleDiff(heading, idealBearing)))
-                }
             }
 
             scoresByLength[counted.count, default: []].append(roundStrokes - roundPar)
@@ -182,9 +171,6 @@ struct StatsEngine {
         }
         if !girResults.isEmpty {
             stats.girPercent = Double(girResults.filter { $0 }.count) / Double(girResults.count) * 100
-        }
-        if !deviations.isEmpty {
-            stats.avgDeviationDegrees = deviations.reduce(0, +) / Double(deviations.count)
         }
 
         // MARK: Aggregate — per club type
@@ -271,13 +257,5 @@ struct StatsEngine {
 
     private static func metersToYards(_ meters: Double) -> Double {
         meters * 1.09361
-    }
-
-    /// Signed angle difference A - B, normalized to -180...+180
-    private static func angleDiff(_ a: Double, _ b: Double) -> Double {
-        var d = (a - b).truncatingRemainder(dividingBy: 360)
-        if d > 180  { d -= 360 }
-        if d < -180 { d += 360 }
-        return d
     }
 }

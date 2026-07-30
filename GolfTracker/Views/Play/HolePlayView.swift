@@ -604,23 +604,12 @@ struct HolePlayView: View {
 
     // MARK: - Stroke Recording Functions
     func captureAimDirection() {
-        var heading: Double?
-
-        // Try to get real heading first
-        if let realHeading = locationManager.heading {
-            heading = realHeading
-        } else if let userLocation = locationManager.location,
-                  let hole = currentHole,
-                  let holeCoord = hole.coordinate {
-            // Fallback: Use bearing to hole + 45 degrees as simulated offset
-            let bearingToHole = MapCalculations.calculateBearing(from: userLocation.coordinate, to: holeCoord)
-            heading = (bearingToHole + 45).truncatingRemainder(dividingBy: 360)
-        }
-
-        guard let finalHeading = heading else { return }
-
-        // Capture the current heading
-        trajectoryHeading = finalHeading
+        // Compass only. The old fallback synthesised "bearing to hole + 45°"
+        // when no heading was available — test scaffolding that wrote a
+        // fabricated aim into a real stroke record. With no compass fix there
+        // is no aim to capture, so leave it unset.
+        guard let realHeading = locationManager.heading else { return }
+        trajectoryHeading = realHeading
     }
 
     func toggleTargetPlacement() {
@@ -714,15 +703,11 @@ struct HolePlayView: View {
               let hole = currentHole,
               let location = locationManager.location else { return }
 
-        // Use manual trajectory if set, otherwise calculate bearing to hole (if hole has coordinates)
-        var heading: Double = 0
-        if let traj = trajectoryHeading {
-            heading = traj
-        } else if let holeCoord = hole.coordinate {
-            heading = MapCalculations.calculateBearing(from: location.coordinate, to: holeCoord)
-        }
-
-        store.addStroke(to: round, holeNumber: hole.number, coordinate: location.coordinate, clubId: club.id, trajectoryHeading: heading)
+        // Only a real captured aim goes on the stroke. This used to fall back
+        // to bearing-to-hole (and, failing that, a literal 0°), which made
+        // Stroke.trajectoryHeading indistinguishable from a measurement while
+        // carrying none. Nil means unknown.
+        store.addStroke(to: round, holeNumber: hole.number, coordinate: location.coordinate, clubId: club.id, trajectoryHeading: trajectoryHeading)
 
         // Reset aim direction after recording stroke
         trajectoryHeading = nil

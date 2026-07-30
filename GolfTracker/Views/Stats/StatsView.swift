@@ -129,9 +129,6 @@ struct StatsView: View {
             if let gir = stats.girPercent {
                 StatRow(label: "Greens in Regulation", value: String(format: "%.0f%%", gir))
             }
-            if let dev = stats.avgDeviationDegrees {
-                StatRow(label: "Avg Shot Deviation", value: String(format: "%.0f°", dev))
-            }
         }
     }
 

@@ -56,7 +56,6 @@ struct PlayerStats: Codable {
     // Short game — computed over qualifying rounds only, same as scoring.
     var avgPuttsPerHole: Double? = nil
     var girPercent: Double? = nil           // Greens in regulation %
-    var avgDeviationDegrees: Double? = nil  // Mean absolute deviation from ideal line
 
     // Per club type — keyed by ClubTypeData.id.uuidString.
     // Distances come from EVERY round, partials included: a shot is a shot,
@@ -73,7 +72,7 @@ struct PlayerStats: Codable {
 
     private enum CodingKeys: String, CodingKey {
         case lastUpdated, totalRounds, scoring18, scoring9
-        case avgPuttsPerHole, girPercent, avgDeviationDegrees
+        case avgPuttsPerHole, girPercent
         case perClubTypeStats, perClubStats, perCourseStats
     }
 }
