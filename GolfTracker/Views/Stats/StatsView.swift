@@ -33,6 +33,7 @@ struct StatsView: View {
         let stats = store.playerStats
         return List {
             overallSection(stats)
+            scoringSection(stats)
             shortGameSection(stats)
             clubDistancesSection(stats)
             courseHistorySection(stats)
@@ -52,15 +53,15 @@ struct StatsView: View {
                 )
                 Divider()
                 BigStatCell(
-                    label: "Avg Score",
-                    value: stats.avgScoreVsPar.map { formatScore($0) } ?? "--",
-                    unit: "vs par"
+                    label: "Scored",
+                    value: "\(stats.scoredRounds)",
+                    unit: "9s + 18s"
                 )
                 Divider()
                 BigStatCell(
-                    label: "Best",
-                    value: stats.bestScoreVsPar.map { formatScore(Double($0)) } ?? "--",
-                    unit: "vs par"
+                    label: "Putts / Hole",
+                    value: stats.avgPuttsPerHole.map { String(format: "%.2f", $0) } ?? "--",
+                    unit: nil
                 )
             }
             .frame(maxWidth: .infinity)
@@ -68,13 +69,60 @@ struct StatsView: View {
         }
     }
 
+    // MARK: - Scoring Section
+
+    /// 9s and 18s are reported separately — averaging a 9-hole score against
+    /// an 18-hole score is a category error, and partial rounds feed neither.
+    private func scoringSection(_ stats: PlayerStats) -> some View {
+        Section("Scoring") {
+            if stats.scoring18.isEmpty && stats.scoring9.isEmpty {
+                Text("Play a full 9 or 18 to start scoring.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            } else {
+                if !stats.scoring18.isEmpty { scoringRow("18 Holes", stats.scoring18) }
+                if !stats.scoring9.isEmpty  { scoringRow("9 Holes",  stats.scoring9) }
+            }
+        }
+    }
+
+    private func scoringRow(_ title: String, _ s: ScoringStats) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text(title)
+                    .font(.headline)
+                Spacer()
+                Text("\(s.roundCount) round\(s.roundCount == 1 ? "" : "s")")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            HStack(spacing: 0) {
+                BigStatCell(
+                    label: "Avg",
+                    value: s.avgScoreVsPar.map { formatScore($0) } ?? "--",
+                    unit: "vs par"
+                )
+                Divider()
+                BigStatCell(
+                    label: "Best",
+                    value: s.bestScoreVsPar.map { formatScore(Double($0)) } ?? "--",
+                    unit: "vs par"
+                )
+                Divider()
+                BigStatCell(
+                    label: "Putts",
+                    value: s.avgPuttsPerRound.map { String(format: "%.0f", $0) } ?? "--",
+                    unit: "per round"
+                )
+            }
+        }
+        .padding(.vertical, 4)
+    }
+
     // MARK: - Short Game Section
 
     private func shortGameSection(_ stats: PlayerStats) -> some View {
         Section("Short Game") {
-            if let putts = stats.avgPuttsPerRound {
-                StatRow(label: "Putts / Round", value: String(format: "%.1f", putts))
-            }
             if let puttsPerHole = stats.avgPuttsPerHole {
                 StatRow(label: "Putts / Hole", value: String(format: "%.2f", puttsPerHole))
             }

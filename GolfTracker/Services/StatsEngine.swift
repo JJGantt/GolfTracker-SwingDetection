@@ -7,10 +7,61 @@ struct StatsEngine {
     private static let minShotYards: Double = 5
     private static let maxShotYards: Double = 350
 
+    /// Minimum strokes on a hole for it to count as played. One stroke means
+    /// teed off and walked away — charging the hole's full par for that is
+    /// what produced impossible negative scores (a single drive on a par 5
+    /// scored −4, and a two-hole session scored −6).
+    private static let minStrokesPerHole = 2
+
+    /// A round only enters scoring stats when its counted holes add up to a
+    /// real round length. Anything else is a partial: it stays in History but
+    /// never averages against real golf. This also self-cleans rounds where
+    /// strokes went unrecorded — an 18-hole round missing strokes on one hole
+    /// lands on 17 counted holes and drops out on its own, no threshold
+    /// tuning required.
+    private static let scoredHoleCounts: Set<Int> = [9, 18]
+
+    // MARK: - Qualification
+
+    /// One hole's worth of play, already filtered to holes with real strokes.
+    private struct CountedHole {
+        let number: Int
+        let par: Int
+        let strokes: [Stroke]          // sorted by strokeNumber, penalties included
+        let nonPenalty: [Stroke]
+    }
+
+    /// The holes on `round` that had real play, resolved against `holesByNumber`.
+    ///
+    /// Callers must pass holes resolved via the round's COURSE, not
+    /// `round.holes` — `Hole.round` is to-one, so older rounds' `holes` arrays
+    /// drain as newer rounds at the same course adopt the shared instances.
+    /// Reading `round.holes` here silently zeroed the par for every round but
+    /// the most recent one per course.
+    private static func countedHoles(in round: Round,
+                                     holesByNumber: [Int: Hole]) -> [CountedHole] {
+        Dictionary(grouping: round.strokes, by: { $0.holeNumber })
+            .compactMap { holeNumber, holeStrokes -> CountedHole? in
+                guard holeStrokes.count >= minStrokesPerHole,
+                      let par = holesByNumber[holeNumber]?.par else { return nil }
+                let sorted = holeStrokes.sorted { $0.strokeNumber < $1.strokeNumber }
+                return CountedHole(
+                    number: holeNumber,
+                    par: par,
+                    strokes: sorted,
+                    nonPenalty: sorted.filter { !$0.isPenalty }
+                )
+            }
+            .sorted { $0.number < $1.number }
+    }
+
     // MARK: - Main entry point
 
+    /// - Parameter courses: needed to resolve each round's holes by `courseId`.
+    ///   See `countedHoles` for why `round.holes` can't be trusted here.
     static func compute(
         rounds: [Round],
+        courses: [Course],
         clubs: [ClubData],
         clubTypes: [ClubTypeData]
     ) -> PlayerStats {
@@ -19,6 +70,24 @@ struct StatsEngine {
         stats.totalRounds = rounds.count
 
         guard !rounds.isEmpty else { return stats }
+
+        // Hole lookup per course — the durable source for pars.
+        var holesByCourse: [UUID: [Int: Hole]] = [:]
+        for course in courses {
+            var byNumber: [Int: Hole] = [:]
+            for hole in course.holes { byNumber[hole.number] = hole }
+            holesByCourse[course.id] = byNumber
+        }
+        /// Course holes when we have them; the round's own holes as a fallback
+        /// for rounds whose course row is missing locally.
+        func holes(for round: Round) -> [Int: Hole] {
+            if let byNumber = holesByCourse[round.courseId], !byNumber.isEmpty {
+                return byNumber
+            }
+            var byNumber: [Int: Hole] = [:]
+            for hole in round.holes { byNumber[hole.number] = hole }
+            return byNumber
+        }
 
         // Club lookup closures — local to avoid repeated param passing
         func clubData(for stroke: Stroke) -> ClubData? {
@@ -32,68 +101,29 @@ struct StatsEngine {
             clubTypeData(for: stroke)?.name == "Putt"
         }
 
-        // Accumulators
-        var scoresVsPar: [Int] = []
-        var puttCountsPerRound: [Int] = []
+        // Accumulators — scoring/short-game are per round length
+        var scoresByLength: [Int: [Int]] = [:]        // holeCount → [score vs par]
+        var puttsByLength: [Int: [Int]] = [:]         // holeCount → [putts that round]
         var puttCountsPerHole: [Double] = []
         var girResults: [Bool] = []
         var deviations: [Double] = []
-        var clubTypeSamples: [UUID: [Double]] = [:]  // typeId → [yards]
+        var clubTypeSamples: [UUID: [Double]] = [:]   // typeId → [yards]
         var clubSamples: [UUID: [Double]] = [:]       // clubId → [yards]
+        var scoredCountByCourse: [UUID: Int] = [:]
+        var scoresByCourse: [UUID: [Int]] = [:]
 
         for round in rounds {
-            // Hole snapshot lookup for this round
-            var holeByNumber: [Int: Hole] = [:]
-            for hole in round.holes { holeByNumber[hole.number] = hole }
+            let counted = countedHoles(in: round, holesByNumber: holes(for: round))
+            let qualifies = scoredHoleCounts.contains(counted.count)
 
-            // Round-level score vs par (only holes actually played)
-            let playedHoleNumbers = Set(round.strokes.map { $0.holeNumber })
-            let roundPar = round.holes
-                .filter { playedHoleNumbers.contains($0.number) }
-                .compactMap { $0.par }
-                .reduce(0, +)
-            let nonPenaltyTotal = round.strokes.filter { !$0.isPenalty }.count
-            if roundPar > 0 {
-                scoresVsPar.append(nonPenaltyTotal - roundPar)
-                stats.totalRoundsWithPar += 1
-            }
-
-            // Per-hole stats
-            let strokesByHole = Dictionary(grouping: round.strokes, by: { $0.holeNumber })
-            var roundPutts = 0
-
-            for (holeNumber, holeStrokes) in strokesByHole {
-                guard let hole = holeByNumber[holeNumber] else { continue }
-                let sorted = holeStrokes.sorted { $0.strokeNumber < $1.strokeNumber }
-                let nonPenalty = sorted.filter { !$0.isPenalty }
-
-                // Putts
-                let putts = sorted.filter { isPutt($0) }
-                roundPutts += putts.count
-                puttCountsPerHole.append(Double(putts.count))
-
-                // GIR: first putt stroke number <= par - 1
-                if let par = hole.par,
-                   let firstPutt = putts.min(by: { $0.strokeNumber < $1.strokeNumber }) {
-                    girResults.append(firstPutt.strokeNumber <= par - 1)
-                }
-
-                // Tee-shot deviation: par 4/5, tee shot has heading, hole has a coordinate
-                if let par = hole.par, par >= 4,
-                   let teeShot = nonPenalty.first,
-                   let heading = teeShot.trajectoryHeading,
-                   let holeCoord = hole.coordinate {
-                    let idealBearing = MapCalculations.calculateBearing(from: teeShot.coordinate, to: holeCoord)
-                    let deviation = angleDiff(heading, idealBearing)
-                    deviations.append(abs(deviation))
-                }
-
-                // Shot distances: GPS delta between consecutive non-penalty strokes.
-                // stroke[i].coordinate → stroke[i+1].coordinate is the distance travelled,
-                // which equals the landing distance of shot i.
-                for i in 0..<(nonPenalty.count - 1) {
-                    let from = nonPenalty[i]
-                    let to   = nonPenalty[i + 1]
+            // MARK: Club distances — every round contributes, partials included.
+            // GPS delta between consecutive non-penalty strokes: stroke[i] →
+            // stroke[i+1] is the distance travelled, i.e. shot i's landing
+            // distance.
+            for hole in counted {
+                for i in 0..<max(0, hole.nonPenalty.count - 1) {
+                    let from = hole.nonPenalty[i]
+                    let to   = hole.nonPenalty[i + 1]
                     let yards = metersToYards(
                         CLLocation(latitude: from.latitude, longitude: from.longitude)
                             .distance(from: CLLocation(latitude: to.latitude, longitude: to.longitude))
@@ -109,17 +139,44 @@ struct StatsEngine {
                 }
             }
 
-            puttCountsPerRound.append(roundPutts)
+            // Everything below is scoring — qualifying rounds only.
+            guard qualifies else { continue }
+
+            let roundPar = counted.reduce(0) { $0 + $1.par }
+            let roundStrokes = counted.reduce(0) { $0 + $1.nonPenalty.count }
+            var roundPutts = 0
+
+            for hole in counted {
+                let putts = hole.strokes.filter { isPutt($0) }
+                roundPutts += putts.count
+                puttCountsPerHole.append(Double(putts.count))
+
+                // GIR: first putt stroke number <= par - 1
+                if let firstPutt = putts.first {
+                    girResults.append(firstPutt.strokeNumber <= hole.par - 1)
+                }
+
+                // Tee-shot deviation: par 4/5, tee shot has heading, hole has
+                // a coordinate.
+                if hole.par >= 4,
+                   let teeShot = hole.nonPenalty.first,
+                   let heading = teeShot.trajectoryHeading,
+                   let holeCoord = holes(for: round)[hole.number]?.coordinate {
+                    let idealBearing = MapCalculations.calculateBearing(from: teeShot.coordinate, to: holeCoord)
+                    deviations.append(abs(angleDiff(heading, idealBearing)))
+                }
+            }
+
+            scoresByLength[counted.count, default: []].append(roundStrokes - roundPar)
+            puttsByLength[counted.count, default: []].append(roundPutts)
+            scoresByCourse[round.courseId, default: []].append(roundStrokes - roundPar)
+            scoredCountByCourse[round.courseId, default: 0] += 1
         }
 
-        // MARK: Aggregate — scoring
-        if !scoresVsPar.isEmpty {
-            stats.avgScoreVsPar = Double(scoresVsPar.reduce(0, +)) / Double(scoresVsPar.count)
-            stats.bestScoreVsPar = scoresVsPar.min()
-        }
-        if !puttCountsPerRound.isEmpty {
-            stats.avgPuttsPerRound = Double(puttCountsPerRound.reduce(0, +)) / Double(puttCountsPerRound.count)
-        }
+        // MARK: Aggregate — scoring, per round length
+        stats.scoring18 = scoringStats(scores: scoresByLength[18] ?? [], putts: puttsByLength[18] ?? [])
+        stats.scoring9  = scoringStats(scores: scoresByLength[9]  ?? [], putts: puttsByLength[9]  ?? [])
+
         if !puttCountsPerHole.isEmpty {
             stats.avgPuttsPerHole = puttCountsPerHole.reduce(0, +) / Double(puttCountsPerHole.count)
         }
@@ -145,24 +202,19 @@ struct StatsEngine {
         }
 
         // MARK: Aggregate — per course
+        // `roundsPlayed` counts every visit; scoring comes from the qualifying
+        // subset only, so a course with nothing but partials shows its visit
+        // count and no score.
         let roundsByCourse = Dictionary(grouping: rounds, by: { $0.courseId })
         for (courseId, courseRounds) in roundsByCourse {
-            let courseName = courseRounds.first?.courseName ?? "Unknown"
-            var courseScores: [Int] = []
-            for r in courseRounds {
-                let pHoles = Set(r.strokes.map { $0.holeNumber })
-                let par = r.holes.filter { pHoles.contains($0.number) }.compactMap { $0.par }.reduce(0, +)
-                guard par > 0 else { continue }
-                let strokes = r.strokes.filter { !$0.isPenalty }.count
-                courseScores.append(strokes - par)
-            }
             var cs = CourseStats(
                 courseId: courseId,
-                courseName: courseName,
+                courseName: courseRounds.first?.courseName ?? "Unknown",
                 roundsPlayed: courseRounds.count,
+                scoredRounds: scoredCountByCourse[courseId] ?? 0,
                 lastPlayed: courseRounds.map { $0.date }.max() ?? Date()
             )
-            if !courseScores.isEmpty {
+            if let courseScores = scoresByCourse[courseId], !courseScores.isEmpty {
                 cs.avgScoreVsPar = Double(courseScores.reduce(0, +)) / Double(courseScores.count)
                 cs.bestScoreVsPar = courseScores.min()
                 cs.worstScoreVsPar = courseScores.max()
@@ -173,7 +225,19 @@ struct StatsEngine {
         return stats
     }
 
-    // MARK: - Distance stats helper
+    // MARK: - Aggregation helpers
+
+    private static func scoringStats(scores: [Int], putts: [Int]) -> ScoringStats {
+        guard !scores.isEmpty else { return ScoringStats() }
+        var s = ScoringStats()
+        s.roundCount = scores.count
+        s.avgScoreVsPar = Double(scores.reduce(0, +)) / Double(scores.count)
+        s.bestScoreVsPar = scores.min()
+        if !putts.isEmpty {
+            s.avgPuttsPerRound = Double(putts.reduce(0, +)) / Double(putts.count)
+        }
+        return s
+    }
 
     private static func makeDistanceStats(id: UUID, name: String, samples: [Double]) -> ClubDistanceStats {
         let sorted = samples.sorted()

@@ -40,6 +40,50 @@ final class ClubTypeData {
     }
 }
 
+// MARK: - Canonical bag order
+
+extension ClubTypeData {
+    /// The one true club-type order, Drive → Putt. Derived from
+    /// `defaultClubTypes()` so there is a single declaration and no parallel
+    /// list to drift out of sync.
+    ///
+    /// Ordering is deliberately NOT by `averageDistance`: a user-created type
+    /// has no distance and would sort to the bottom arbitrarily, and editing a
+    /// club's distance would silently reshuffle the whole bag.
+    static let canonicalOrder: [String] = defaultClubTypes().map(\.name)
+
+    /// Parallel to `canonicalOrder` — used to slot unrecognized types into the
+    /// right neighborhood rather than dumping them at the end.
+    private static let canonicalDistances: [Int] = defaultClubTypes().map { $0.averageDistance ?? 0 }
+
+    /// Position in the canonical bag order.
+    ///
+    /// A type whose name isn't in the canonical list — user-created, or a
+    /// built-in the user renamed — is slotted by its `averageDistance` against
+    /// the canonical ladder, landing between its neighbors instead of at the
+    /// bottom. Types with neither a known name nor a distance sort last.
+    var bagOrderIndex: Double {
+        if let i = Self.canonicalOrder.firstIndex(of: name) { return Double(i) }
+        guard let d = averageDistance else { return Double(Self.canonicalOrder.count) }
+        let slot = Self.canonicalDistances.firstIndex(where: { $0 < d }) ?? Self.canonicalDistances.count
+        return Double(slot) - 0.5
+    }
+}
+
+extension Array where Element == ClubTypeData {
+    /// Drive → Putt, with unrecognized types slotted by distance. Apply this
+    /// wherever club types are loaded so every consumer inherits one order —
+    /// SwiftData fetches have no inherent ordering and come back in insertion
+    /// order, which is what left the crown and the stats list jumbled.
+    func inBagOrder() -> [ClubTypeData] {
+        sorted {
+            let (a, b) = ($0.bagOrderIndex, $1.bagOrderIndex)
+            if a != b { return a < b }
+            return $0.name < $1.name
+        }
+    }
+}
+
 @Model
 final class ClubData {
     @Attribute(.unique) var id: UUID

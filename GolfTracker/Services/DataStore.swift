@@ -567,6 +567,7 @@ class DataStore: ObservableObject {
     func rebuildPlayerStats() {
         playerStats = StatsEngine.compute(
             rounds: rounds,
+            courses: courses,
             clubs: availableClubs,
             clubTypes: clubTypes
         )
@@ -576,7 +577,9 @@ class DataStore: ObservableObject {
 
     func loadClubTypes() {
         guard let context = context else { return }
-        clubTypes = (try? context.fetch(FetchDescriptor<ClubTypeData>())) ?? []
+        // Canonical bag order at the load site, so every consumer (Stats,
+        // club-set editor, prediction) inherits one order for free.
+        clubTypes = ((try? context.fetch(FetchDescriptor<ClubTypeData>())) ?? []).inBagOrder()
     }
 
     func saveClubTypes() {

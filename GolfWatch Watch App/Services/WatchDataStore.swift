@@ -675,17 +675,13 @@ class WatchDataStore: ObservableObject {
     func refreshClubsCache() {
         guard let context = context else { return }
         let fetchedClubsRaw = (try? context.fetch(FetchDescriptor<ClubData>())) ?? []
-        // Sort club types by average distance descending so the crown
-        // walks Drive (longest) → Putt (shortest), the natural bag order.
-        // SwiftData fetches have no inherent ordering and returns rows
-        // in insertion order; without sorting, the crown was jumbled.
-        let fetchedTypes = ((try? context.fetch(FetchDescriptor<ClubTypeData>())) ?? [])
-            .sorted { (a, b) in
-                let da = a.averageDistance ?? 0
-                let db = b.averageDistance ?? 0
-                if da != db { return da > db }
-                return a.name < b.name
-            }
+        // Canonical bag order (Drive → Putt) so the crown has a stable,
+        // predictable progression. SwiftData fetches have no inherent
+        // ordering and return rows in insertion order; without sorting, the
+        // crown was jumbled. This used to sort by averageDistance descending,
+        // which broke for user-created types (no distance → sorted to the
+        // bottom) and reshuffled the bag whenever a distance was edited.
+        let fetchedTypes = ((try? context.fetch(FetchDescriptor<ClubTypeData>())) ?? []).inBagOrder()
         let fetchedSets  = (try? context.fetch(FetchDescriptor<ClubSet>())) ?? []
         // Order clubs by their type's averageDistance so iterating
         // availableClubs (e.g. for any UI that doesn't go through

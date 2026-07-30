@@ -38,12 +38,10 @@ struct ClubSetEditorView: View {
                         Label("Add New Type", systemImage: "plus.circle.fill")
                     }
 
-                    // Display in the same canonical order the watch uses
-                    // (longest average-distance first, putter last). Without
-                    // this, SwiftData's natural fetch order shows types in
-                    // some arbitrary insertion order that doesn't match the
-                    // watch and isn't useful to the user.
-                    ForEach(store.clubTypes.sorted { ($0.averageDistance ?? 0) > ($1.averageDistance ?? 0) }) { clubType in
+                    // `store.clubTypes` is already in canonical bag order —
+                    // DataStore.loadClubTypes applies `inBagOrder()` at the
+                    // load site, so no local sort is needed here.
+                    ForEach(store.clubTypes) { clubType in
                         let isSelected = typeSelections.contains(where: { $0.typeId == clubType.id })
                         let activeClub = typeSelections.first(where: { $0.typeId == clubType.id })
                             .flatMap { $0.activeClubId }
