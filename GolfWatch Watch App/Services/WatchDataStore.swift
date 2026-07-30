@@ -541,8 +541,9 @@ class WatchDataStore: ObservableObject {
             existing.name = t.name
             existing.isDefault = t.is_default ?? false
             existing.averageDistance = t.average_distance
+            existing.sortOrder = t.sort_order
         } else {
-            context.insert(ClubTypeData(id: id, name: t.name, isDefault: t.is_default ?? false, averageDistance: t.average_distance))
+            context.insert(ClubTypeData(id: id, name: t.name, isDefault: t.is_default ?? false, averageDistance: t.average_distance, sortOrder: t.sort_order))
         }
     }
 

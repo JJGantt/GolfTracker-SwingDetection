@@ -604,10 +604,12 @@ final class RealtimeSync {
         let name = record["name"]?.stringValue ?? ""
         let isDefault = record["is_default"]?.boolValue ?? false
         let avg = record["average_distance"]?.intValue
+        let sortOrder = record["sort_order"]?.intValue
         if let existing = existing {
             existing.name = name; existing.isDefault = isDefault; existing.averageDistance = avg
+            existing.sortOrder = sortOrder
         } else {
-            context.insert(ClubTypeData(id: id, name: name, isDefault: isDefault, averageDistance: avg))
+            context.insert(ClubTypeData(id: id, name: name, isDefault: isDefault, averageDistance: avg, sortOrder: sortOrder))
         }
     }
 

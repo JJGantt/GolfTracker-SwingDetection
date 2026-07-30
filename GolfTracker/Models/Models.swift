@@ -10,16 +10,29 @@ final class ClubTypeData {
     var name: String
     var isDefault: Bool
     var averageDistance: Int?
+    /// User-controlled position in the bag, 0-based. Authoritative once set —
+    /// the drag-to-reorder in `ClubSetEditorView` writes it and it syncs to
+    /// Supabase (`club_types.sort_order`).
+    ///
+    /// Optional so SwiftData can migrate existing stores without a mapping
+    /// model. `nil` means "never ordered on this device"; `DataStore
+    /// .loadClubTypes` backfills those from the canonical order on first load,
+    /// so nil is transient, not a steady state.
+    var sortOrder: Int?
 
-    init(id: UUID = UUID(), name: String, isDefault: Bool, averageDistance: Int? = nil) {
+    init(id: UUID = UUID(), name: String, isDefault: Bool, averageDistance: Int? = nil, sortOrder: Int? = nil) {
         self.id = id
         self.name = name
         self.isDefault = isDefault
         self.averageDistance = averageDistance
+        self.sortOrder = sortOrder
     }
 
+    /// The built-in catalog, already in bag order. `sortOrder` is stamped from
+    /// the array position so a fresh install is ordered from the first launch
+    /// rather than relying on the load-time backfill.
     static func defaultClubTypes() -> [ClubTypeData] {
-        return [
+        let types = [
             ClubTypeData(name: "Drive", isDefault: true, averageDistance: 245),
             ClubTypeData(name: "3-Wood", isDefault: true, averageDistance: 225),
             ClubTypeData(name: "5-Wood", isDefault: true, averageDistance: 207),
@@ -37,50 +50,79 @@ final class ClubTypeData {
             ClubTypeData(name: "Lob", isDefault: true, averageDistance: 45),
             ClubTypeData(name: "Putt", isDefault: true, averageDistance: 10)
         ]
+        types.renumberBagOrder()
+        return types
     }
 }
 
 // MARK: - Canonical bag order
 
 extension ClubTypeData {
-    /// The one true club-type order, Drive → Putt. Derived from
+    /// The DEFAULT club-type order, Drive → Putt. Derived from
     /// `defaultClubTypes()` so there is a single declaration and no parallel
     /// list to drift out of sync.
     ///
-    /// Ordering is deliberately NOT by `averageDistance`: a user-created type
-    /// has no distance and would sort to the bottom arbitrarily, and editing a
-    /// club's distance would silently reshuffle the whole bag.
+    /// This is only the starting point. Once `sortOrder` is assigned, the
+    /// user's own arrangement wins — including for types they created, which
+    /// is the whole reason the order is persisted rather than computed.
     static let canonicalOrder: [String] = defaultClubTypes().map(\.name)
 
     /// Parallel to `canonicalOrder` — used to slot unrecognized types into the
     /// right neighborhood rather than dumping them at the end.
     private static let canonicalDistances: [Int] = defaultClubTypes().map { $0.averageDistance ?? 0 }
 
-    /// Position in the canonical bag order.
+    /// Fallback position for a type that has never been assigned a
+    /// `sortOrder`. Deliberately NOT a plain `averageDistance` sort: a
+    /// user-created type has no distance and would land at the bottom, and
+    /// editing a club's distance would silently reshuffle the whole bag.
     ///
-    /// A type whose name isn't in the canonical list — user-created, or a
-    /// built-in the user renamed — is slotted by its `averageDistance` against
-    /// the canonical ladder, landing between its neighbors instead of at the
-    /// bottom. Types with neither a known name nor a distance sort last.
-    var bagOrderIndex: Double {
+    /// A type whose name isn't canonical — user-created, or a built-in the
+    /// user renamed — is slotted by its `averageDistance` against the
+    /// canonical ladder, landing between its neighbors. Types with neither a
+    /// known name nor a distance sort last.
+    var defaultBagOrderIndex: Double {
         if let i = Self.canonicalOrder.firstIndex(of: name) { return Double(i) }
         guard let d = averageDistance else { return Double(Self.canonicalOrder.count) }
         let slot = Self.canonicalDistances.firstIndex(where: { $0 < d }) ?? Self.canonicalDistances.count
         return Double(slot) - 0.5
     }
+
+    /// Effective sort key. The user's persisted `sortOrder` when present,
+    /// otherwise the default position. Unordered types sort *after* ordered
+    /// ones so a freshly-synced custom type appends rather than jumping the
+    /// user's arrangement.
+    var bagOrderKey: (Int, Double, String) {
+        sortOrder.map { (0, Double($0), name) } ?? (1, defaultBagOrderIndex, name)
+    }
 }
 
 extension Array where Element == ClubTypeData {
-    /// Drive → Putt, with unrecognized types slotted by distance. Apply this
-    /// wherever club types are loaded so every consumer inherits one order —
-    /// SwiftData fetches have no inherent ordering and come back in insertion
-    /// order, which is what left the crown and the stats list jumbled.
+    /// The user's bag order, falling back to Drive → Putt for anything never
+    /// arranged. Apply this wherever club types are loaded so every consumer
+    /// inherits one order — SwiftData fetches have no inherent ordering and
+    /// come back in insertion order, which is what left the crown and the
+    /// stats list jumbled.
     func inBagOrder() -> [ClubTypeData] {
-        sorted {
-            let (a, b) = ($0.bagOrderIndex, $1.bagOrderIndex)
-            if a != b { return a < b }
-            return $0.name < $1.name
+        sorted { a, b in
+            let (ka, kb) = (a.bagOrderKey, b.bagOrderKey)
+            if ka.0 != kb.0 { return ka.0 < kb.0 }
+            if ka.1 != kb.1 { return ka.1 < kb.1 }
+            return ka.2 < kb.2
         }
+    }
+
+    /// Stamp `sortOrder` to match this array's current order. Returns true if
+    /// anything changed, so callers can skip a pointless save + sync.
+    /// Not `mutating` — `ClubTypeData` is a reference type, so this writes
+    /// through to the elements without touching the array itself.
+    @discardableResult
+    func renumberBagOrder() -> Bool {
+        var changed = false
+        for (index, type) in enumerated() where type.sortOrder != index {
+            type.sortOrder = index
+            changed = true
+        }
+        return changed
     }
 }
 
@@ -639,6 +681,7 @@ struct ClubTypeDTO: Decodable {
     let name: String
     let is_default: Bool?
     let average_distance: Int?
+    let sort_order: Int?
 }
 
 struct ClubDTO: Decodable {

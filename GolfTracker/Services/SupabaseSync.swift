@@ -49,6 +49,7 @@ final class SupabaseSync {
             "name": .string(t.name),
             "is_default": .bool(t.isDefault),
             "average_distance": t.averageDistance.map(AnyCodableValue.int) ?? .null,
+            "sort_order": t.sortOrder.map(AnyCodableValue.int) ?? .null,
             "updated_at": .string(iso(Date()))
         ]
         upsert(table: "club_types", values: body, onConflict: "id")

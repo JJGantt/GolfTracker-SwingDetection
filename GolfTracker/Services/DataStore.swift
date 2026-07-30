@@ -476,7 +476,7 @@ class DataStore: ObservableObject {
             let id = t.id
             let descriptor = FetchDescriptor<ClubTypeData>(predicate: #Predicate { $0.id == id })
             if (try? context.fetch(descriptor))?.first == nil {
-                context.insert(ClubTypeData(id: id, name: t.name, isDefault: t.is_default ?? false, averageDistance: t.average_distance))
+                context.insert(ClubTypeData(id: id, name: t.name, isDefault: t.is_default ?? false, averageDistance: t.average_distance, sortOrder: t.sort_order))
             }
         }
         for c in clubs {
@@ -577,9 +577,17 @@ class DataStore: ObservableObject {
 
     func loadClubTypes() {
         guard let context = context else { return }
-        // Canonical bag order at the load site, so every consumer (Stats,
-        // club-set editor, prediction) inherits one order for free.
+        // Bag order at the load site, so every consumer (Stats, club-set
+        // editor, prediction, watch crown) inherits one order for free.
         clubTypes = ((try? context.fetch(FetchDescriptor<ClubTypeData>())) ?? []).inBagOrder()
+        // Backfill: types that predate `sortOrder` (or arrived from a device
+        // that never set it) land in canonical position above, then get
+        // stamped so the order is authoritative from here on. One-time —
+        // `renumberBagOrder` reports no change once everything is numbered.
+        if clubTypes.renumberBagOrder() {
+            try? context.save()
+            for t in clubTypes { SupabaseSync.shared.upsertClubType(t) }
+        }
     }
 
     func saveClubTypes() {
@@ -1534,8 +1542,11 @@ class DataStore: ObservableObject {
 
     // MARK: - Club Type Management
 
+    /// New user-created type. Lands at the end of the bag; the user drags it
+    /// where they want it, and that position sticks.
     func addClubType(name: String) {
-        let clubType = ClubTypeData(name: name, isDefault: false)
+        let nextOrder = (clubTypes.compactMap(\.sortOrder).max() ?? -1) + 1
+        let clubType = ClubTypeData(name: name, isDefault: false, sortOrder: nextOrder)
         clubTypes.append(clubType)
         saveClubTypes()
         dprint("🏌️ Added club type: \(name), total types: \(clubTypes.count)")
@@ -1567,9 +1578,15 @@ class DataStore: ObservableObject {
         saveClubTypes()
     }
 
+    /// Drag-to-reorder from the club-type list. Renumbers `sortOrder` across
+    /// the whole array and pushes it up — before this persisted, the drag
+    /// mutated the in-memory array only and the arrangement evaporated on the
+    /// next SwiftData fetch.
     func moveClubType(from source: IndexSet, to destination: Int) {
         clubTypes.move(fromOffsets: source, toOffset: destination)
+        clubTypes.renumberBagOrder()
         saveClubTypes()
+        for t in clubTypes { SupabaseSync.shared.upsertClubType(t) }
     }
 
     // MARK: - Club Management
