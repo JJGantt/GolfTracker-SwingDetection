@@ -29,6 +29,15 @@ private struct StartRoundView: View {
             VStack(spacing: 24) {
                 Spacer()
 
+                // Location-denied banner. Lives here because this is the
+                // screen that can't work without location — Start Round reads
+                // GPS immediately. It used to be mounted on HomeView, which
+                // was removed when the tab bar became Stats/Play/History/
+                // Settings, leaving the denied state with no guidance at all:
+                // Start Round just fell through to the name prompt.
+                LocationPermissionBanner()
+                    .padding(.horizontal, 20)
+
                 Image(systemName: "figure.golf")
                     .font(.system(size: 64))
                     .foregroundColor(.green)

@@ -55,9 +55,9 @@ Legend: `[ ]` not started · `[~]` in progress / partial · `[x]` done · `[?]` 
 - [ ] **Archive builds cleanly** — from Xcode, `Product > Archive` must succeed for both targets. This is what you upload to App Store Connect.
 
 ### User experience
-- [x] **Permission-denied UX** (2026-04-23)
+- [x] **Permission-denied UX** (2026-04-23; location banner re-homed 2026-07-31)
   - [x] Motion: `MotionAuthDeniedView` (pre-existing).
-  - [x] Location: `LocationPermissionBanner` (iOS) on `HomeView` — observes `LocationManager.authorizationStatus`, deep-links to Settings.
+  - [x] Location: `LocationPermissionBanner` (iOS) on the **Play tab** (`PlayTabView`) — observes `LocationManager.authorizationStatus`, deep-links to Settings. It was mounted on `HomeView`, which was deleted when the tab bar became Stats/Play/History/Settings; the banner was therefore **unreachable** and a location-denied user got no guidance at all (Start Round just fell through to the course-name prompt). Now on the screen that actually needs location.
   - [x] HealthKit: `HealthKitBanner` (Watch) on `WatchHomeView` — observes `WorkoutManager.healthKitAuthorizationStatus`, instructs user to re-enable via iPhone Watch app.
 - [x] **First-run onboarding** — permissions primer implemented 2026-04-23. iOS `OnboardingView` primes Location; Watch `WatchOnboardingView` primes Motion + HealthKit. Each primer fires the system prompt inline; deep-links to Settings if previously denied. Gated by `@AppStorage("hasSeenOnboarding")` (iOS) and `@AppStorage("hasSeenWatchOnboarding")` (Watch). Empty state / "Create your first course" CTA deferred — not in v1 scope.
 - [~] **Crash-mid-round recovery** — skipped for v1 (2026-04-23). Audit confirmed every mutation in `DataStore` / `WatchDataStore` calls `saveRounds()` / `saveRound()`; no visible gaps. Rounds will also be backed by Supabase once the round-data pipeline lands.
@@ -188,4 +188,4 @@ After must-haves land: archive, upload to App Store Connect, internal testers fi
 
 ---
 
-**Last updated:** 2026-04-23. Update the date and any relevant rows when items land or change status.
+**Last updated:** 2026-07-31. Update the date and any relevant rows when items land or change status.
