@@ -1822,19 +1822,49 @@ private final class HoleDetectionAnalyzer {
     private let greenColor = (r: 186, g: 232, b: 153)
     private let sandColor = (r: 245, g: 242, b: 218)
     private let sandTolerance = 10
-    private let sandScanRadius = 20
+    /// How far around a blob to look for bunker fill, in METRES. Was a bare
+    /// 20-pixel radius, which silently rescaled with `tilePixelSize` — at
+    /// 1600 px it meant 25 m, at 1024 px the same constant would have meant
+    /// 39 m, quietly widening the search.
+    private let sandScanRadiusMeters: Double = 25.0
     private let sandWeight = 1.0
     private let areaWeight = 0.6
     private let widthWeight = 1.0
 
     private let tileDiameterMeters: Double = 2000.0
     private let tileSpacingMeters: Double = 1800.0
-    private let tilePixelSize = 1600
+    /// 1024 px over a 2000 m tile ≈ 1.95 m/px. Greens are 20-30 m across, so
+    /// this is still ~10 px on the short axis — plenty to segment. Was 1600
+    /// (1.25 m/px), which cost 2.4× the pixels for resolution we never used.
+    private let tilePixelSize = 1024
+    /// Tiles fetched and scanned at once. They're independent, so the old
+    /// sequential loop was pure wall-clock waste — 9 snapshots at ~1.2 s each
+    /// was essentially the whole 13 s run. At 1024 px each tile holds ~4 MB of
+    /// pixels plus its CGImage, so all 9 in flight is ~75 MB peak; at the old
+    /// 1600 px this would have been ~180 MB and genuinely risky on older
+    /// hardware. MapKit may still throttle internally — `snapshotStandardMap`
+    /// retries on `MKError.loadingThrottled` rather than failing the tile.
+    private let maxConcurrentTiles = 9
     private let duplicateDistanceMeters: Double = 18.0
-    private let minimumRawArea = 20
+    /// Smallest blob we'll accept, in SQUARE METRES. Physical rather than a
+    /// pixel count so `tilePixelSize` can change without re-tuning the filter:
+    /// the old bare `20` meant 31 m² at 1600 px but would have meant 76 m² at
+    /// 1024 px, tripling the rejection floor as a side effect of a perf tweak.
+    /// A real green is 400-700 m², so this only ever rejects speckle.
+    private let minimumBlobAreaSquareMeters: Double = 31.0
     private let maxPolygonPoints = 24
     private let diagnosticsTopColorLimit = 10
     private let diagnosticsColorCountThreshold = 1000
+
+    /// Ground resolution of one tile pixel.
+    private var metersPerPixel: Double { tileDiameterMeters / Double(tilePixelSize) }
+    /// The physical thresholds above, converted to pixels for the scan.
+    private var minimumRawArea: Int {
+        max(1, Int((minimumBlobAreaSquareMeters / (metersPerPixel * metersPerPixel)).rounded()))
+    }
+    private var sandScanRadius: Int {
+        max(1, Int((sandScanRadiusMeters / metersPerPixel).rounded()))
+    }
 
     func detect(
         courseId: UUID,
@@ -1846,7 +1876,17 @@ private final class HoleDetectionAnalyzer {
     ) {
         DispatchQueue.global(qos: .userInitiated).async {
             do {
-                let tileCenters = self.buildTileCenters(center: center, coverageRadiusMeters: coverageRadiusMeters)
+                let allTiles = self.buildTileCenters(center: center, coverageRadiusMeters: coverageRadiusMeters)
+                // Skip tiles that can't contribute. A blob whose centroid falls
+                // outside every bounding polygon is discarded after the merge
+                // anyway (see the polygon gate below), so a tile with no
+                // polygon overlap only ever produces rejects. This needs no
+                // more trust in OSM outlines than the existing output gate
+                // already places in them, and the test is bounding-box based,
+                // so any partial overlap keeps the tile.
+                let tileCenters = self.tilesOverlapping(allTiles, polygons: boundingPolygons)
+                let skipped = allTiles.count - tileCenters.count
+
                 var blobs: [HoleDetectionBlob] = []
                 let totalTiles = max(tileCenters.count, 1)
                 var totalGreenPixels = 0
@@ -1854,16 +1894,58 @@ private final class HoleDetectionAnalyzer {
                 var totalSwappedChannelExactPixels = 0
                 var mergedGreenishColorCounts: [UInt32: Int] = [:]
 
-                for (index, tileCenter) in tileCenters.enumerated() {
-                    let progressValue = Double(index) / Double(totalTiles)
-                    progress("Scanning map \(index + 1)/\(totalTiles)...", progressValue)
+                // Tiles are independent, so fetch and scan them concurrently.
+                // `snapshotStandardMap` blocks its thread on a semaphore while
+                // MapKit renders on the main queue, which is why doing these
+                // one at a time cost the entire run.
+                let limiter = DispatchSemaphore(value: self.maxConcurrentTiles)
+                let group = DispatchGroup()
+                let lock = NSLock()
+                var tileResults: [Int: HoleDetectionTileResult] = [:]
+                var tileErrors: [Error] = []
+                var completedTiles = 0
 
-                    let snapshotImage = try self.snapshotStandardMap(center: tileCenter)
-                    let tileResult = self.detectBlobs(
-                        in: snapshotImage,
-                        tileCenter: tileCenter,
-                        tileDiameterMeters: self.tileDiameterMeters
-                    )
+                if skipped > 0 {
+                    progress("Scanning \(tileCenters.count) map tiles (\(skipped) outside course)...", 0.02)
+                } else {
+                    progress("Scanning \(tileCenters.count) map tiles...", 0.02)
+                }
+
+                for (index, tileCenter) in tileCenters.enumerated() {
+                    limiter.wait()
+                    group.enter()
+                    DispatchQueue.global(qos: .userInitiated).async {
+                        defer { limiter.signal(); group.leave() }
+                        do {
+                            let snapshotImage = try self.snapshotStandardMap(center: tileCenter)
+                            let result = self.detectBlobs(
+                                in: snapshotImage,
+                                tileCenter: tileCenter,
+                                tileDiameterMeters: self.tileDiameterMeters
+                            )
+                            lock.lock()
+                            tileResults[index] = result
+                            completedTiles += 1
+                            let done = completedTiles
+                            lock.unlock()
+                            progress("Scanned \(done)/\(totalTiles) tiles...",
+                                     min(0.02 + 0.9 * Double(done) / Double(totalTiles), 0.94))
+                        } catch {
+                            lock.lock(); tileErrors.append(error); completedTiles += 1; lock.unlock()
+                        }
+                    }
+                }
+                group.wait()
+
+                // A tile that failed shouldn't sink the whole course — partial
+                // coverage still places most greens. Only give up when nothing
+                // came back at all.
+                if tileResults.isEmpty, let first = tileErrors.first { throw first }
+
+                // Merge in tile order so the output is deterministic regardless
+                // of which tile finished first.
+                for index in tileCenters.indices {
+                    guard let tileResult = tileResults[index] else { continue }
                     blobs.append(contentsOf: tileResult.blobs)
                     totalGreenPixels += tileResult.greenPixelCount
                     totalGreenishPixels += tileResult.greenishPixelCount
@@ -1871,9 +1953,6 @@ private final class HoleDetectionAnalyzer {
                     for (color, count) in tileResult.greenishColorCounts {
                         mergedGreenishColorCounts[color, default: 0] += count
                     }
-
-                    let tileMessage = "Tile \(index + 1)/\(totalTiles): exact \(tileResult.greenPixelCount) px, greenish \(tileResult.greenishPixelCount) px, swapped \(tileResult.swappedChannelExactCount), blobs \(tileResult.blobs.count)"
-                    progress(tileMessage, min(progressValue + (0.8 / Double(totalTiles)), 0.94))
                 }
 
                 progress("Merging overlaps...", 0.95)
@@ -1934,6 +2013,39 @@ private final class HoleDetectionAnalyzer {
         }
     }
 
+    /// Drop tiles whose footprint doesn't overlap any course outline.
+    ///
+    /// Bounding-box test on both sides, deliberately conservative: a tile that
+    /// clips a polygon at all is kept. Returns every tile unchanged when we
+    /// have no outlines, preserving the radius-only behaviour.
+    private func tilesOverlapping(_ tiles: [CLLocationCoordinate2D],
+                                  polygons: [[CLLocationCoordinate2D]]?) -> [CLLocationCoordinate2D] {
+        guard let polygons = polygons, !polygons.isEmpty else { return tiles }
+
+        // Half a tile, in degrees, at this latitude.
+        let halfLat = (tileDiameterMeters / 2) / 111_000.0
+        var boxes: [(minLat: Double, maxLat: Double, minLon: Double, maxLon: Double)] = []
+        for poly in polygons where !poly.isEmpty {
+            boxes.append((poly.map(\.latitude).min()!, poly.map(\.latitude).max()!,
+                          poly.map(\.longitude).min()!, poly.map(\.longitude).max()!))
+        }
+        guard !boxes.isEmpty else { return tiles }
+
+        let kept = tiles.filter { tile in
+            let halfLon = (tileDiameterMeters / 2) /
+                (111_000.0 * max(cos(tile.latitude * .pi / 180), 0.01))
+            let tMinLat = tile.latitude - halfLat, tMaxLat = tile.latitude + halfLat
+            let tMinLon = tile.longitude - halfLon, tMaxLon = tile.longitude + halfLon
+            return boxes.contains { b in
+                tMinLat <= b.maxLat && tMaxLat >= b.minLat &&
+                tMinLon <= b.maxLon && tMaxLon >= b.minLon
+            }
+        }
+        // Never return nothing — a bad outline shouldn't silently disable
+        // detection for the whole course.
+        return kept.isEmpty ? tiles : kept
+    }
+
     private func buildTileCenters(center: CLLocationCoordinate2D, coverageRadiusMeters: Double) -> [CLLocationCoordinate2D] {
         let tileRadius = tileDiameterMeters / 2
         let neededSteps = Int(ceil(max(0, coverageRadiusMeters - tileRadius) / tileSpacingMeters))
@@ -1950,7 +2062,28 @@ private final class HoleDetectionAnalyzer {
         return centers
     }
 
+    /// One tile, with retry. MapKit rate-limits tile loading, and running the
+    /// tiles concurrently makes `MKError.loadingThrottled` likely rather than
+    /// theoretical — retrying with backoff is cheaper than serialising
+    /// everything to avoid it.
     private func snapshotStandardMap(center: CLLocationCoordinate2D) throws -> CGImage {
+        var lastError: Error?
+        for attempt in 0..<3 {
+            do {
+                return try snapshotStandardMapOnce(center: center)
+            } catch {
+                lastError = error
+                let isThrottle = (error as NSError).domain == MKErrorDomain
+                    && (error as NSError).code == MKError.loadingThrottled.rawValue
+                guard isThrottle, attempt < 2 else { throw error }
+                Thread.sleep(forTimeInterval: 0.6 * Double(attempt + 1))
+            }
+        }
+        throw lastError ?? NSError(domain: "HoleDetectionAnalyzer", code: -2,
+                                   userInfo: [NSLocalizedDescriptionKey: "Map snapshot failed"])
+    }
+
+    private func snapshotStandardMapOnce(center: CLLocationCoordinate2D) throws -> CGImage {
         let options = MKMapSnapshotter.Options()
         options.region = MKCoordinateRegion(
             center: center,
