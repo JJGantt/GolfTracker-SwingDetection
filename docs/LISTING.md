@@ -1,189 +1,125 @@
-# App Store Listing Copy
+# App Store Listing — StrokeSaver
 
-Drafts for every field App Store Connect will ask for. Paste when you create the app record and fill the listing. Review / edit all of this before submitting — it's a first cut.
+**Live in App Store Connect as of 2026-07-31.** This file mirrors what's actually
+pushed; edit here and re-push, don't let them drift.
 
----
+App record: `GolfTrackerJP` internally, **`StrokeSaver`** on the store (`GolfTracker` and
+`Golf Tracker` are both taken). Bundle `com.Jared.GolfTracker`, app id 6756589450.
 
-## Creating the app record
+| Field | Value |
+|---|---|
+| App name | StrokeSaver |
+| Subtitle | GPS, scoring & swing detection |
+| Age rating | 4+ (`userGeneratedContent: false` — valid because user-typed course names are scoped to their creator; see S6/UGC in V1_PUNCHLIST) |
+| Categories | Sports (primary), Health & Fitness (secondary) |
+| Privacy policy | https://jjgantt.github.io/golftracker-site/privacy.html |
+| Support URL | https://jjgantt.github.io/golftracker-site/support.html |
+| Marketing URL | https://jjgantt.github.io/golftracker-site/ |
+| Copyright | 2026 Jared Gantt |
+| Version | 1.0.0 (build 49) |
 
-1. Go to https://appstoreconnect.apple.com → **My Apps** → `+` → **New App**.
-2. Fill in:
-   - **Platform:** iOS (Watch app ships as part of the iOS app — no separate record needed)
-   - **Name:** GolfTracker
-   - **Primary Language:** English (U.S.)
-   - **Bundle ID:** `com.Jared.GolfTracker` (dropdown of registered App IDs)
-   - **SKU:** `golftracker-ios` (internal, any string, never shown to users)
-   - **User Access:** Full Access
-
-That creates the record. Everything below goes into the **App Information** and **Version Information** sections.
-
----
-
-## App Information
-
-- **Category — Primary:** Sports
-- **Category — Secondary:** Health & Fitness
-- **Content Rights:** "No, it does not contain, show, or access third-party content"
-- **Age Rating:** Launch the questionnaire. Answer "None" to every category (no violence, no drugs, no gambling, no profanity, etc.). Result: **4+**.
-- **Privacy Policy URL:** https://jjgantt.github.io/golftracker-site/privacy.html
-
----
-
-## Version Information
-
-### App Name (30 char max)
-
-```
-GolfTracker
-```
-
-### Subtitle (30 char max)
-
-```
-GPS, scoring & swing detection
-```
-
-### Promotional Text (170 char max — editable without new build)
-
-```
-Track every shot of every round. Precise GPS distances, automatic swing detection on Apple Watch, and a live scorecard that syncs between your devices.
-```
-
-### Description (4000 char max)
-
-```
-Track every shot of every round — from tee to green — with shot-by-shot GPS, automatic swing detection, and a full digital scorecard. GolfTracker is built for iPhone and Apple Watch, with a focus on what actually matters during a round.
-
-GPS distances, always
-Get precise distances to the pin on every hole. The map rotates with your heading, zooms as you approach the green, and drops the hole marker exactly where it needs to be.
-
-Automatic swing detection
-GolfTracker records each shot from your wrist. Motion data is analyzed in real time on Apple Watch to identify full swings and putts, log your location, and add the shot to your scorecard — no tapping required.
-
-Live scorecard
-Track pars, strokes, and penalties as you play. Your round syncs between iPhone and Apple Watch so you can check your card from either device without missing a beat.
-
-Map your own courses
-Play any course, not just the famous ones. Add a hole by standing on the green and tapping once. Move pins, set pars, and your course is saved.
-
-Club stats that get smarter
-Every recorded shot feeds a distance profile for each club. See your actual carry distances, by club, across every round you play.
-
-Built for Apple Watch
-A Watch-first round view — large distance readout, Digital Crown club picker, and haptic feedback on every recorded shot. Keep your phone in your bag.
-
-Your data, your account
-Sign in with Apple. Your round history follows you across devices and reinstalls. Delete your data any time from Settings — Apple's privacy standard, end to end.
-```
-
-Character count: ~1700. Room to grow if needed.
-
-### Keywords (100 char max, comma-separated)
+## Keywords (100 max)
 
 ```
 golf,gps,rangefinder,scorecard,distance,swing,watch,stats,course,handicap,tracker,yards
 ```
 
-87 chars. Commas count, spaces also count (none used here intentionally).
-
-### Support URL
+## Promotional text (170 max)
 
 ```
-https://jjgantt.github.io/golftracker-site/support.html
+Track every shot of every round. Precise GPS distances, automatic swing detection on Apple Watch, and a live scorecard that syncs between your devices.
 ```
 
-### Marketing URL (optional)
-
-Leave blank, or point at `https://jjgantt.github.io/golftracker-site/` (the landing page).
-
-### Copyright
+## Description (4000 max — currently 3030)
 
 ```
-© 2026 Jared Gantt
+Every shot of every round, logged from your wrist.
+
+StrokeSaver records your golf automatically. Swing, and the shot goes on your card with its GPS position and the club you used. No tapping between shots. No pulling your phone out of the bag.
+
+
+DISTANCE TO THE PIN
+
+A large, always-visible yardage that updates as you walk. The map turns with you, the pin stays ahead, and the number is there before you've picked a club. Everything a rangefinder gives you, without taking it out or holding it steady.
+
+
+PLAYS-LIKE YARDAGE
+
+An uphill 150 is not a 150. StrokeSaver adjusts for elevation, and the club it suggests knows the difference. Tap to switch between measured and plays-like.
+
+
+MEASURE TO ANYTHING
+
+Drop a target on the carry over water, the front bunker, the corner of the dogleg. Live yardage to any point you choose, for as long as you want it.
+
+
+IT KNOWS A REAL SWING FROM A PRACTICE ONE
+
+Motion sensors on Apple Watch read every movement of your wrist, and only the shots that count reach your card. Waggles and rehearsals are filtered out, so you are not deleting phantom strokes at the end of the hole.
+
+
+AND IT COUNTS YOUR PUTTS
+
+A putting stroke is a fraction of the motion of a full swing, which is why most apps ignore putts entirely and make you tap them in. StrokeSaver reads them at high resolution and tells them apart from full swings, so your putts per round and putts per hole are counted, not estimated.
+
+
+WHERE YOU AIMED, WHERE IT WENT
+
+StrokeSaver reads the direction of your swing from the motion of your wrist and compares it to where the ball finished. See how far off line each shot was, in degrees, and whether you miss the same way every time.
+
+
+YOUR PREVIOUS ROUNDS, GHOSTED UNDER THIS ONE
+
+Turn on the history overlay and your previous rounds at this course appear faintly beneath you on the same hole. The walk you took, the shots you hit, labelled with distances.
+
+
+YOUR CLUB DISTANCES, MEASURED
+
+Not the numbers you wish you hit. Each shot's distance comes from the ground you cover between it and your next one, so every club builds a real distance profile, shown with the sample size behind it.
+
+
+A CARD THAT KEEPS UP
+
+Strokes and putts land on your card as they happen. Add a penalty with a tap where it happened. Everything syncs between iPhone and Apple Watch, so you can check the card from either one.
+
+
+ANY COURSE, INCLUDING YOURS
+
+Play the municipal nobody has mapped. StrokeSaver finds course layouts automatically where they exist, and where they don't you drop a pin on the green and it remembers. Name it once and it's yours from then on.
+
+
+HOLE BY HOLE, ROUND AFTER ROUND
+
+See which holes actually cost you strokes at each course you play, how far over par they run, and how many putts you leave there.
+
+
+BUILT FOR THE WATCH
+
+A large distance readout, Digital Crown club selection, and a haptic on every shot recorded. Keep the phone in the bag.
+
+
+PRIVATE BY DEFAULT
+
+Sign in with Apple. Your rounds follow you across devices. Delete everything from Settings whenever you want.
 ```
 
-### Version
+## Copy rules that shaped this
 
-```
-0.9.0
-```
+- **Nothing that hasn't shipped.** Multiplayer is deliberately absent: it is code-complete
+  but has never been run by two people.
+- **No hedging.** An earlier draft said the slope data "gets better the more it's played",
+  which implies it starts bad. Cut.
+- **Don't explain the system.** The plays-like section briefly described the barometer and
+  the shared height map. Users don't need the mechanism, they need the benefit.
+- **Don't overclaim timing.** The opening says a shot lands on the card with its position
+  and club, NOT its distance — distance isn't known until the next shot is recorded.
+- **Penalties are manual.** Strokes and putts are automatic; penalties are tapped in.
+- No em-dashes.
 
-(Matches `CFBundleShortVersionString` in Info.plist. Increment in Xcode when you change the version for a release.)
+## Still outstanding
 
----
+**Screenshots — the only remaining blocker.** Required: 6.9" iPhone (1320x2868), 6.5"
+iPhone (1242x2688), Apple Watch. Minimum 3 per size.
 
-## Review notes (optional but speeds review)
-
-Apple's reviewer reads this. Short note explaining how to exercise the app.
-
-```
-GolfTracker uses Apple Sign In for authentication. Motion-based swing detection requires the Apple Watch. To test:
-1. Sign in with any Apple ID.
-2. Grant Location, Motion, and HealthKit permissions when prompted.
-3. On iPhone, tap "Manage Clubs" to see the default club set, then go to the Courses tab to create a course.
-4. Start a round — the iPhone shows a live map; the Apple Watch app mirrors distances and records detected swings.
-
-No demo account needed. Data deletion is available in Settings (gear icon, top-right of Home).
-```
-
-### Contact Information
-
-- **First Name / Last Name:** Jared Gantt
-- **Phone:** _(your number)_
-- **Email:** jared.gantt+golftracker@gmail.com
-
-### Demo Account
-
-Not applicable — Apple Sign In, no password-based accounts.
-
----
-
-## Screenshots
-
-Required sizes for 2026 submission (per Apple):
-
-- **6.9" iPhone** (iPhone 16 Pro Max / iPhone 17 Pro Max) — **1320 × 2868 px** — required
-- **6.5" iPhone** (iPhone 11 Pro Max / iPhone XS Max) — **1242 × 2688 px** — required
-- **Apple Watch** — Series 10 (46mm) — **476 × 600 px** — required for Watch apps
-
-Minimum 3 per size, maximum 10. Aim for 5 that tell the product story.
-
-### Suggested shot list
-
-iPhone:
-1. Active round map — distance readout, hole marker visible
-2. Live scorecard view — mid-round, some holes played
-3. Stats dashboard — club distance distributions
-4. Home screen — clean first-impression, Manage Clubs + gear icon visible
-5. Course editor — dropping pins on a hole
-
-Apple Watch:
-1. Round view with big distance readout
-2. Club picker (Digital Crown)
-3. Stroke-recorded haptic / confirmation state
-4. Scorecard on the watch
-5. Home screen
-
-### How to capture
-
-- **Simulator:** `Device → Screenshot` (⌘S) while running the relevant sim. Exports to Desktop at the exact required pixel size.
-- **Real device:** physical screenshot buttons, AirDrop to Mac. iPhone 16 Pro Max and iPhone 11 Pro Max both available as simulators in current Xcode, so simulators alone cover it.
-
-For the Watch simulator: `Device → Screenshot` → exports at 410×502 (Series 10) which App Store Connect accepts because it auto-scales — but to be safe, run the Series 10 46mm simulator specifically.
-
----
-
-## Pricing
-
-- **Price:** Free (or pick a tier from the dropdown)
-- **Availability:** All countries/regions by default
-
----
-
-## What's New in This Version (for version 0.9.0)
-
-```
-First public release.
-```
-
-For subsequent versions, use bullet-style release notes — "Fixed X. Improved Y. Added Z."
+Capture from Jared's device, not a fresh install: elevation and the ghost overlay only
+render on courses with existing history, so a clean install shows neither.

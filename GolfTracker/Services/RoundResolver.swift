@@ -291,14 +291,22 @@ final class RoundResolver {
         let minLon = coordinate.longitude - lonDelta
         let maxLon = coordinate.longitude + lonDelta
 
-        let rows: [SharedCourseRow] = try await supabase.from("courses")
+        // A course whose name a user typed (no `osm_id`) is only ever offered
+        // back to the person who named it. Those names are user-generated
+        // content and this query is unscoped by user, so without the filter
+        // one player's typed name would appear in every nearby player's course
+        // picker — unmoderated, unreportable, unblockable. Courses carrying an
+        // `osm_id` are named from OSM / GolfCourseAPI, so they stay shared.
+        let uid = SupabaseManager.shared.auth.currentUser?.id.uuidString
+        var query = supabase.from("courses")
             .select("id,name,center_lat,center_lon,osm_id,external_course_id,osm_polygons")
             .gte("center_lat", value: minLat)
             .lte("center_lat", value: maxLat)
             .gte("center_lon", value: minLon)
             .lte("center_lon", value: maxLon)
-            .execute()
-            .value
+        query = uid.map { query.or("osm_id.not.is.null,created_by.eq.\($0)") }
+            ?? query.not("osm_id", operator: .is, value: "null")
+        let rows: [SharedCourseRow] = try await query.execute().value
 
         let userLoc = CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude)
         let candidates: [CourseCandidate] = rows.compactMap { row in
@@ -480,15 +488,23 @@ final class RoundResolver {
     /// target. `center_lat`/`center_lon` are what `fetchSharedCoursesNear`
     /// matches on, so storing them is what makes the course re-findable on the
     /// next visit — that's the entire point of naming it.
+    /// `created_by` is what keeps this name private. A user-typed course name
+    /// is user-generated content, and `fetchSharedCoursesNear` returns every
+    /// row in the bounding box — without an owner it would surface to every
+    /// other player nearby, with no moderation, reporting or blocking. Course
+    /// names sourced from OSM / GolfCourseAPI are authored data and stay
+    /// shared; only names a person typed are scoped to that person.
     func insertUserNamedCourse(id: UUID, name: String, center: CLLocationCoordinate2D) {
         struct Row: Encodable {
             let id: String
             let name: String
             let center_lat: Double
             let center_lon: Double
+            let created_by: String?
         }
         let row = Row(id: id.uuidString, name: name,
-                      center_lat: center.latitude, center_lon: center.longitude)
+                      center_lat: center.latitude, center_lon: center.longitude,
+                      created_by: SupabaseManager.shared.auth.currentUser?.id.uuidString)
         Task {
             do {
                 try await supabase.from("courses").upsert(row, onConflict: "id").execute()
