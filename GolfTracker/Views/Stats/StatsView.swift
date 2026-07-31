@@ -159,38 +159,48 @@ struct StatsView: View {
         return AnyView(
             Section("By Course") {
                 ForEach(courses, id: \.courseId) { cs in
-                    VStack(alignment: .leading, spacing: 4) {
-                        HStack {
-                            Text(cs.courseName)
-                                .font(.headline)
-                            Spacer()
-                            Text("\(cs.roundsPlayed) round\(cs.roundsPlayed == 1 ? "" : "s")")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
+                    // Tapping through is the only route to rename or delete a
+                    // course, so this link is load-bearing, not just polish.
+                    if let course = store.courses.first(where: { $0.id == cs.courseId }) {
+                        NavigationLink {
+                            CourseDetailView(store: store, course: course)
+                        } label: {
+                            courseRow(cs)
                         }
-                        HStack(spacing: 16) {
-                            if let avg = cs.avgScoreVsPar {
-                                Label(
-                                    "Avg \(formatScore(avg))",
-                                    systemImage: "chart.line.uptrend.xyaxis"
-                                )
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                            }
-                            if let best = cs.bestScoreVsPar {
-                                Label(
-                                    "Best \(formatScore(Double(best)))",
-                                    systemImage: "trophy"
-                                )
-                                .font(.caption)
-                                .foregroundStyle(best < 0 ? .green : .secondary)
-                            }
-                        }
+                    } else {
+                        // Round exists but its course row didn't sync — show it
+                        // rather than dropping the history, just not tappable.
+                        courseRow(cs)
                     }
-                    .padding(.vertical, 2)
                 }
             }
         )
+    }
+
+    private func courseRow(_ cs: CourseStats) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                Text(cs.courseName)
+                    .font(.headline)
+                Spacer()
+                Text("\(cs.roundsPlayed) round\(cs.roundsPlayed == 1 ? "" : "s")")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            HStack(spacing: 16) {
+                if let avg = cs.avgScoreVsPar {
+                    Label("Avg \(formatScore(avg))", systemImage: "chart.line.uptrend.xyaxis")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                if let best = cs.bestScoreVsPar {
+                    Label("Best \(formatScore(Double(best)))", systemImage: "trophy")
+                        .font(.caption)
+                        .foregroundStyle(best < 0 ? .green : .secondary)
+                }
+            }
+        }
+        .padding(.vertical, 2)
     }
 
     // MARK: - Footer

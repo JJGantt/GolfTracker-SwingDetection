@@ -28,6 +28,17 @@ struct ScoringStats: Codable {
     var isEmpty: Bool { roundCount == 0 }
 }
 
+/// How one hole at one course has played across qualifying rounds.
+struct HoleStats: Codable {
+    var holeNumber: Int
+    var par: Int
+    var timesPlayed: Int
+    var avgStrokes: Double
+    var avgPutts: Double
+    /// Positive = this hole costs strokes. The headline "which holes hurt".
+    var avgVsPar: Double { avgStrokes - Double(par) }
+}
+
 struct CourseStats: Codable {
     var courseId: UUID
     var courseName: String
@@ -39,6 +50,14 @@ struct CourseStats: Codable {
     var bestScoreVsPar: Int?
     var worstScoreVsPar: Int?
     var lastPlayed: Date
+    /// Per-hole breakdown, keyed by hole number. Qualifying rounds only, so it
+    /// stays consistent with the scoring numbers above.
+    var holeStats: [Int: HoleStats] = [:]
+
+    /// Holes ordered by how many strokes over par they cost, worst first.
+    var toughestHoles: [HoleStats] {
+        holeStats.values.sorted { $0.avgVsPar > $1.avgVsPar }
+    }
 }
 
 struct PlayerStats: Codable {

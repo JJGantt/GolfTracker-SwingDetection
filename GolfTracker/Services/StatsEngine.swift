@@ -110,6 +110,8 @@ struct StatsEngine {
         var clubSamples: [UUID: [Double]] = [:]       // clubId → [yards]
         var scoredCountByCourse: [UUID: Int] = [:]
         var scoresByCourse: [UUID: [Int]] = [:]
+        /// courseId → holeNumber → (par, strokes samples, putts samples)
+        var holeHistoryByCourse: [UUID: [Int: (par: Int, strokes: [Int], putts: [Int])]] = [:]
 
         for round in rounds {
             let counted = countedHoles(in: round, holesByNumber: holes(for: round))
@@ -154,6 +156,15 @@ struct StatsEngine {
                 if let firstPutt = putts.first {
                     girResults.append(firstPutt.strokeNumber <= hole.par - 1)
                 }
+
+                // Per-hole history at this course — drives the course screen's
+                // "which holes cost you strokes" breakdown.
+                var forCourse = holeHistoryByCourse[round.courseId] ?? [:]
+                var entry = forCourse[hole.number] ?? (par: hole.par, strokes: [], putts: [])
+                entry.strokes.append(hole.nonPenalty.count)
+                entry.putts.append(putts.count)
+                forCourse[hole.number] = entry
+                holeHistoryByCourse[round.courseId] = forCourse
             }
 
             scoresByLength[counted.count, default: []].append(roundStrokes - roundPar)
@@ -204,6 +215,15 @@ struct StatsEngine {
                 cs.avgScoreVsPar = Double(courseScores.reduce(0, +)) / Double(courseScores.count)
                 cs.bestScoreVsPar = courseScores.min()
                 cs.worstScoreVsPar = courseScores.max()
+            }
+            for (holeNumber, e) in holeHistoryByCourse[courseId] ?? [:] where !e.strokes.isEmpty {
+                cs.holeStats[holeNumber] = HoleStats(
+                    holeNumber: holeNumber,
+                    par: e.par,
+                    timesPlayed: e.strokes.count,
+                    avgStrokes: Double(e.strokes.reduce(0, +)) / Double(e.strokes.count),
+                    avgPutts: e.putts.isEmpty ? 0 : Double(e.putts.reduce(0, +)) / Double(e.putts.count)
+                )
             }
             stats.perCourseStats[courseId.uuidString] = cs
         }

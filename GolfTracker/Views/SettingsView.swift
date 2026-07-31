@@ -22,6 +22,8 @@ struct SettingsView: View {
     @AppStorage("autoAdd") private var autoAdd: Bool = true
     @AppStorage(ElevationReadout.decayTauKey) private var elevationTauMinutes: Double = ElevationReadout.defaultDecayTauMinutes
     @AppStorage(LocationManager.forceFullGPSKey) private var elevationForceFullGPS: Bool = false
+    @AppStorage("runHoleDetectionAtRoundStart") private var runHoleDetectionAtRoundStart = true
+    @AppStorage("runHoleDetectionWithTestCenter") private var runHoleDetectionWithTestCenter = false
 
     @State private var currentName: String = ""
     /// Hidden developer section, revealed by long-pressing the Settings
@@ -119,6 +121,14 @@ struct SettingsView: View {
                             .onChange(of: debugLoggingEnabled) { _, newValue in
                                 WatchConnectivityManager.shared.sendDebugLoggingEnabled(newValue)
                             }
+
+                        // Moved here from CourseDetailView, which is now a
+                        // user-facing screen reached by tapping a course in
+                        // Stats. These control the satellite-blob green
+                        // analyzer and are dev controls, not course settings.
+                        Toggle("Run hole detection at round start", isOn: $runHoleDetectionAtRoundStart)
+                        Toggle("Hole detection: test coordinates", isOn: $runHoleDetectionWithTestCenter)
+                            .disabled(!runHoleDetectionAtRoundStart)
 
                         Stepper(value: $greenLeftThresholdYards, in: 5...60, step: 5) {
                             Text("Auto-advance: \(Int(greenLeftThresholdYards)) yd from green edge")
