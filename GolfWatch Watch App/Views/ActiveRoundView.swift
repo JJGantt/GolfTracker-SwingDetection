@@ -665,15 +665,6 @@ struct ActiveRoundView: View {
         // disabled or already cached.
         .onAppear { loadGhostForCurrentHole() }
         .onChange(of: store.currentHoleIndex) { _, _ in loadGhostForCurrentHole() }
-        // Inbound "X is talking…" pill — small, top-trailing so it doesn't
-        // clobber the yardage display at the top center. Hides when no one
-        // is speaking, so most of the time it's invisible. The push-to-talk
-        // BUTTON itself lives in the pull-up Options menu, not on the map.
-        .overlay(alignment: .topTrailing) {
-            TalkingBanner()
-                .padding(.top, 6)
-                .padding(.trailing, 6)
-        }
     }
 
     var body: some View {

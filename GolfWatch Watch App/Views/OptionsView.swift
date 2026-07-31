@@ -123,7 +123,6 @@ struct OptionsView: View {
                     // disabled when no playgroup is active so the row layout
                     // stays stable instead of jumping around. Sheet stays open
                     // during the press so the user can release in-place.
-                    OptionsTalkButton()
                 }
                 .padding(.horizontal, 8)
 

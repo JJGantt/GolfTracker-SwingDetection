@@ -45,9 +45,6 @@ struct GolfTrackerApp: App {
                     // present (iOS keeps it always-on while signed in;
                     // watchOS narrows to round-scoped). Reconciliation on
                     // foreground happens via the scenePhase observer below.
-                    // Touch WalkieTalkie.shared so its init wires the
-                    // inbound-audio + talk-start callbacks on PlaygroupChannel.
-                    _ = WalkieTalkie.shared
                     // Wire the cross-device GPS sim. Pulls user_test_state
                     // from Supabase and subscribes to changes; LocationManager
                     // applies inbound coords into its `location` property.

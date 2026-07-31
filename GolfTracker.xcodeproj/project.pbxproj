@@ -118,8 +118,6 @@
 		6AHISTSHOT0000000000000C /* HistoricalFirstStrokeCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6AHISTSHOT0000000000000B /* HistoricalFirstStrokeCache.swift */; };
 		6ARNDPATH0000000000000A /* RoundPathCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6ARNDPATH0000000000000B /* RoundPathCache.swift */; };
 		6ARNDPATH0000000000000C /* RoundPathCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6ARNDPATH0000000000000B /* RoundPathCache.swift */; };
-		6AWTALKIE0000000000000E1 /* WalkieTalkie.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6AWTALKIE0000000000000E0 /* WalkieTalkie.swift */; };
-		6AWTALKIE0000000000000E2 /* WalkieTalkie.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6AWTALKIE0000000000000E0 /* WalkieTalkie.swift */; };
 		6ACELOG000000000000000E1 /* ClientEventLogger.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6ACELOG000000000000000E0 /* ClientEventLogger.swift */; };
 		6ACELOG000000000000000E2 /* ClientEventLogger.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6ACELOG000000000000000E0 /* ClientEventLogger.swift */; };
 		6ATESTM000000000000000E1 /* TestModeService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6ATESTM000000000000000E0 /* TestModeService.swift */; };
@@ -253,7 +251,6 @@
 		6AELEVRDOUT00000000000B /* ElevationReadout.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = ElevationReadout.swift; sourceTree = "<group>"; };
 		6AHISTSHOT0000000000000B /* HistoricalFirstStrokeCache.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = HistoricalFirstStrokeCache.swift; sourceTree = "<group>"; };
 		6ARNDPATH0000000000000B /* RoundPathCache.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = RoundPathCache.swift; sourceTree = "<group>"; };
-		6AWTALKIE0000000000000E0 /* WalkieTalkie.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WalkieTalkie.swift; sourceTree = "<group>"; };
 		6ACELOG000000000000000E0 /* ClientEventLogger.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClientEventLogger.swift; sourceTree = "<group>"; };
 		6ATESTM000000000000000E0 /* TestModeService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TestModeService.swift; sourceTree = "<group>"; };
 		6CD8A1F4907C44A4BB2CA042 /* HolePlayView+AddPenaltyMode.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "HolePlayView+AddPenaltyMode.swift"; sourceTree = "<group>"; };
@@ -469,7 +466,6 @@
 				6ARLEVAL00000000000000F0 /* RoundLifecycleEvaluator.swift */,
 				6ARTRECON00000000000000F0 /* RealtimeReconnect.swift */,
 				6APGCHAN00000000000000E0 /* PlaygroupChannel.swift */,
-				6AWTALKIE0000000000000E0 /* WalkieTalkie.swift */,
 				6ACELOG000000000000000E0 /* ClientEventLogger.swift */,
 				6ATESTM000000000000000E0 /* TestModeService.swift */,
 				6AGCAPI000000000000000F0 /* GolfCourseAPIService.swift */,
@@ -750,7 +746,6 @@
 				6ARLEVAL00000000000000F1 /* RoundLifecycleEvaluator.swift in Sources */,
 				6ARTRECON00000000000000F1 /* RealtimeReconnect.swift in Sources */,
 				6APGCHAN00000000000000E1 /* PlaygroupChannel.swift in Sources */,
-				6AWTALKIE0000000000000E1 /* WalkieTalkie.swift in Sources */,
 				6ACELOG000000000000000E1 /* ClientEventLogger.swift in Sources */,
 				6ATESTM000000000000000E1 /* TestModeService.swift in Sources */,
 				6AGCAPI000000000000000F1 /* GolfCourseAPIService.swift in Sources */,
@@ -810,7 +805,6 @@
 				6ARLEVAL00000000000000F2 /* RoundLifecycleEvaluator.swift in Sources */,
 				6ARTRECON00000000000000F2 /* RealtimeReconnect.swift in Sources */,
 				6APGCHAN00000000000000E2 /* PlaygroupChannel.swift in Sources */,
-				6AWTALKIE0000000000000E2 /* WalkieTalkie.swift in Sources */,
 				6ACELOG000000000000000E2 /* ClientEventLogger.swift in Sources */,
 				6ATESTM000000000000000E2 /* TestModeService.swift in Sources */,
 				6AGCAPI000000000000000F2 /* GolfCourseAPIService.swift in Sources */,

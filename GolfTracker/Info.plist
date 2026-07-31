@@ -28,8 +28,6 @@
 	<string>GolfTracker needs your location to calculate distances to holes and track your shots during a round.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>GolfTracker needs your location to calculate distances to holes and track your shots during a round.</string>
-	<key>NSMicrophoneUsageDescription</key>
-	<string>GolfTracker uses the microphone for push-to-talk voice messages with your playgroup partners during a round.</string>
 	<key>NSMotionUsageDescription</key>
 	<string>GolfTracker reads barometric altitude during a round to map elevation across the course.</string>
 	<key>UIApplicationSceneManifest</key>

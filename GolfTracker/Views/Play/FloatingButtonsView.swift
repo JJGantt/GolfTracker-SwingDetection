@@ -13,7 +13,6 @@ struct FloatingButtonsView: View {
     // Walkie-talkie state — sourced from singletons because the PTT button
     // sits in the left button stack here. Self-hides when not in a
     // playgroup so the stack doesn't grow during solo rounds.
-    @ObservedObject private var walkie = WalkieTalkie.shared
     @ObservedObject private var playgroup = PlaygroupChannel.shared
     @ObservedObject private var ghost = GhostRoundStore.shared
 
@@ -85,32 +84,6 @@ struct FloatingButtonsView: View {
                 Spacer()
                 HStack {
                     VStack(spacing: 12) {
-                        // Walkie-talkie push-to-talk (top of left stack).
-                        // Press-and-hold to record, release to send. Visible
-                        // only when in a playgroup; otherwise the stack
-                        // collapses to its existing layout.
-                        if playgroup.activePlaygroupId != nil {
-                            ZStack {
-                                Circle()
-                                    .fill((walkie.isRecording ? Color.red : Color.blue).opacity(0.95))
-                                    .frame(width: 60, height: 60)
-                                    .shadow(color: .black.opacity(0.3), radius: 8, x: 0, y: 4)
-                                Image(systemName: walkie.isRecording ? "waveform" : "mic.fill")
-                                    .font(.title2)
-                                    .fontWeight(.semibold)
-                                    .foregroundColor(.white)
-                            }
-                            .gesture(
-                                DragGesture(minimumDistance: 0)
-                                    .onChanged { _ in
-                                        if !walkie.isRecording { walkie.startTalking() }
-                                    }
-                                    .onEnded { _ in
-                                        walkie.stopTalking()
-                                    }
-                            )
-                            .accessibilityLabel("Push to talk")
-                        }
 
                         // Ghost-round overlay toggle — previous round's
                         // path + strokes rendered dim grey on the hole

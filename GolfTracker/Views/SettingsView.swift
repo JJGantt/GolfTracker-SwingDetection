@@ -91,8 +91,15 @@ struct SettingsView: View {
                 }
 
                 Section("Multiplayer") {
-                    Label("Play with friends", systemImage: "person.2.fill")
-                        .foregroundColor(.secondary)
+                    // This used to be an inert grey label, so multiplayer was
+                    // reachable only from the watch — the iPhone had no path
+                    // to host or join at all.
+                    NavigationLink {
+                        MultiplayerView()
+                    } label: {
+                        Label("Play with friends", systemImage: "person.2.fill")
+                    }
+                    Toggle("Share my position", isOn: $liveDotsEnabled)
                 }
 
                 if showingDeveloper {

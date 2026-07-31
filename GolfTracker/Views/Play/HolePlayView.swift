@@ -277,18 +277,6 @@ struct HolePlayView: View {
                     onUndo: undoLastAction,
                     onShowScorecard: { showingRoundSummary = true }
                 )
-
-                // Inbound "X is talking…" banner only — iOS is receive-only
-                // for walkie-talkie until we decide where the PTT button
-                // belongs on the phone. Self-hides when no one is speaking.
-                VStack(alignment: .trailing) {
-                    TalkingBanner()
-                    Spacer()
-                }
-                .padding(.trailing, 16)
-                .padding(.top, 60)
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
-                .allowsHitTesting(false)
             } else {
                 Color.clear
                     .onAppear {

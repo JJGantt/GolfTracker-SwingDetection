@@ -32,11 +32,6 @@ final class PlaygroupChannel: ObservableObject {
     @Published private(set) var currentHoleNumber: Int = 1
 
     /// userId of whoever just hit "push to talk", or nil. Set by inbound
-    /// `talk_start` broadcast; auto-cleared after `talkAlertTTL` seconds so
-    /// stale "is talking" banners don't linger if the audio never arrives.
-    @Published private(set) var currentlySpeaking: String?
-    static let talkAlertTTL: TimeInterval = 5
-    private var talkAlertClearTask: Task<Void, Never>?
 
     /// Master toggle for publishing your own GPS via presence. When `false`,
     /// you still receive others' presence — you just don't broadcast yours.
@@ -70,12 +65,6 @@ final class PlaygroupChannel: ObservableObject {
     /// channel (and without double-wiring the existing rounds).
     private var wiredRoundIds: Set<String> = []
 
-    /// Hook the host UI installs so we can play received audio without
-    /// PlaygroupChannel needing to import AVFoundation. WalkieTalkie service
-    /// sets this in its init.
-    var onIncomingAudio: ((URL) -> Void)?
-    /// Hook the host UI installs to fire haptic + sound on inbound talk_start.
-    var onTalkStartReceived: ((String) -> Void)?
 
     private init() {}
 
@@ -152,10 +141,6 @@ final class PlaygroupChannel: ObservableObject {
         // on changes from now on; we need the existing rows too).
         await refreshOtherStrokes(userId: userId)
 
-        // Walkie-talkie: pre-alert via broadcast (~100-200ms latency) +
-        // postgres-changes on playgroup_messages for the audio delivery row.
-        wireWalkieTalkie(ch, playgroupId: playgroupId, userId: userId)
-
         // Start publishing our own presence on a tick.
         startPresenceTick(userId: userId)
 
@@ -165,8 +150,6 @@ final class PlaygroupChannel: ObservableObject {
     private func teardown() async {
         presenceTask?.cancel()
         presenceTask = nil
-        talkAlertClearTask?.cancel()
-        talkAlertClearTask = nil
         subscribeLoopTask?.cancel()
         subscribeLoopTask = nil
         for s in subscriptions { s.cancel() }
@@ -184,7 +167,6 @@ final class PlaygroupChannel: ObservableObject {
         members = []
         presence = [:]
         otherStrokes = [:]
-        currentlySpeaking = nil
     }
 
     // MARK: - Presence
@@ -507,88 +489,7 @@ final class PlaygroupChannel: ObservableObject {
         members.first(where: { $0.userId == userId })?.color
             ?? PlaygroupService.playerPalette[0]
     }
-
-    // MARK: - Walkie-talkie
-
-    private func wireWalkieTalkie(_ ch: RealtimeChannelV2, playgroupId: UUID, userId: String) {
-        // Inbound pre-alert. Self-broadcasts come back too — filter ourself out.
-        let talkSub = ch.onBroadcast(event: "talk_start") { [weak self] payload in
-            guard case let .string(senderId) = payload["sender_id"] ?? .null else { return }
-            guard senderId != userId else { return }
-            Task { @MainActor [weak self] in
-                self?.handleTalkStart(senderId: senderId)
-            }
-        }
-        broadcastSubscriptions.append(talkSub)
-
-        // Inbound voice clip — single binary broadcast carrying the entire
-        // AAC blob. Server-side fan-out, NOT persisted anywhere — when the
-        // packet leaves the channel state, it's gone. We deliberately do
-        // NOT use Storage or a delivery-row table here: voice messages are
-        // ephemeral by design, and a 5–30s AAC clip @ 16kbps fits well
-        // inside the 256KB-per-message broadcast cap.
-        let voiceSub = ch.onBroadcastData(event: "voice") { [weak self] data in
-            Task { @MainActor [weak self] in
-                self?.handleIncomingVoice(data)
-            }
-        }
-        broadcastSubscriptions.append(voiceSub)
-    }
-
-    private func handleTalkStart(senderId: String) {
-        currentlySpeaking = senderId
-        onTalkStartReceived?(senderId)
-        talkAlertClearTask?.cancel()
-        talkAlertClearTask = Task { [weak self] in
-            try? await Task.sleep(nanoseconds: UInt64(Self.talkAlertTTL * 1_000_000_000))
-            guard !Task.isCancelled else { return }
-            await MainActor.run { self?.currentlySpeaking = nil }
-        }
-    }
-
-    private func handleIncomingVoice(_ data: Data) {
-        // Self-broadcasts also fan back out. The audio bytes themselves
-        // don't carry sender info, so we rely on the immediately-prior
-        // `talk_start` broadcast (which IS sender-id-tagged) to know
-        // who's speaking. To suppress our own loopback playback, we skip
-        // any voice payload received while we ourselves are recording.
-        if WalkieTalkie.shared.isRecording { return }
-        let tmpURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent(UUID().uuidString + ".m4a")
-        do {
-            try data.write(to: tmpURL)
-            onIncomingAudio?(tmpURL)
-        } catch {
-            dprint("📡 [PlaygroupChannel] voice write failed: \(error.localizedDescription)")
-        }
-    }
-
-    /// Fire the pre-alert broadcast so other watches haptic+ding the moment
-    /// the talk button is pressed, before the audio is even recorded.
-    func broadcastTalkStart() async {
-        guard let ch = channel, let uid = currentUserId else { return }
-        let payload: JSONObject = ["sender_id": .string(uid)]
-        await ch.broadcast(event: "talk_start", message: payload)
-    }
-
-    /// Send the recorded audio as a single binary broadcast on the playgroup
-    /// channel. NOT persisted anywhere — once the packet has been fanned out
-    /// to currently-connected co-members, it's gone. Late-joiners will not
-    /// hear messages they missed (this is intentional walkie-talkie semantics).
-    /// 256KB cap per message; well above the ~60KB needed for a 30s clip.
-    func sendVoiceMessage(localFile: URL, durationMs: Int) async {
-        guard let ch = channel else { return }
-        defer { try? FileManager.default.removeItem(at: localFile) }
-        do {
-            let data = try Data(contentsOf: localFile)
-            await ch.broadcast(event: "voice", data: data)
-        } catch {
-            dprint("📡 [PlaygroupChannel] sendVoiceMessage failed: \(error.localizedDescription)")
-        }
-    }
 }
-
-// MARK: - Wire types
 
 // MARK: - ScorecardPlayer self-construction from local Round
 

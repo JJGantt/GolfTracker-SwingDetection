@@ -98,8 +98,14 @@ extension SwingDetectionManager {
     }
 
     var shouldRunRawAccelHardware: Bool {
-        guard isMonitoring, rawAccelRunningForCapture else {
-            return false
+        guard isMonitoring else { return false }
+        // Sensor Capture forces 800Hz on for the whole session (when the
+        // user opted into it), independent of swing-detection's event-capture
+        // gating — capture runs with detectionMode == .off, where
+        // rawAccelRunningForCapture is never armed.
+        let captureWants800Hz = captureActive && captureUse800Hz
+        guard rawAccelRunningForCapture else {
+            return captureWants800Hz
         }
         switch detectionMode {
         case .unifDetect:
@@ -107,9 +113,9 @@ extension SwingDetectionManager {
             // detection window (setup start → 3s after setup end or shape
             // resolution). raw800PutterOnly only controls which club types
             // trigger onUnifSetupStarted; it does NOT mean "always on."
-            return batchedAccelForPutt
+            return batchedAccelForPutt || captureWants800Hz
         case .off:
-            return false
+            return captureWants800Hz
         }
     }
 
@@ -205,6 +211,13 @@ extension SwingDetectionManager {
                 rollingRawAccelBuffer.removeFirst()
             }
             rollingBufferLock.unlock()
+
+            // Sensor Capture: uncapped continuous 800Hz recording (opt-in).
+            if isSensorCapturing && captureUse800Hz {
+                captureLock.lock()
+                captureRawAccelBuffer.append(dp)
+                captureLock.unlock()
+            }
         }
         if rawAccelRunningForCapture {
             eventBufferLock.lock()
