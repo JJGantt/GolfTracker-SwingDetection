@@ -73,7 +73,15 @@ final class PlaygroupChannel: ObservableObject {
     /// Start (or restart) the channel for the given playgroup. Idempotent:
     /// no-ops if already running for this playgroup. Tears down + restarts
     /// if a different playgroup id is provided.
-    func start(playgroupId: UUID, currentHole: Int, userId: String) {
+    func start(playgroupId: UUID, currentHole: Int, userId: String, roundId: UUID? = nil) {
+        // Attach BEFORE the already-running guard below. A joiner's member row
+        // is created with round_id = nil, and the round can also change while
+        // the playgroup stays open — if this sat after the guard, neither case
+        // would ever be written and the joiner would stay invisible to the
+        // shared scorecard and stroke subscriptions.
+        if let roundId {
+            Task { await PlaygroupService.shared.attachMyRound(playgroupId: playgroupId, roundId: roundId) }
+        }
         if activePlaygroupId == playgroupId { return }
         Task { await self.restart(playgroupId: playgroupId, currentHole: currentHole, userId: userId) }
     }

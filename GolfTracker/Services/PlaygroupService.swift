@@ -185,6 +185,35 @@ final class PlaygroupService {
             .execute()
     }
 
+    /// Point my membership row at the round I'm actually playing.
+    ///
+    /// The host gets a `round_id` at `hostPlaygroup` time, but a joiner's row
+    /// is inserted by `acceptRequest` with `round_id = nil` — the host has no
+    /// way to know the joiner's round, and join requests don't carry one. Until
+    /// this write happens the joiner is invisible to everything keyed on their
+    /// round: `fetchScorecardPlayers` filters them out (leaving one player,
+    /// below the `>= 2` threshold, so the shared scorecard silently renders as
+    /// a solo card) and no stroke subscription is wired for them.
+    ///
+    /// Called on every playgroup-channel start, so it also re-points the row
+    /// when someone ends a round and begins another inside the same playgroup.
+    /// RLS (`pm_update_self_or_host`) already allows updating your own row, so
+    /// this needs no schema or policy change. Co-members pick the change up
+    /// through the existing `playgroup_members` postgres-changes subscription.
+    func attachMyRound(playgroupId: UUID, roundId: UUID) async {
+        guard let uid = SupabaseManager.shared.auth.currentUser?.id.uuidString else { return }
+        struct Update: Encodable { let round_id: String }
+        do {
+            try await supabase.from("playgroup_members")
+                .update(Update(round_id: roundId.uuidString))
+                .eq("playgroup_id", value: playgroupId.uuidString)
+                .eq("user_id", value: uid)
+                .execute()
+        } catch {
+            dprint("📡 [PlaygroupService] attachMyRound failed: \(error.localizedDescription)")
+        }
+    }
+
     func declineRequest(_ request: PlaygroupJoinRequest) async throws {
         struct Update: Encodable {
             let status: String

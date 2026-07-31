@@ -798,10 +798,14 @@ struct ActiveRoundView: View {
                 await MainActor.run {
                     // Multiplayer round confirmed → spin up Realtime for
                     // table sync (rounds/strokes/holes/etc.) AND the
-                    // playgroup channel for live presence + walkie-talkie.
-                    // Solo rounds skip both entirely.
+                    // playgroup channel for live presence + the shared
+                    // scorecard. Solo rounds skip both entirely.
+                    // `roundId` points my membership row at this round —
+                    // a joiner's row starts with round_id nil, and without
+                    // it the shared scorecard can't see me.
                     RealtimeSync.shared.start(forUserId: userId)
-                    PlaygroupChannel.shared.start(playgroupId: pg.id, currentHole: holeNumber, userId: userId)
+                    PlaygroupChannel.shared.start(playgroupId: pg.id, currentHole: holeNumber,
+                                                  userId: userId, roundId: round.id)
                 }
             } catch {
                 dprint("📡 [ActiveRoundView] PlaygroupChannel start check failed: \(error.localizedDescription)")

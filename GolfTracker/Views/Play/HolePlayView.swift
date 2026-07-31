@@ -824,11 +824,16 @@ struct HolePlayView: View {
     /// before deciding; no-ops when not in one.
     private func startPlaygroupChannelIfNeeded(userId: String) {
         let holeNumber = (activeRound?.currentHoleIndex ?? currentHoleIndex) + 1
+        let roundId = activeRound?.id
         Task {
             do {
                 guard let pg = try await PlaygroupService.shared.currentOpenPlaygroup() else { return }
                 await MainActor.run {
-                    PlaygroupChannel.shared.start(playgroupId: pg.id, currentHole: holeNumber, userId: userId)
+                    // `roundId` points my membership row at this round — a
+                    // joiner's row starts with round_id nil, and without it
+                    // the shared scorecard can't see me.
+                    PlaygroupChannel.shared.start(playgroupId: pg.id, currentHole: holeNumber,
+                                                  userId: userId, roundId: roundId)
                 }
             } catch {
                 print("📡 [HolePlayView] PlaygroupChannel start check failed: \(error.localizedDescription)")
