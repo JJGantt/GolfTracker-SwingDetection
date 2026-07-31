@@ -1310,6 +1310,16 @@ class DataStore: ObservableObject {
     func deleteRound(_ round: Round) {
         let wasInProgress = round.endedAt == nil
         rounds.removeAll { $0.id == round.id }
+        // Delete from SwiftData too, not just the published array. Without
+        // this the row survives in the store and `loadRounds()` re-fetches it
+        // on the next launch — the round only really disappeared when the
+        // Supabase delete echoed back through Realtime's `applyRound(.delete)`,
+        // so deleting offline (or missing the event) resurrected it.
+        // Cascade takes strokes and targets; `Round.holes` is .nullify, so the
+        // course keeps its holes.
+        if let context = context {
+            context.delete(round)
+        }
         saveRounds()
         SupabaseSync.shared.deleteRound(id: round.id)
         rebuildPlayerStats()

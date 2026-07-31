@@ -5,6 +5,7 @@ struct RoundsHistoryView: View {
     let initialCourseFilter: UUID?
     @State private var selectedCourseFilter: UUID? = nil
     @State private var selectedRound: Round?
+    @State private var pendingDelete: Round?
 
     init(store: DataStore, initialCourseFilter: UUID? = nil) {
         self.store = store
@@ -50,6 +51,16 @@ struct RoundsHistoryView: View {
                                 RoundRow(round: round, store: store)
                             }
                             .buttonStyle(.plain)
+                            // History lists every round, partials included, so
+                            // this is where abandoned starts get cleaned up.
+                            // Deleting used to mean opening each round first.
+                            .swipeActions(edge: .trailing) {
+                                Button(role: .destructive) {
+                                    pendingDelete = round
+                                } label: {
+                                    Label("Delete", systemImage: "trash")
+                                }
+                            }
                         }
                     }
                 }
@@ -57,6 +68,20 @@ struct RoundsHistoryView: View {
             .navigationTitle("History")
             .navigationDestination(item: $selectedRound) { round in
                 RoundDetailView(store: store, round: round)
+            }
+            .confirmationDialog(
+                "Delete Round",
+                isPresented: Binding(get: { pendingDelete != nil },
+                                     set: { if !$0 { pendingDelete = nil } }),
+                presenting: pendingDelete
+            ) { round in
+                Button("Delete", role: .destructive) {
+                    store.deleteRound(round)
+                    pendingDelete = nil
+                }
+                Button("Cancel", role: .cancel) { pendingDelete = nil }
+            } message: { round in
+                Text("\(round.courseName) · \(round.date.formatted(date: .abbreviated, time: .shortened))")
             }
         }
     }
@@ -67,6 +92,10 @@ struct RoundRow: View {
     @ObservedObject var store: DataStore
 
     private var totalStrokes: Int { round.strokes.count }
+    /// Holes with any stroke on them. Shown so a partial round is obvious in
+    /// the list without opening it — History carries every round, including
+    /// abandoned starts, and this is where they get found and cleaned up.
+    private var holesPlayed: Int { Set(round.strokes.map(\.holeNumber)).count }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -89,6 +118,11 @@ struct RoundRow: View {
                     Text(round.date.formatted(date: .long, time: .shortened))
                         .font(.caption)
                         .foregroundColor(.secondary)
+                    Text(holesPlayed == 0
+                         ? "No shots recorded"
+                         : "\(holesPlayed) hole\(holesPlayed == 1 ? "" : "s")")
+                        .font(.caption2)
+                        .foregroundColor(holesPlayed == 0 ? .orange : .secondary)
                 }
                 Spacer()
                 VStack(alignment: .trailing, spacing: 4) {
