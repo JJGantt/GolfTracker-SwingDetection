@@ -90,7 +90,16 @@ extension ActiveRoundView {
                                 guard playsLike != nil, let meters = deltaMeters else { return .white }
                                 return ElevationDeltaLabel.color(forFeet: Int((meters * 3.28084).rounded()))
                             }()
-                            Text(playsLike.map { String($0) }
+                            // The "≈" is the only unambiguous signal that
+                            // plays-like is actually ON. Colour alone wasn't
+                            // enough: when any input is missing (no elevation
+                            // solution at the green, putter selected) this
+                            // falls back to the measured number, so the tap
+                            // changed nothing visible and read as a dead
+                            // control. Even when it DOES compute, a 2 m delta
+                            // moves a 150 by about 2 yards — easy to miss
+                            // without a mode marker.
+                            Text((playsLike.map { "≈\($0)" })
                                  ?? displayedDistanceToHole.map { String($0) }
                                  ?? "XXX")
                                 .font(.system(size: 32, weight: .bold, design: .rounded))
