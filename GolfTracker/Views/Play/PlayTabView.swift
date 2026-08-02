@@ -79,6 +79,14 @@ private struct StartRoundView: View {
             }
             .navigationTitle("Play")
             .navigationBarTitleDisplayMode(.inline)
+            // Pull the last 8h of rounds on appear so a round started on the
+            // watch shows up here without the user having to background the
+            // app. Realtime normally delivers it, but postgres-changes don't
+            // replay across a dropped socket and the only other catch-up was
+            // the scenePhase→active hook — which never fires if the phone was
+            // already open when the watch started the round.
+            .task { await RealtimeSync.shared.reconcileRoundsWithSupabase() }
+            .refreshable { await RealtimeSync.shared.reconcileRoundsWithSupabase() }
         }
         // Course picker — shown when GPS finds multiple candidates
         .sheet(item: Binding(

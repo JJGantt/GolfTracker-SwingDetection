@@ -944,6 +944,24 @@ class DataStore: ObservableObject {
     // MARK: - GPS Round Start
 
     func startRoundAtCurrentLocation() {
+        // Catch up with the server before creating anything. `startRound`
+        // auto-ends any prior in-progress round, so starting here while a
+        // watch-started round exists but hasn't synced yet produces TWO live
+        // rounds: both upsert, `currentRound` picks the most recent by date,
+        // and the watch can jump to the phone's empty round mid-play. One
+        // reconcile first makes the existing round visible so the Play tab
+        // switches to it instead.
+        Task { @MainActor in
+            await RealtimeSync.shared.reconcileRoundsWithSupabase()
+            guard currentRound == nil else {
+                ClientEventLogger.log("round.start.abortedExistingRound")
+                return
+            }
+            beginRoundResolution()
+        }
+    }
+
+    private func beginRoundResolution() {
         guard let coordinate = LocationManager.shared.location?.coordinate else {
             startManualQuickRound()
             return

@@ -1044,6 +1044,24 @@ class WatchDataStore: ObservableObject {
     // MARK: - Start Round (resolver-backed)
 
     func startRoundAtCurrentLocation() {
+        // Catch up with the server before creating anything. performStartRound
+        // auto-ends any prior in-progress round, so starting here while a
+        // phone-started round exists but hasn't synced yet produces TWO live
+        // rounds — both upsert, and `currentRound` on each device picks the
+        // most recent by date, so the two can disagree about which round is
+        // being played. One round at a time, reachable from either device.
+        Task { @MainActor in
+            await RealtimeSync.shared.reconcileRoundsWithSupabase()
+            refreshCurrentRound()
+            guard currentRound == nil else {
+                ClientEventLogger.log("round.start.abortedExistingRound")
+                return
+            }
+            beginRoundResolution()
+        }
+    }
+
+    private func beginRoundResolution() {
         let coordinate: CLLocationCoordinate2D
         if let loc = LocationManager.shared.location?.coordinate {
             coordinate = loc
