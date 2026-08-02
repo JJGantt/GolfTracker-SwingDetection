@@ -815,6 +815,11 @@ struct ActiveRoundView: View {
 
     func handleCurrentHoleChange() {
         restoreCalculatedMapPosition(force: true)
+        // Hold full GPS from arriving at the hole until its first stroke, so
+        // the walk from the last green, the tee box, and the tee shot are all
+        // captured at a fidelity the elevation fold-in will actually accept.
+        // Released in WatchDataStore.addStroke.
+        LocationManager.shared.beginTeeHold()
     }
 
     func handleShowingOptionsChange(_ isShowing: Bool) {

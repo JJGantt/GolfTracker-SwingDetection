@@ -722,6 +722,11 @@ class WatchDataStore: ObservableObject {
         guard let round = currentRound, let context = context else { return nil }
         guard let strokeCoordinate = coordinate ?? LocationManager.shared.location?.coordinate else { return nil }
 
+        // Tee shot is away — the distance heuristic can take over until the
+        // approach brings us back inside gpsModerateYards. No-op after the
+        // first stroke on the hole.
+        LocationManager.shared.releaseTeeHoldIfNeeded()
+
         let holeNumber: Int
         if let hole = currentHole {
             holeNumber = hole.number

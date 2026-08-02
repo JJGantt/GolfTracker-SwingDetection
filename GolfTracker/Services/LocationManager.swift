@@ -364,12 +364,46 @@ class LocationManager: NSObject, ObservableObject {
         elevationSyncHoldActive = false
     }
 
+    /// Tee hold. Active from arriving at a hole until that hole's first
+    /// stroke is recorded; while active, `setGPSPowerMode` is coerced to
+    /// `.full`.
+    ///
+    /// The distance heuristic alone leaves a hole in the height map. It runs
+    /// `.full` inside `gpsModerateYards` (200 yd) of the pin, so the green and
+    /// approach are well covered — but at the tee of a par 4 or 5 you're
+    /// beyond that, so the walk from the previous green to this tee, and the
+    /// tee shot itself, record at `.moderate`. `.moderate` requests 10 m
+    /// accuracy, and `ElevationFoldIn.accuracyFactor` excludes anything at
+    /// 10 m or worse outright — so that stretch burns GPS and then gets
+    /// discarded. Measured across the existing readings: median accuracy
+    /// 7.4 m, only 18% at the ≤5 m full-weight mark, 34% dropped entirely.
+    ///
+    /// The green and the tee are the two ends of the hole and both are
+    /// elevation anchors; the middle of the fairway is the part that
+    /// interpolates. So hold full fidelity across green → walk → next tee →
+    /// first stroke, then let the distance heuristic take over until the
+    /// approach brings it back inside 200 yd.
+    private var teeHoldActive = false
+
+    /// Call when the round moves to a new hole.
+    func beginTeeHold() {
+        teeHoldActive = true
+        setGPSPowerMode(.full)
+    }
+
+    /// Call when a stroke is recorded — the tee shot is in the bag, so the
+    /// distance heuristic can resume. No-op after the first stroke on a hole.
+    func releaseTeeHoldIfNeeded() {
+        guard teeHoldActive else { return }
+        teeHoldActive = false
+    }
+
     func setGPSPowerMode(_ mode: GPSPowerMode) {
         // Dev-menu force-full overrides the requested mode. Power-mgmt
         // callers stay unchanged — the override is applied here so any
         // downgrade attempt is silently coerced back to `.full`.
         var mode: GPSPowerMode = UserDefaults.standard.bool(forKey: Self.forceFullGPSKey) ? .full : mode
-        if elevationSyncHoldActive { mode = .full }
+        if elevationSyncHoldActive || teeHoldActive { mode = .full }
         guard mode != gpsPowerMode, !isTestModeEnabled else { return }
         gpsPowerMode = mode
 
@@ -451,6 +485,7 @@ class LocationManager: NSObject, ObservableObject {
         // against (all released by ElevationReadout). No time cap.
         // Subsequent holes re-sync at each green instead.
         elevationSyncHoldActive = true
+        teeHoldActive = true
         setGPSPowerMode(.full)
         // Drain any rows left over from a prior aborted session before
         // starting fresh — they belong to the previous round but the
@@ -500,6 +535,7 @@ class LocationManager: NSObject, ObservableObject {
         }
         recordingContext = nil
         elevationSyncHoldActive = false
+        teeHoldActive = false
         stopAltimeter()
         dprint("[LocationManager] Path recording stopped")
         ClientEventLogger.log("altitude.recording.stopped", detail: [
