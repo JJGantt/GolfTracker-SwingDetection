@@ -954,18 +954,57 @@ class DataStore: ObservableObject {
         Task { @MainActor in
             await RealtimeSync.shared.reconcileRoundsWithSupabase()
             guard currentRound == nil else {
+                // Say so. Aborting silently makes Start Round look broken —
+                // the user taps it, nothing happens, and there's no hint that
+                // a round they can't see is the reason.
                 ClientEventLogger.log("round.start.abortedExistingRound")
+                roundStartStatus = "Round already in progress"
+                DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
+                    if self?.roundStartStatus == "Round already in progress" {
+                        self?.roundStartStatus = nil
+                    }
+                }
                 return
             }
             beginRoundResolution()
         }
     }
 
+    /// How long to wait for a GPS fix before giving up and asking the user to
+    /// name the place themselves.
+    private static let roundStartLocationWaitSeconds: TimeInterval = 12
+
     private func beginRoundResolution() {
         guard let coordinate = LocationManager.shared.location?.coordinate else {
-            startManualQuickRound()
+            // No fix YET is not the same as no fix. Tapping Start Round before
+            // the phone has settled used to drop straight to the manual path,
+            // which now prompts for a course name — so it read as "which
+            // course are you at?", the user typed the right name, and got a
+            // brand-new course with no OSM data, no holes, no centroid, and
+            // therefore no blob detection and manual green placement, while
+            // the real course sat in the table unused.
+            roundStartStatus = "Waiting for GPS…"
+            LocationManager.shared.requestPermission()
+            Task { @MainActor in
+                let deadline = Date().addingTimeInterval(Self.roundStartLocationWaitSeconds)
+                while Date() < deadline {
+                    if LocationManager.shared.location != nil { break }
+                    try? await Task.sleep(nanoseconds: 400_000_000)
+                }
+                guard let coord = LocationManager.shared.location?.coordinate else {
+                    ClientEventLogger.log("round.start.noGPSAfterWait")
+                    roundStartStatus = nil
+                    startManualQuickRound()
+                    return
+                }
+                resolveRound(at: coord)
+            }
             return
         }
+        resolveRound(at: coordinate)
+    }
+
+    private func resolveRound(at coordinate: CLLocationCoordinate2D) {
         roundStartStatus = "Locating…"
         RoundResolver.shared.resolve(
             at: coordinate,
