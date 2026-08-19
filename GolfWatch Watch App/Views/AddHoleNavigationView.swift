@@ -302,12 +302,27 @@ struct HolePlacementView: View {
         // skip placement view. blob_id nil = manual placement, excluded
         // from voting but still beats voting for this user's own rounds.
         if let courseId = store.currentRound?.courseId {
+            // Always record the coordinate, blob or not. Storing only the
+            // blob id made the pick unusable without re-resolving the blob,
+            // and every pick at a non-OSM course therefore had null lat/lon —
+            // 15 of 15 at Wolf Hollow. The blob id still rides along, since
+            // that is what cross-user voting counts.
             SupabaseSync.shared.upsertCourseHolePick(
                 courseId: courseId,
                 holeNumber: hole.number,
                 blobId: selectedGreenBlobId,
-                latitude: selectedGreenBlobId == nil ? coordinate.latitude : nil,
-                longitude: selectedGreenBlobId == nil ? coordinate.longitude : nil,
+                latitude: coordinate.latitude,
+                longitude: coordinate.longitude,
+                par: par
+            )
+            // And promote it to the course's shared hole record. The user
+            // pointing at a green is the most authoritative source there is;
+            // it must not depend on OSM knowing the course.
+            SupabaseSync.shared.upsertCourseHoleLocation(
+                courseId: courseId,
+                number: hole.number,
+                latitude: coordinate.latitude,
+                longitude: coordinate.longitude,
                 par: par
             )
         }

@@ -136,6 +136,37 @@ final class SupabaseSync {
         delete(table: "holes", filterColumn: "id", filterValue: id.uuidString)
     }
 
+    /// Write a green the user placed into the COURSE's shared hole record.
+    ///
+    /// Keyed on `(course_id, number)` rather than on a row id, because the
+    /// caller placing the green is usually the watch, whose `round.holes` are
+    /// per-round copies with their own ids and no knowledge of the course-level
+    /// row. The unique constraint on `(course_id, number)` makes that upsert
+    /// exact.
+    ///
+    /// This exists because `holes` had precisely one writer — `RoundResolver`,
+    /// building rows from OSM and requiring an OSM `ref` and green point. A
+    /// course OSM has never heard of therefore ended up with zero hole rows no
+    /// matter how many greens were placed by hand: Wolf Hollow had 15 greens
+    /// placed across 10 rounds and 0 rows here. A green the user selected is
+    /// authoritative; OSM is a convenience for courses it happens to know.
+    func upsertCourseHoleLocation(courseId: UUID,
+                                  number: Int,
+                                  latitude: Double,
+                                  longitude: Double,
+                                  par: Int?) {
+        var body: [String: AnyCodableValue] = [
+            "id": .string(UUID().uuidString),   // only used when inserting
+            "course_id": .string(courseId.uuidString),
+            "number": .int(number),
+            "latitude": .double(latitude),
+            "longitude": .double(longitude),
+            "updated_at": .string(iso(Date()))
+        ]
+        if let par { body["par"] = .int(par) }
+        upsert(table: "holes", values: body, onConflict: "course_id,number")
+    }
+
     /// User's pick of which blob (or manual coord) is hole N at course X.
     /// Cross-user voting on these rows produces the canonical green at
     /// round-start for users who haven't played the course yet.
