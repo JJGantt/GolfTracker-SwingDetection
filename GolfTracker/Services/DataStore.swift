@@ -918,11 +918,8 @@ class DataStore: ObservableObject {
         // course's holes (one batched query) then start the readout
         // service so it'll publish a Δ as soon as enough crossings land.
         let elevationCourseId = course.id
-        let holeNumbers = round.holes.map { $0.number }
         Task { @MainActor in
-            await HoleHeightCellCache.shared.loadForCourse(
-                courseId: elevationCourseId, holeNumbers: holeNumbers
-            )
+            await HoleHeightCellCache.shared.loadForCourse(courseId: elevationCourseId)
             ElevationReadout.shared.start(courseId: elevationCourseId)
             await HistoricalFirstStrokeCache.shared.loadForCourse(
                 courseId: elevationCourseId
