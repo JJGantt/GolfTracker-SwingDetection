@@ -1047,7 +1047,7 @@
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = "GolfWatch Watch App/Info.plist";
-				INFOPLIST_KEY_CFBundleDisplayName = GolfWatch;
+				INFOPLIST_KEY_CFBundleDisplayName = StrokeSaver;
 				INFOPLIST_KEY_CFBundleIconName = AppIcon;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown";
 				INFOPLIST_KEY_WKCompanionAppBundleIdentifier = com.Jared.GolfTracker;
@@ -1080,7 +1080,7 @@
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = "GolfWatch Watch App/Info.plist";
-				INFOPLIST_KEY_CFBundleDisplayName = GolfWatch;
+				INFOPLIST_KEY_CFBundleDisplayName = StrokeSaver;
 				INFOPLIST_KEY_CFBundleIconName = AppIcon;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown";
 				INFOPLIST_KEY_WKCompanionAppBundleIdentifier = com.Jared.GolfTracker;

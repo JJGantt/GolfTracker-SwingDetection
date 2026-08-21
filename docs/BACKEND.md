@@ -1,6 +1,6 @@
 # Backend — Supabase
 
-GolfTracker uses [Supabase](https://supabase.com) as its cloud backend. Supabase is a hosted Postgres database + file storage + auth service with an auto-generated REST API. No custom server code — the iOS app talks directly to Supabase's endpoints.
+StrokeSaver uses [Supabase](https://supabase.com) as its cloud backend. Supabase is a hosted Postgres database + file storage + auth service with an auto-generated REST API. No custom server code — the iOS app talks directly to Supabase's endpoints.
 
 ---
 

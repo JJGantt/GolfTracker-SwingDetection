@@ -12,7 +12,7 @@ struct OnboardingView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
             VStack(alignment: .leading, spacing: 8) {
-                Text("Welcome to GolfTracker")
+                Text("Welcome to StrokeSaver")
                     .font(.largeTitle.bold())
                 Text("Before you start, enable the permission below.")
                     .foregroundColor(.secondary)

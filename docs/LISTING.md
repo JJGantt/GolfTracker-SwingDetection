@@ -6,6 +6,11 @@ pushed; edit here and re-push, don't let them drift.
 App record: `GolfTrackerJP` internally, **`StrokeSaver`** on the store (`GolfTracker` and
 `Golf Tracker` are both taken). Bundle `com.Jared.GolfTracker`, app id 6756589450.
 
+`StrokeSaver` is the product name everywhere a user can see it — `CFBundleDisplayName` on both
+targets, every permission usage description, the sign-in and onboarding screens, and the support
+site. The Xcode project/targets/dirs, the bundle IDs, the repo, and the `golftracker-site` URLs
+keep the old `GolfTracker` name; see the naming table in CLAUDE.md.
+
 | Field | Value |
 |---|---|
 | App name | StrokeSaver |
@@ -16,7 +21,7 @@ App record: `GolfTrackerJP` internally, **`StrokeSaver`** on the store (`GolfTra
 | Support URL | https://jjgantt.github.io/golftracker-site/support.html |
 | Marketing URL | https://jjgantt.github.io/golftracker-site/ |
 | Copyright | 2026 Jared Gantt |
-| Version | 1.0.0 (build 49) |
+| Version | 1.0.0 (build 52, uploaded 2026-08-19 — next upload must be 53) |
 
 ## Keywords (100 max)
 

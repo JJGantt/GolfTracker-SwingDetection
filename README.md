@@ -1,22 +1,27 @@
-# GolfTracker
+# StrokeSaver
 
 A comprehensive golf tracking application for iOS and Apple Watch that provides real-time GPS-based distance tracking, stroke recording, and advanced motion detection for swing analysis.
 
+> **Naming:** the product is **StrokeSaver** (App Store / TestFlight, app id `6756589450`). The Xcode
+> project, targets, source directories, bundle identifiers (`com.Jared.GolfTracker`), this repo, and the
+> support site keep the original `GolfTracker` name — they are internal identifiers and must not be
+> renamed. Anything a user reads says StrokeSaver.
+
 ## Overview
 
-GolfTracker is a native SwiftUI application that helps golfers track their rounds with precision. The app features a companion Apple Watch app for hands-free operation and sophisticated motion detection capabilities for automatic swing tracking.
+StrokeSaver is a native SwiftUI application that helps golfers track their rounds with precision. The app features a companion Apple Watch app for hands-free operation and sophisticated motion detection capabilities for automatic swing tracking.
 
 ## Platforms & Requirements
 
-- **iOS**: iPhone running iOS 14.4+
-- **watchOS**: Apple Watch running watchOS 26.0+
+- **iOS**: iPhone running iOS 17.0+
+- **watchOS**: Apple Watch running watchOS 10.0+
 - **Xcode**: 15.4+
 - **Swift**: 5.0
 
 ## Architecture
 
 The application consists of two main targets:
-1. **GolfTracker** (iOS app) - Full-featured interface with course management, round history, and detailed shot tracking
+1. `GolfTracker` target (iOS app) - Full-featured interface with course management, round history, and detailed shot tracking
 2. **GolfWatch Watch App** - Companion watchOS app for on-course tracking with motion detection
 
 Both apps communicate via **WatchConnectivity** framework for real-time data synchronization.
@@ -496,12 +501,15 @@ GolfWatch Watch App/                      # watchOS app target
 
 ## Version Information
 
-- **Version**: 1.0
-- **Build**: 1
-- **iOS Deployment Target**: 14.4
-- **watchOS Deployment Target**: 26.0
+- **Version**: 1.0.0 (`CFBundleShortVersionString`, both Info.plists)
+- **Build**: 52 (`CFBundleVersion`, a literal in both Info.plists — `GENERATE_INFOPLIST_FILE = NO`,
+  so `CURRENT_PROJECT_VERSION` is ignored; bump both plists in lockstep for every upload)
+- **iOS Deployment Target**: 17.0
+- **watchOS Deployment Target**: 10.0
 
 ## Bundle Identifiers
+
+Unchanged by the StrokeSaver rename — they are tied to the App Store Connect record.
 
 - **iOS App**: com.Jared.GolfTracker
 - **Watch App**: com.Jared.GolfTracker.watchkitapp

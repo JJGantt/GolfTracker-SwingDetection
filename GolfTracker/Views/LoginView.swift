@@ -10,7 +10,7 @@ struct LoginView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
             VStack(alignment: .leading, spacing: 8) {
-                Text("Sign in to GolfTracker")
+                Text("Sign in to StrokeSaver")
                     .font(.largeTitle.bold())
                 Text("Your rounds follow you across devices and reinstalls.")
                     .foregroundColor(.secondary)

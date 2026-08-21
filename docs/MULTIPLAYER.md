@@ -441,7 +441,7 @@ The original implementation subscribed to Supabase Realtime over a WebSocket on 
 **Hard constraints we discovered the hard way:**
 
 - **Non-LTE Apple Watches cannot open WebSockets.** The phone-paired Bluetooth tether proxies `URLSession` HTTPS requests for the watch (OS-level mechanism, not app-level), but it does **not** proxy `URLSessionWebSocketTask`. WebSocket attempts on a non-LTE watch fail with `NSURLErrorDomain Code=-1009 "The Internet connection appears to be offline"` even when the phone has perfect signal.
-- **iPhone "Always" location authorization is unrealistic UX-wise.** Without Always + active location updates + the `location` background mode, iOS suspends the GolfTracker app on the phone within seconds of backgrounding (= phone in pocket during a round, which is most of the time). Suspended app = no WebSocket, no polling, no anything. We ask for Always in Info.plist but iOS hides it from the first-time prompt; most users grant only "While Using App" and never see the upgrade prompt.
+- **iPhone "Always" location authorization is unrealistic UX-wise.** Without Always + active location updates + the `location` background mode, iOS suspends the StrokeSaver app on the phone within seconds of backgrounding (= phone in pocket during a round, which is most of the time). Suspended app = no WebSocket, no polling, no anything. We ask for Always in Info.plist but iOS hides it from the first-time prompt; most users grant only "While Using App" and never see the upgrade prompt.
 - **Conclusion: the phone cannot reliably hold a long-lived connection during a round.**
 
 **The architecture that fits these constraints:**

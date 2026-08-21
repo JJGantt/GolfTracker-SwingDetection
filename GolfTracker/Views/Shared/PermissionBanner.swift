@@ -39,7 +39,7 @@ struct LocationPermissionBanner: View {
         if locationManager.authorizationStatus == .denied || locationManager.authorizationStatus == .restricted {
             PermissionBanner(
                 title: "Location is required",
-                message: "GolfTracker needs your location to measure distances and record shots. Enable it in Settings.",
+                message: "StrokeSaver needs your location to measure distances and record shots. Enable it in Settings.",
                 actionTitle: "Open Settings"
             ) {
                 if let url = URL(string: UIApplication.openSettingsURLString) {

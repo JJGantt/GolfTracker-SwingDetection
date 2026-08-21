@@ -46,7 +46,7 @@ private struct StartRoundView: View {
                     Text("Ready to Play?")
                         .font(.title2)
                         .fontWeight(.semibold)
-                    Text("GolfTracker will find your course using GPS.")
+                    Text("StrokeSaver will find your course using GPS.")
                         .font(.subheadline)
                         .foregroundColor(.secondary)
                         .multilineTextAlignment(.center)

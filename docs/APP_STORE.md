@@ -1,6 +1,6 @@
 # App Store Submission Checklist
 
-Living checklist for GolfTracker's path to the App Store. Check items off as they land. Add new rows as gaps surface.
+Living checklist for StrokeSaver's path to the App Store. Check items off as they land. Add new rows as gaps surface.
 
 Legend: `[ ]` not started · `[~]` in progress / partial · `[x]` done · `[?]` needs confirmation
 
@@ -14,7 +14,7 @@ Legend: `[ ]` not started · `[~]` in progress / partial · `[x]` done · `[?]` 
 - [x] **Privacy Policy URL** — https://jjgantt.github.io/golftracker-site/privacy.html (2026-04-23).
 
 ### Bundle metadata
-- [x] **Version / build** — set to `CFBundleShortVersionString = 0.9.0`, `CFBundleVersion = 1` in both Info.plists (2026-04-23). Pre-release framing for TestFlight-first path; bump `CFBundleVersion` every upload, promote to `1.0.0` at public launch.
+- [x] **Version / build** — now `CFBundleShortVersionString = 1.0.0`, `CFBundleVersion = 52` in both Info.plists. `GENERATE_INFOPLIST_FILE = NO`, so these are literals and `CURRENT_PROJECT_VERSION` is ignored; bump both plists in lockstep on every upload.
 - [?] **Bundle IDs** — declared in CLAUDE.md as `com.Jared.GolfTracker` + `com.Jared.GolfTracker.watchkitapp`. Needs matching App IDs + provisioning profiles in App Store Connect.
 - [x] **CFBundleIconName** — `AppIcon` set in iOS Info.plist.
 - [x] **App icons** — both targets have `AppIcon.appiconset` with full size set (iOS: 20/29/40/60 @2x@3x + 1024; Watch: all complication/corner/circular sizes + 1024).
@@ -24,7 +24,7 @@ Legend: `[ ]` not started · `[~]` in progress / partial · `[x]` done · `[?]` 
 - [x] **Supported orientations** — iOS locked to `UIInterfaceOrientationPortrait`.
 
 ### Usage descriptions (already in place)
-- [x] `NSLocationWhenInUseUsageDescription` (iOS) — "GolfTracker needs your location to calculate distances to holes and track your shots during a round."
+- [x] `NSLocationWhenInUseUsageDescription` (iOS) — "StrokeSaver needs your location to calculate distances to holes and track your shots during a round."
 - [x] `NSLocationAlwaysAndWhenInUseUsageDescription` (iOS) — same copy. Consider differentiating: "...during a round even when the app is in the background."
 - [x] `NSMotionUsageDescription` (Watch) — per CLAUDE.md.
 - [x] `NSHealthShareUsageDescription` + `NSHealthUpdateUsageDescription` (Watch) — per CLAUDE.md.
@@ -38,7 +38,7 @@ Legend: `[ ]` not started · `[~]` in progress / partial · `[x]` done · `[?]` 
 - [ ] **Marketing URL** (optional) — can be same as Support URL.
 - [ ] **Screenshots** — iPhone (6.7", 6.5", 5.5" display sizes) + Apple Watch (all series currently shipping). Min 1 screenshot per device size; typical is 3-5. Use TestFlight build for fresh captures.
 - [~] **App description + keywords** — drafted in [LISTING.md](./LISTING.md). Review before pasting into App Store Connect.
-- [ ] **Age rating** — run through the questionnaire. GolfTracker has no objectionable content; will land at 4+.
+- [x] **Age rating** — 4+, set in App Store Connect (see [LISTING.md](./LISTING.md)).
 - [ ] **Category** — "Sports" (primary), "Health & Fitness" (secondary).
 - [ ] **Review notes** — brief note to reviewer explaining how to test (e.g., "Enable motion permission, tap Motion Test from Watch home to see the detection UI"). Not required but speeds up review.
 - [ ] **Demo account** — not applicable, no login.
@@ -70,7 +70,7 @@ Legend: `[ ]` not started · `[~]` in progress / partial · `[x]` done · `[?]` 
 
 ### Privacy & data
 - [?] **Data export** — not required, but if we ever collect analytics, users can ask for their data. Currently all data is local, so a zero-effort compliance statement.
-- [?] **Data deletion** — App Store requires a "delete account" path if the app has accounts. N/A for GolfTracker (no accounts).
+- [x] **Data deletion** — the app *does* have accounts now (Sign in with Apple, `LoginView`), so this is required and is satisfied by Settings → "Delete My Data" (`SupabaseSync.deleteAllUserData()`, signs out on completion).
 
 ---
 
