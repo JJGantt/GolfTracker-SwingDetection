@@ -40,7 +40,7 @@ extension SwingDetectionManager {
         setupEndTimeoutTimer?.invalidate()
         setupEndTimeoutTimer = nil
         syncRawAccelHardwareState()
-        ClientEventLogger.log("rawAccel.putt.start", detail: [
+        ClientEventLogger.log("rawAccel.putt.start", level: .diagnostic, detail: [
             "isPutterSelected": .bool(isPutterSelected),
             "selectedClubType": selectedClubTypeName.map { .string($0) } ?? .null,
             "workoutSessionState": .string("\(WorkoutManager.shared.session?.state.rawValue ?? -1)"),
@@ -60,13 +60,13 @@ extension SwingDetectionManager {
     }
 
     func onUnifSetupStarted() {
-        ClientEventLogger.log("rawAccel.setupStarted", detail: [
+        ClientEventLogger.log("rawAccel.setupStarted", level: .diagnostic, detail: [
             "isPutterSelected": .bool(isPutterSelected),
             "selectedClubType": selectedClubTypeName.map { .string($0) } ?? .null,
             "workoutSessionState": .string("\(WorkoutManager.shared.session?.state.rawValue ?? -1)")
         ])
         guard isPutterSelected || !raw800PutterOnly else {
-            ClientEventLogger.log("rawAccel.setupStarted.bail.notPutter")
+            ClientEventLogger.log("rawAccel.setupStarted.bail.notPutter", level: .diagnostic)
             return
         }
         setupEndTimeoutTimer?.invalidate()
@@ -125,7 +125,7 @@ extension SwingDetectionManager {
 
         if shouldRun {
             guard canStart else {
-                ClientEventLogger.log("rawAccel.sync.bail.canStartFalse", detail: [
+                ClientEventLogger.log("rawAccel.sync.bail.canStartFalse", level: .diagnostic, detail: [
                     "workoutSessionState": .string("\(WorkoutManager.shared.session?.state.rawValue ?? -1)"),
                     "isMonitoring": .bool(isMonitoring),
                     "isAccelerometerSupported": .bool(CMBatchedSensorManager.isAccelerometerSupported)

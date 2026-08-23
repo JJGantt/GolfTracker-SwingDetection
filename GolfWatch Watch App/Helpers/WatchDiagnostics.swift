@@ -63,7 +63,7 @@ final class WatchDiagnostics {
         DispatchQueue.main.async {
             let probeEnd = DispatchTime.now().uptimeNanoseconds
             let mainLatencyMs = Int((probeEnd - probeStart) / 1_000_000)
-            ClientEventLogger.log("watch.diagnostics.tick", detail: [
+            ClientEventLogger.log("watch.diagnostics.tick", level: .diagnostic, detail: [
                 "bodyEvals": .integer(body),
                 "crownTicks": .integer(ticks),
                 "clubIntegerChanges": .integer(changes),

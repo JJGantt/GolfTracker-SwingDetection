@@ -20,11 +20,36 @@ import UIKit
 /// tight loops), prefer using it sparingly — it's an investigative tool,
 /// not a permanent telemetry pipeline.
 enum ClientEventLogger {
-    /// Runtime toggle backed by UserDefaults. Default OFF — turn on via
-    /// the iOS Settings → Developer section (long-press the Settings title
-    /// to reveal). Toggling on iPhone syncs to the watch via
-    /// WatchConnectivity. Off-mode is cheap: just a UserDefaults read +
-    /// guard return; no Task spawn, no detail-dict evaluation.
+    /// What a call site costs. The two tiers exist because the volumes differ
+    /// by more than two orders of magnitude, measured on the 2026-05-08 round —
+    /// the only day the logger ran through a full round:
+    ///
+    /// | tier | rows per round | examples |
+    /// |---|---|---|
+    /// | `.lifecycle` | ~2,800 | round start/end, elevation cache, uploads, errors |
+    /// | `.diagnostic` | ~112,000 | `unif.bsTop` 51k, `unif.fsPeak` 42k, ticks |
+    ///
+    /// `.diagnostic` sits in the 100 Hz detector loop and on periodic timers, so
+    /// it is an investigation tool and cannot be on by default — 112k
+    /// fire-and-forget inserts across a round is a battery and egress problem.
+    /// `.lifecycle` is roughly 23 rows a minute and is the tier that answers
+    /// "what did the app actually do on that round", which is exactly what was
+    /// missing when the 08-21 elevation failure had to be reconstructed from
+    /// raw altitude rows instead of read off `elevation.field.loaded`.
+    enum Level {
+        case lifecycle
+        case diagnostic
+    }
+
+    /// Runtime toggle backed by UserDefaults, governing `.diagnostic` only.
+    /// Default OFF — turn on via the iOS Settings → Developer section
+    /// (long-press the Settings title to reveal). Toggling on iPhone syncs to
+    /// the watch via WatchConnectivity. Off-mode is cheap: a UserDefaults read
+    /// + guard return; no Task spawn, no detail-dict evaluation.
+    ///
+    /// `.lifecycle` ignores this and always records. It used to be gated too,
+    /// which meant the default state of the app was to keep no account of
+    /// itself at all.
     static let userDefaultsKey = "clientEventLoggerEnabled"
 
     static var enabled: Bool {
@@ -72,10 +97,20 @@ enum ClientEventLogger {
 
     /// Log an event with optional small JSON-encodable detail dict. Don't
     /// pass huge payloads — this hits the network on every call.
-    /// `force` skips the enabled-toggle gate for low-volume telemetry that
-    /// must always record (battery burn rate).
-    static func log(_ event: String, detail: [String: AnyJSON]? = nil, force: Bool = false) {
-        guard enabled || force else { return }
+    ///
+    /// Defaults to `.lifecycle`, which always records. Pass
+    /// `level: .diagnostic` from anything on the 100 Hz detector path or on a
+    /// periodic timer; those stay behind the toggle. `force` is retained for
+    /// callers that must record regardless of any future gating decision
+    /// (battery burn rate).
+    /// `level` precedes `detail` so a call site can name either, both, or
+    /// neither — Swift only requires declaration order be preserved, and every
+    /// existing `log("x", detail: …)` call stays valid untouched.
+    static func log(_ event: String,
+                    level: Level = .lifecycle,
+                    detail: [String: AnyJSON]? = nil,
+                    force: Bool = false) {
+        guard level == .lifecycle || enabled || force else { return }
         let now = Date()
         Task.detached(priority: .background) {
             let userId = await currentUserId()

@@ -185,7 +185,7 @@ extension ActiveRoundView {
         if transition || firstCall || throttledTick {
             lastLoggedOnGreen = nowOnGreen
             lastLoggedGreenAt = now
-            ClientEventLogger.log("green.state", detail: [
+            ClientEventLogger.log("green.state", level: .diagnostic, detail: [
                 "trigger": .string(transition ? "transition" : (firstCall ? "first" : "tick")),
                 "nowOnGreen": .bool(nowOnGreen),
                 "candidateCount": .integer(candidateCount),
