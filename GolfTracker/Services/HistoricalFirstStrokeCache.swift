@@ -51,13 +51,26 @@ final class HistoricalFirstStrokeCache: @unchecked Sendable {
         }
 
         do {
-            let rows: [Row] = try await supabase
-                .from("strokes")
-                .select("hole_number,latitude,longitude,rounds!inner(course_id)")
-                .eq("stroke_number", value: 1)
-                .eq("rounds.course_id", value: courseId.uuidString)
-                .execute()
-                .value
+            // Paged. This grows one row per hole per round played here forever,
+            // so it crosses PostgREST's 1000-row cap on its own eventually —
+            // and an unbounded select would then start quietly forgetting the
+            // oldest history rather than failing.
+            var rows: [Row] = []
+            var from = 0
+            while true {
+                let page: [Row] = try await supabase
+                    .from("strokes")
+                    .select("hole_number,latitude,longitude,rounds!inner(course_id)")
+                    .eq("stroke_number", value: 1)
+                    .eq("rounds.course_id", value: courseId.uuidString)
+                    .order("id", ascending: true)
+                    .range(from: from, to: from + ElevationFoldIn.readPageSize - 1)
+                    .execute()
+                    .value
+                rows.append(contentsOf: page)
+                if page.count < ElevationFoldIn.readPageSize { break }
+                from += ElevationFoldIn.readPageSize
+            }
 
             var grouped: [Key: [FirstStroke]] = [:]
             for r in rows {
