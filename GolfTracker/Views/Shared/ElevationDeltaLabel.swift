@@ -10,8 +10,15 @@ import CoreLocation
 /// barometric altimeter; showing decimals would imply more accuracy
 /// than the signal supports.
 ///
-/// Hidden when `ElevationReadout` doesn't have enough data (no
-/// crossings yet, sparse cells around the query point, test mode).
+/// **No solution renders a dash, not nothing.** Drawing nothing made "the
+/// readout has no answer" pixel-identical to "the readout says this hole is
+/// flat", because a genuine zero delta prints `↑0` in dim white and a nil
+/// prints empty space a glance can't distinguish from it. That ambiguity cost a
+/// whole round: on 2026-08-21 the cell map came back truncated and the readout
+/// was nil on all nine holes, which was read as a flat course rather than as a
+/// broken feature, and the real fault went unnoticed until the round was over.
+/// A dash says the feature is alive and has nothing to report; `↑0` says the
+/// green is level with you. Those are different facts and now look different.
 struct ElevationDeltaLabel: View {
     @ObservedObject private var readout = ElevationReadout.shared
 
@@ -31,8 +38,21 @@ struct ElevationDeltaLabel: View {
                 .font(.system(size: fontSize, weight: .semibold, design: .rounded))
                 .foregroundColor(Self.color(forFeet: feet))
                 .accessibilityLabel(accessibilityText(feet))
+        } else {
+            Text(Self.noSolutionGlyph)
+                .font(.system(size: fontSize, weight: .semibold, design: .rounded))
+                .foregroundColor(Self.noSolutionColor)
+                .accessibilityLabel("Elevation to the green is unavailable")
         }
     }
+
+    /// Deliberately not an arrow and not a digit — it must not be mistakable for
+    /// a reading of any magnitude, including zero.
+    static let noSolutionGlyph = "–"
+
+    /// Dimmer than flat's `white.opacity(0.7)`, so the two are separable by
+    /// weight as well as by shape at a glance on the wrist.
+    static let noSolutionColor = Color.white.opacity(0.35)
 
     private var currentDeltaMeters: Double? {
         if let coordinate {
