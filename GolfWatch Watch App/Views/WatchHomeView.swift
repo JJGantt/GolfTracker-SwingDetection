@@ -7,6 +7,29 @@ struct WatchHomeView: View {
     /// Mirrored from the iPhone's Developer section via the devParams
     /// applicationContext path, which writes straight to UserDefaults.
     @AppStorage("swingTestModeEnabled") private var swingTestModeEnabled = false
+    /// Whether the watch holds a usable Supabase session. Republished by
+    /// `WatchAuthSession` so this flips as soon as the iPhone pushes one.
+    @StateObject private var auth = WatchAuthSession.shared
+
+    private var isSignedIn: Bool { auth.currentUserId != nil }
+
+    @ViewBuilder
+    private func unreadyCard(title: String, detail: String, showsSpinner: Bool) -> some View {
+        VStack(spacing: 6) {
+            if showsSpinner { ProgressView().scaleEffect(0.8) }
+            Text(title)
+                .font(.caption)
+                .foregroundColor(.primary)
+            Text(detail)
+                .font(.caption2)
+                .foregroundColor(.secondary)
+                .multilineTextAlignment(.center)
+        }
+        .frame(maxWidth: .infinity)
+        .padding()
+        .background(Color.gray.opacity(0.3))
+        .cornerRadius(10)
+    }
 
     var body: some View {
         NavigationStack {
@@ -20,23 +43,31 @@ struct WatchHomeView: View {
 
                 Spacer()
 
-                // Main action button
-                if store.availableClubs.isEmpty {
-                    // No clubs synced yet - show waiting state
-                    VStack(spacing: 8) {
-                        ProgressView()
-                            .scaleEffect(0.8)
-                        Text("Waiting for clubs to sync...")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                        Text("Open iPhone app")
-                            .font(.caption2)
-                            .foregroundColor(.secondary)
-                    }
-                    .frame(maxWidth: .infinity)
-                    .padding()
-                    .background(Color.gray.opacity(0.3))
-                    .cornerRadius(10)
+                // Main action button.
+                //
+                // The old copy here read "Waiting for clubs to sync… / Open
+                // iPhone app", which named the wrong dependency. Clubs do NOT
+                // come from the phone — `hydrateClubsFromSupabase` pulls them
+                // straight from Supabase over the watch's own connection. What
+                // it needs is an auth SESSION, and that is the one thing the
+                // watch genuinely cannot get by itself: Sign In With Apple runs
+                // on the iPhone (`AuthManager`) and is pushed across by
+                // `sendAuthSession`. With no session the hydrate bails at its
+                // `currentUserId != nil` guard, silently, and the screen sat
+                // there implying the phone was slow to send clubs it was never
+                // going to send. Say which of the two is actually missing.
+                if !isSignedIn {
+                    unreadyCard(
+                        title: "Sign in on iPhone",
+                        detail: "The watch gets its account from the phone. Open StrokeSaver on your iPhone once and it will sync over.",
+                        showsSpinner: false
+                    )
+                } else if store.availableClubs.isEmpty {
+                    unreadyCard(
+                        title: "Loading clubs…",
+                        detail: "Pulling your bag from the server. If this sticks, add clubs on the iPhone.",
+                        showsSpinner: true
+                    )
                 } else if store.currentRound != nil {
                     // Active round exists - show Continue button
                     NavigationLink(destination: ActiveRoundView()) {
@@ -78,17 +109,6 @@ struct WatchHomeView: View {
                     }
                     .buttonStyle(.plain)
                 }
-
-                // General-purpose data-collection mode (not golf-specific).
-                NavigationLink(destination: SensorCaptureView()) {
-                    Label("Sensor Capture", systemImage: "waveform.path.ecg")
-                        .frame(maxWidth: .infinity)
-                        .padding()
-                        .background(Color.gray.opacity(0.3))
-                        .foregroundColor(.white)
-                        .cornerRadius(10)
-                }
-                .buttonStyle(.plain)
 
                 // Resolver status while a round-start is in flight.
                 if let status = store.roundStartStatus {

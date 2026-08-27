@@ -131,9 +131,10 @@ Private. Paths are keyed by **`user_id`**, not device:
 | `{userId}/false_negatives/{groupId}/{position}.csv` | Per-candidate motion |
 | `{userId}/lookback/{groupId}/window.csv` | Lookback raw window |
 | `{userId}/lookback/{groupId}/window_raw.csv` | Lookback 800 Hz, when running |
-| `{userId}/sensor_capture/{sessionId}/{stream}.csv` | Non-golf sensor capture |
 
-Detection slices cover `bsTopT − 2.0s` to `fsPeakT + 1.0s`. Storage policies compare
+Detection slices cover `bsTopT − 2.0s` to `fsPeakT + 1.0s`. Historical
+`sensor_capture/` objects may still sit in the bucket; nothing writes there any more
+(that recorder was removed). Storage policies compare
 folder to `auth.uid()` **case-insensitively** — Swift's `UUID.uuidString` is
 uppercase and `auth.uid()::text` is not, which silently 403'd every nested upload
 until 00030.

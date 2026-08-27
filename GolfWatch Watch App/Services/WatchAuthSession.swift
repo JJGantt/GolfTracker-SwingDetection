@@ -7,7 +7,7 @@ import Supabase
 ///
 /// Public API surface preserved so existing callers (SupabaseUploader,
 /// OSMCourseService) don't change.
-final class WatchAuthSession {
+final class WatchAuthSession: ObservableObject {
     static let shared = WatchAuthSession()
 
     private let supabase = SupabaseManager.shared
@@ -16,7 +16,15 @@ final class WatchAuthSession {
     /// Mirror of the latest session received from the iPhone, kept locally so
     /// callers can read access token / user id synchronously without awaiting
     /// the SDK. The SDK's own session is the authoritative refresh target.
-    private(set) var session: AuthSession?
+    ///
+    /// `@Published` so the home screen can distinguish "not signed in yet" from
+    /// "signed in, clubs still loading" and flip the moment a session lands.
+    /// Both runtime assignments below already hop to the main actor; the one in
+    /// `init` runs before any observer exists. Note this is deliberately NOT
+    /// exposed through `onSessionChanged`, which is a single-assignment closure
+    /// already owned by `WatchDataStore` for club hydration — a second consumer
+    /// taking it would silently clobber the first.
+    @Published private(set) var session: AuthSession?
 
     /// Notified whenever the session changes (sign-in, refresh, sign-out).
     var onSessionChanged: ((AuthSession?) -> Void)?
