@@ -23,6 +23,21 @@ class WatchConnectivityManager: NSObject, ObservableObject {
     @Published var isReachable = false
     @Published var isActivated = false
 
+    /// Build number of the watch app, as the watch itself reported it.
+    ///
+    /// The watch app is a separate binary that installs asynchronously after
+    /// the phone's copy lands, and it can lag a long way behind — which is
+    /// invisible, because neither app displays what it is running. Testing
+    /// yesterday's watch code against today's phone code looks exactly like a
+    /// bug in today's code. The watch pushes this on every activation;
+    /// iPhone-side only, nil until the first context arrives.
+    @Published var watchBuild: String?
+
+    /// This target's own build number.
+    static var localBuild: String {
+        (Bundle.main.infoDictionary?["CFBundleVersion"] as? String) ?? "?"
+    }
+
     // Callbacks for received data
     var onReceiveHoleDetectionData: ((CourseHoleDetectionData) -> Void)?
     var onReceiveHoleFilterSettings: ((HoleDetectionFilterSettings) -> Void)?
@@ -429,6 +444,13 @@ extension WatchConnectivityManager: WCSessionDelegate {
         }
         #endif
 
+        // Watch build number, pushed by the watch on activation.
+        #if os(iOS)
+        if let build = applicationContext["watchBuild"] as? String {
+            DispatchQueue.main.async { self.watchBuild = build }
+        }
+        #endif
+
         // Hole detection request from watch via applicationContext —
         // delivered when watch wasn't reachable at the time of the original
         // sendMessage. iPhone-only consumer.
@@ -546,6 +568,19 @@ extension WatchConnectivityManager: WCSessionDelegate {
             dprint("❌ WCSession activation failed: \(error.localizedDescription)")
         } else {
             DispatchQueue.main.async { self.onSessionActivated?() }
+            #if os(watchOS)
+            // Report which build the watch is actually running, so the phone's
+            // dev menu can show the skew.
+            self.mergeIntoApplicationContext(["watchBuild": Self.localBuild])
+            #endif
+            #if os(iOS)
+            // A context delivered while this app was closed sits in
+            // receivedApplicationContext rather than firing the delegate, so
+            // read it once at activation too.
+            if let build = session.receivedApplicationContext["watchBuild"] as? String {
+                DispatchQueue.main.async { self.watchBuild = build }
+            }
+            #endif
             if let detectionData = self.pendingHoleDetectionData {
                 self.actuallySendHoleDetectionData(detectionData)
                 self.pendingHoleDetectionData = nil

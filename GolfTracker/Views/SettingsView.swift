@@ -3,6 +3,7 @@ import SwiftUI
 struct SettingsView: View {
     @EnvironmentObject var store: DataStore
     @ObservedObject private var auth = AuthManager.shared
+    @ObservedObject private var connectivity = WatchConnectivityManager.shared
     @Environment(\.dismiss) private var dismiss
 
     @State private var showingClubManagement = false
@@ -31,6 +32,15 @@ struct SettingsView: View {
     /// title. Persists across this view's lifetime but resets on dismiss
     /// so casual users don't stumble into it.
     @State private var showingDeveloper = false
+
+    /// Tints the watch-build row when the two devices are on different builds,
+    /// which is the whole reason the rows exist. Treated as matching until the
+    /// watch has reported anything, so an un-launched watch app doesn't read as
+    /// a mismatch.
+    private var buildsMatch: Bool {
+        guard let w = connectivity.watchBuild else { return true }
+        return w == WatchConnectivityManager.localBuild
+    }
 
     var body: some View {
         NavigationStack {
@@ -105,6 +115,17 @@ struct SettingsView: View {
 
                 if showingDeveloper {
                     Section("Developer") {
+                        // Which build is on each device. The watch app installs
+                        // asynchronously after the phone's copy and can lag well
+                        // behind, and neither app shows what it is running — so a
+                        // stale watch binary is indistinguishable from a bug in
+                        // the current one. `watchBuild` is nil until the watch
+                        // has activated a session at least once since install.
+                        LabeledContent("Build", value: WatchConnectivityManager.localBuild)
+                        LabeledContent("Watch build",
+                                       value: connectivity.watchBuild ?? "—")
+                            .foregroundStyle(buildsMatch ? Color.primary : Color.orange)
+
                         NavigationLink {
                             TestModeView()
                         } label: {
