@@ -14,16 +14,14 @@ struct WatchHomeView: View {
     private var isSignedIn: Bool { auth.currentUserId != nil }
 
     @ViewBuilder
-    private func unreadyCard(title: String, detail: String, showsSpinner: Bool) -> some View {
+    private func unreadyCard(title: String?, showsSpinner: Bool) -> some View {
         VStack(spacing: 6) {
             if showsSpinner { ProgressView().scaleEffect(0.8) }
-            Text(title)
-                .font(.caption)
-                .foregroundColor(.primary)
-            Text(detail)
-                .font(.caption2)
-                .foregroundColor(.secondary)
-                .multilineTextAlignment(.center)
+            if let title {
+                Text(title)
+                    .font(.caption)
+                    .foregroundColor(.primary)
+            }
         }
         .frame(maxWidth: .infinity)
         .padding()
@@ -45,29 +43,24 @@ struct WatchHomeView: View {
 
                 // Main action button.
                 //
-                // The old copy here read "Waiting for clubs to sync… / Open
-                // iPhone app", which named the wrong dependency. Clubs do NOT
-                // come from the phone — `hydrateClubsFromSupabase` pulls them
-                // straight from Supabase over the watch's own connection. What
-                // it needs is an auth SESSION, and that is the one thing the
-                // watch genuinely cannot get by itself: Sign In With Apple runs
-                // on the iPhone (`AuthManager`) and is pushed across by
-                // `sendAuthSession`. With no session the hydrate bails at its
-                // `currentUserId != nil` guard, silently, and the screen sat
-                // there implying the phone was slow to send clubs it was never
-                // going to send. Say which of the two is actually missing.
+                // Two distinct states, and the old copy conflated them. It read
+                // "Waiting for clubs to sync… / Open iPhone app", which named the
+                // wrong dependency: clubs do NOT come from the phone —
+                // `hydrateClubsFromSupabase` pulls them straight from Supabase over
+                // the watch's own connection. What the watch cannot get by itself
+                // is an auth SESSION, because Sign In With Apple runs on the iPhone
+                // (`AuthManager`) and is pushed across by `sendAuthSession`. With no
+                // session the hydrate bails at its `currentUserId != nil` guard,
+                // silently, so the screen implied the phone was slow to send clubs
+                // it was never going to send.
+                //
+                // Signed in with an empty bag is only ever the moment before the
+                // fetch returns — `seedDefaultCatalog` gives every account 16 clubs
+                // — so it is a spinner, not a message.
                 if !isSignedIn {
-                    unreadyCard(
-                        title: "Sign in on iPhone",
-                        detail: "The watch gets its account from the phone. Open StrokeSaver on your iPhone once and it will sync over.",
-                        showsSpinner: false
-                    )
+                    unreadyCard(title: "Sign in on iPhone", showsSpinner: false)
                 } else if store.availableClubs.isEmpty {
-                    unreadyCard(
-                        title: "Loading clubs…",
-                        detail: "Pulling your bag from the server. If this sticks, add clubs on the iPhone.",
-                        showsSpinner: true
-                    )
+                    unreadyCard(title: nil, showsSpinner: true)
                 } else if store.currentRound != nil {
                     // Active round exists - show Continue button
                     NavigationLink(destination: ActiveRoundView()) {

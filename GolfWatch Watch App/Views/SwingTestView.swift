@@ -28,13 +28,6 @@ struct SwingTestView: View {
                     lookbackButton
                 }
                 startStopButton
-                if !session.isRunning {
-                    Text("Runs the detector with no round. Swing, watch the count, and label only what it gets wrong.")
-                        .font(.system(size: 11))
-                        .foregroundColor(.secondary)
-                        .multilineTextAlignment(.center)
-                        .padding(.horizontal, 4)
-                }
             }
             .padding(.horizontal, 4)
         }
