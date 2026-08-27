@@ -90,7 +90,7 @@ If the host quits the app or app crashes mid-round, the same time-based + hole-1
 
 ## Schema
 
-Two new tables. Migration `00011_playgroups.sql`.
+Two new tables. Migration `00014_playgroups.sql`.
 
 ```sql
 create table playgroups (
@@ -411,13 +411,16 @@ alter table round_holes add column tee_id uuid references course_tees(id);
 
 ## Implementation order
 
-This is the build sequence we agreed on, top to bottom:
+**All nine steps below have shipped.** Kept as the record of the intended sequence
+and what each step covered; it is no longer a to-do list. Notable divergence: step 4
+landed as `ScorecardView`/`ScorecardSheet`, and step 9's cleanup is a `pg_cron` job
+(migration 00018) rather than a scheduled Edge Function.
 
 1. **Update this doc** ✓
 2. **GolfCourseAPI integration** — `GolfCourseAPIService` (search, course detail), schema migration `00012_course_tees.sql`, hook into RoundResolver after course pick, cache to `course_tees` + `course_tee_holes`
 3. **Tee picker UI** — modal after resolver completes, before round opens; settings option for mid-round change
-4. **Solo scorecard view** — single-player, single-tee variant of the layout. Replaces or augments existing `InRoundScorecardView`.
-5. **Playgroup infrastructure** — migration `00011_playgroups.sql`, `PlaygroupService` (host/join/accept/decline/end), Multiplayer view in Settings, RLS updates, profile capture for first names
+4. **Solo scorecard view** — single-player, single-tee variant of the layout. Shipped as `ScorecardView` (shared, both targets) + `ScorecardSheet`; there is no `InRoundScorecardView`.
+5. **Playgroup infrastructure** — migration `00014_playgroups.sql`, `PlaygroupService` (host/join/accept/decline/end), Multiplayer view in Settings, RLS updates, profile capture for first names
 6. **Map color/marker system** — assign palette color on join, render player position dots in color, render stroke markers in lighter version of color, faint connecting lines between strokes (apply to single-player rounds too)
 7. **Scorecard multi-player extensions** — column-per-player + multi-tee column logic + colored player columns
 8. **Realtime additions for playgroups** — subscribe to playgroup channel + member round subs while active round screen visible
