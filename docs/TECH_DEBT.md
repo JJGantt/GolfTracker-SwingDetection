@@ -71,3 +71,43 @@ Things we built deliberately but plan to revisit when justified. Not bugs — kn
 4. **Negative cache.** Some OSM courses don't exist in GCAPI at all — record `external_course_id = NULL` for these on the shared `courses` row (already supported by schema), and don't keep retrying the API on every round-start.
 
 **Origin:** flagged 2026-04-29 during the courses-shared schema redesign (migration 00026). The bug existed pre-redesign too — the redesign just made it more visible because the proximity check at the shared-courses level pushes more never-resolved-before courses through the GCAPI miss path.
+
+---
+
+## Swing-label integrity gaps (detector tuning)
+
+Three known holes in the labeling pipeline, left open deliberately while Swing Test
+Mode generates clean data. Listed together because they all corrupt or starve the
+same training set.
+
+**1. `autoAddStack` is view state, so an undo can silently mislabel.**
+`ActiveRoundView.autoAddStack` is `@State` pairing each auto-added stroke with its
+`swing_events` id, and it is cleared on every hole change. `undoLastStroke` looks the
+stroke up there; a miss falls through to the "manual stroke" branch, which deletes
+the stroke but labels nothing. So if the view is torn down, or the undo crosses a
+hole boundary, a genuine false positive **stays `positive/low` forever** — recorded
+as a correct detection. The failure is silent and biases the positive class.
+*Fix:* persist the pairing (UserDefaults or the store) and stop clearing it on hole
+change. Hole-change clearing exists only because undo doesn't cross holes anyway,
+which is a UI constraint, not a reason to drop the labeling link.
+
+**2. `positive/low` is an unverified label.**
+An auto-added stroke that is never undone means only "the detector fired and nobody
+objected", which includes detections the user never noticed. Nothing promotes a row
+to `positive/high`, so the positive class is largely unconfirmed. Swing Test Mode
+narrows this — the user is attending — but there is still no confirm gesture.
+
+**3. `false_negative_candidates` are never reviewed.**
+Every candidate's `label` is NULL. Nothing sifts them into `'true_positive_match'` /
+`'noise'`, and there is no tooling to fetch and plot the per-candidate CSVs, so the
+groups accumulate without feeding anything.
+
+**Related, smaller:** `SupabaseUploader.rejectAll` (upload every detection as
+`false_positive/high`, for harvesting false positives during casual wear) works but
+**has no UI** — nothing writes it but its own `didSet`, so it cannot be enabled from
+the app.
+
+**Also worth remembering:** `fireSmartDetection` still returns early without a GPS
+fix during round play, discarding the detection *and* its motion slice. Swing Test
+Mode is exempt. That makes any swing taken before the first fix on a round an
+invisible false negative — it logs `swing.fire.bail.noLocation` and nothing else.

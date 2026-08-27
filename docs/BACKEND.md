@@ -46,17 +46,20 @@ Both use the same publishable key for unauthenticated requests. When user auth i
 
 ### Table: `swing_events`
 
-One row per detected swing. Stores classification metadata; actual motion CSV lives in the Storage bucket.
+One row per detected swing. Stores classification metadata; the motion CSV lives
+in the Storage bucket.
 
 | Column | Type | Notes |
 |---|---|---|
 | `id` | uuid (PK) | Auto-generated |
-| `device_id` | uuid | Anonymous per-install identifier |
-| `created_at` | timestamptz | Auto-set to now() |
+| `user_id` | uuid | Owner. Replaced `device_id`, which 00008 **dropped** |
+| `created_at` | timestamptz | Detection time. Note there is no `updated_at` — a label flip leaves no timestamp here |
 | `classification` | text | `putt`, `swing`, `ambig` |
 | `swing_type` | text | `putt`, `partial`, `full` (post-classification) |
-| `label` | text | `positive`, `false_positive` (default: `positive`) |
-| `confidence` | text | `high` (explicit user action) or `low` (implicit flush). Default: `low`. |
+| `label` | text | `positive`, `false_positive`. **Only ever a statement about the DETECTOR** — see below |
+| `confidence` | text | `high` (explicit user action) or `low` (implicit). Default `low` |
+| `not_a_stroke_reason` | text | 00047. Why a *correct* detection wasn't a counted stroke. NULL = it counted. `'practice'` = practice-swing replacement |
+| `test_session_id` | uuid | 00047. Set when the detection came from Swing Test Mode. NULL for round play. Soft reference to `swing_test_sessions` |
 | `fs_peak_rot_mag` | double | Forward-stroke peak rotation magnitude |
 | `bs_peak_rot_mag` | double | Backstroke peak rotation magnitude |
 | `fs_bs_ratio` | double | FS/BS ratio |
@@ -67,34 +70,92 @@ One row per detected swing. Stores classification metadata; actual motion CSV li
 | `baseline_tv` | double | Baseline total variation |
 | `setup_duration` | double | Seconds in setup before stroke |
 | `bs_to_fs_gap` | double | Seconds between BS top and FS peak |
-| `club_type` | text | Club used (e.g., `Driver`, `Putt`) |
+| `club_type` | text | Club used |
 | `detection_mode` | text | Default `unifDetect` |
-| `storage_path` | text | Path to motion CSV in `swing-motion` bucket |
+| `storage_path` | text | Path to motion CSV in `swing-motion` |
 
-**Indexes:** `device_id`, `created_at DESC`, `classification`.
+**`label` and `not_a_stroke_reason` are orthogonal on purpose.** `label` answers
+only "did the detector correctly identify a golf swing?" A practice swing is a
+**correct detection** that simply isn't a shot, so it is `positive/high` +
+`not_a_stroke_reason='practice'`. Before 00047 it was written as
+`false_positive/high` — the same call undo makes — which trained the model against
+its own correct answers. Pre-00047 `false_positive` rows are consequently a blend
+of genuine misfires and mislabeled practice swings; `swing_events` alone cannot
+split them (no flip timestamp), but joining `client_events` on
+`swing.update.falsePositive.ok` can. See `docs/SWING_DETECTION.md`.
+
+### Table: `swing_test_sessions` (00047)
+
+One row per Swing Test Mode session — the detector run with no round attached, for
+deliberately producing labeled true positives, false positives and misses.
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | uuid (PK) | Referenced by `swing_events.test_session_id` (soft) |
+| `user_id` | uuid | Owner |
+| `started_at` / `ended_at` | timestamptz | `ended_at` NULL while running |
+| `notes` | text | Free text |
+| `detection_mode` | text | Default `unifDetect` |
+| `detected_count` | int | Counters **as the watch displayed them**, written on stop, so a |
+| `false_positive_count` | int | session can be audited against its rows without assuming |
+| `lookback_count` | int | every upload landed |
+
+### Tables: `false_negative_groups` / `false_negative_candidates` (00028, 00030, 00047)
+
+Missed swings. A group is one miss; candidates are the detector's rejected shapes
+around it. `capture_reason` distinguishes the two ways a miss is captured, which
+exist because they cover genuinely different failures:
+
+| `capture_reason` | Trigger | Content |
+|---|---|---|
+| `rejected_shapes` | Manual stroke add during a round | N candidates, one of which is the real missed swing; each carries `gate_fails` + `stage`. Only reachable when the shape **paired** and a post-pairing gate killed it |
+| `lookback` | "Missed It" button | Raw motion window on the group's own `storage_path`, plus any rejections inside it. `candidate_count = 0` is **the finding** — nothing paired at all |
+
+Group columns beyond the originals: `capture_reason`, `storage_path` (lookback's raw
+window), `test_session_id`, `window_seconds` (actual span — shorter than the 15s
+maximum whenever a detection or earlier capture already covered the ground behind
+it). `stroke_id` has **no FK** (dropped in 00030): the stroke is written locally and
+synced async, so a hard constraint lost the group to a race.
+
+Candidate `label` starts NULL and is filled during review with
+`'true_positive_match'` (the real missed swing) or `'noise'`.
 
 ### Storage Bucket: `swing-motion`
 
-Private bucket for motion CSV blobs. Files organized as `{device_id}/{event_id}.csv`.
+Private. Paths are keyed by **`user_id`**, not device:
 
-Each CSV is the same format as Data Collection Mode output: 15-channel device-motion data (SensorTime, UserAccelXYZ, RotationXYZ, GravityXYZ, Pitch/Roll/Yaw) covering `setupStartT − 0.5s` to `fsPeakT + 1.0s`.
+| Path | Contents |
+|---|---|
+| `{userId}/{eventId}.csv` | Detection motion slice, 16 columns |
+| `{userId}/{eventId}_raw.csv` | 800 Hz raw accel for that detection, when running |
+| `{userId}/false_negatives/{groupId}/{position}.csv` | Per-candidate motion |
+| `{userId}/lookback/{groupId}/window.csv` | Lookback raw window |
+| `{userId}/lookback/{groupId}/window_raw.csv` | Lookback 800 Hz, when running |
+| `{userId}/sensor_capture/{sessionId}/{stream}.csv` | Non-golf sensor capture |
+
+Detection slices cover `bsTopT − 2.0s` to `fsPeakT + 1.0s`. Storage policies compare
+folder to `auth.uid()` **case-insensitively** — Swift's `UUID.uuidString` is
+uppercase and `auth.uid()::text` is not, which silently 403'd every nested upload
+until 00030.
 
 ---
 
 ## Row-Level Security (RLS)
 
-**Currently disabled** for development/debugging. RLS was enabled initially but the new publishable key format (mapping to `postgres` role instead of `anon`) caused policy mismatches. Re-enable when auth is added.
+**Enabled and owner-scoped.** RLS was disabled during early development (00004),
+which is what the old key-format note below described; 00008 dropped `device_id`,
+added `user_id`, re-enabled RLS and installed per-user policies. Every swing table
+now follows the same shape:
 
-When re-enabling, policies should omit the role clause or target `postgres`:
 ```sql
--- This works with the new key format:
-create policy "allow_insert" on swing_events for insert with check (true);
-
--- This does NOT work (old format, targets 'anon' role):
-create policy "anon_insert" on swing_events for insert to anon with check (true);
+alter table swing_events enable row level security;
+create policy swing_events_select_own on swing_events
+    for select to authenticated using (user_id = auth.uid());
 ```
 
-Once user auth is added, policies will use `auth.uid()` to scope access per user.
+`false_negative_groups`, `false_negative_candidates` and `swing_test_sessions`
+carry matching owner read/insert/update policies. The service_role key bypasses RLS
+entirely and is what ML analysis from the Mac should use.
 
 ---
 
@@ -111,7 +172,10 @@ curl -X POST "https://oumnicnvayqrbfbljgyl.supabase.co/rest/v1/swing_events" \
   -H "Authorization: Bearer sb_publishable_i0loB-AZw2qGokBJzHGSKA_VGgAgjBi" \
   -H "Content-Type: application/json" \
   -H "Prefer: return=representation" \
-  -d '{"device_id": "...", "classification": "swing", "club_type": "Driver"}'
+  -d '{"user_id": "...", "classification": "swing", "club_type": "Driver"}'
+# NOTE: inserts need a USER JWT in the Authorization header, not the publishable
+# key — RLS scopes every row to auth.uid(). Use the service_role key for analysis
+# reads instead; it bypasses RLS.
 
 # Query rows
 curl "https://oumnicnvayqrbfbljgyl.supabase.co/rest/v1/swing_events?select=*&classification=eq.putt" \
@@ -140,8 +204,21 @@ sb = create_client(
 data = sb.table("swing_events").select("*").execute()
 df = pd.DataFrame(data.data)
 
-# Download a specific motion CSV from Storage
-res = sb.storage.from_("swing-motion").download(f"{device_id}/{event_id}.csv")
+# Download a specific motion CSV from Storage (paths are keyed by USER, not device)
+res = sb.storage.from_("swing-motion").download(f"{user_id}/{event_id}.csv")
+
+# Round play only, CSV-backed and labeled:
+sb.table("swing_events").select("*") \
+  .is_("test_session_id", "null") \
+  .not_.is_("storage_path", "null") \
+  .not_.is_("label", "null").execute()
+
+# True positives, including practice swings (a correct detection either way):
+sb.table("swing_events").select("*").eq("label", "positive").execute()
+
+# Misses whose raw window was captured because nothing paired:
+sb.table("false_negative_groups").select("*") \
+  .eq("capture_reason", "lookback").eq("candidate_count", 0).execute()
 ```
 
 Install: `pip install supabase pandas`
@@ -197,10 +274,17 @@ Schema changes are managed as sequential SQL files in `supabase/migrations/`:
 
 | File | Description |
 |---|---|
-| `00001_swing_events.sql` | Create `swing_events` table, indexes, storage bucket. Original RLS policies (stale). |
-| `00002_whoami.sql` | Debug helper to check Postgres role mapping (cleaned up in 00003). |
-| `00003_fix_rls.sql` | Attempted RLS fix — broadened policies. Dropped `whoami()`. |
-| `00004_debug_rls.sql` | Disabled RLS for development. |
+| `00001_swing_events.sql` | Create `swing_events`, indexes, storage bucket. Original RLS policies (superseded). |
+| `00002`–`00004` | Early RLS debugging; 00004 disabled RLS for development. Superseded by 00008. |
+| `00005_add_confidence.sql` | `swing_events.confidence`. |
+| `00008_swing_events_user_id.sql` | **Dropped `device_id`**, added `user_id`, re-enabled RLS with owner-scoped policies. |
+| `00028_false_negative_groups.sql` | `false_negative_groups` + `false_negative_candidates`. |
+| `00030_false_negative_fixes.sql` | Dropped the `stroke_id` FK (async write race); made storage folder comparison case-insensitive. |
+| `00038`–`00040` | Storage-path repairs; NULL labels for metadata-only rows. |
+| `00047_swing_test_sessions.sql` | `not_a_stroke_reason` + `test_session_id` on `swing_events`; `swing_test_sessions`; lookback columns on `false_negative_groups`. |
+
+The full list is `supabase/migrations/` — this table covers the swing pipeline only;
+the majority of migrations concern rounds, courses and the elevation field.
 
 To recreate the database from scratch: `supabase db push` applies all migrations in order.
 
@@ -208,71 +292,87 @@ To recreate the database from scratch: `supabase db push` applies all migrations
 
 ## Upload Flow
 
-Every detected swing eventually uploads to Supabase — the label and confidence depend on the mode and user action.
+### Ordering: CSV first, then the metadata row
 
-### Pending Event Lifecycle
+`SupabaseUploader.upload(event:)` uploads the motion CSV **before** inserting the
+`swing_events` row, and writes `label`/`confidence` only if the CSV landed. A row
+whose CSV failed is inserted with both NULL (metadata-only). That makes
 
-Each detection creates a **pending event** (metadata + motion slice). The event stays pending until one of these triggers flushes it:
+```
+storage_path IS NOT NULL AND label IS NOT NULL
+```
+
+a reliable filter for CSV-backed labeled samples, and keeps detection metadata for
+the rest rather than discarding it.
+
+### Pending event lifecycle
+
+Auto-add is the live path and does **not** use the pending slot: it uploads
+immediately as `positive/low` and returns the event id so the UI can flip the row
+later. The pending slot only exists for manual-suggest mode, where the event waits
+for the popup.
 
 | Trigger | Label | Confidence |
 |---|---|---|
-| User explicitly undoes the stroke (auto-add mode) | `false_positive` | `high` |
-| User explicitly taps to add the stroke (manual-add mode) | `positive` | `high` |
-| Next detection fires without user action (auto-add: no undo) | `positive` | `low` |
-| Next detection fires without user action (manual-add: no tap) | `false_positive` | `low` |
-| Round ends / detection stops | Inherits current tentative label | `low` |
-| Farming mode (reject-all toggle) | `false_positive` | `high` |
+| Auto-add detection | `positive` | `low` |
+| Undo an auto-added stroke | `false_positive` | `high` |
+| Practice-swing replacement | `positive` + `not_a_stroke_reason='practice'` | `high` |
+| Manual-suggest: user accepts | `positive` | `high` |
+| Manual-suggest: user rejects (X) | `false_positive` | `high` |
+| Manual-suggest: next detection, no action | `false_positive` | `low` |
+| `rejectAll` farming mode | `false_positive` | `high` |
 
-### Mode Logic
+`positive/low` is deliberately weak — the detector fired and the user did not
+object, which includes detections nobody noticed. Undo and practice replacement are
+edits to an already-uploaded row (`markFalsePositive` / `markPracticeSwing`), not
+flushes.
 
-**Auto-add mode** (`autoAdd = true`):
-- Detection → stroke auto-added → pending event with tentative label `positive`
-- Undo → immediately flush as `false_positive` / `high`, upload to Supabase
-- Next detection without undo → flush previous as `positive` / `low`, hold new as pending
+**`rejectAll` has no UI.** It persists under UserDefaults `supabaseRejectAll` and
+nothing writes it but its own `didSet`, so it currently cannot be turned on from the
+app.
 
-**Manual-add mode** (`autoAdd = false`):
-- Detection → cyan icon shown, stroke NOT added → pending event with tentative label `false_positive`
-- User taps icon → flip label to `positive` / `high`
-- Next detection without tap → flush previous as `false_positive` / `low`, hold new as pending
+### Swing Test Mode
 
-**Farming mode** (new `rejectAll` toggle):
-- Detection → immediately upload as `false_positive` / `high`
-- No pending state — flush on every detection
-- Purpose: collect false-positive corpus during casual wear (walking, daily activity)
+`SwingTestSession` inserts a `swing_test_sessions` row, sets
+`SupabaseUploader.currentTestSessionId` for the session's lifetime — which stamps
+every event constructed while it is set, so the detector needs no knowledge of test
+mode — and writes the counters back on stop. It forces `autoAdd` on (manual mode
+never publishes the event id the false-positive button needs) and restores the
+previous value afterwards.
 
-### Upload Payload
+### Lookback capture
 
-Each flush sends two things to Supabase:
-1. **Metadata row** → `POST /rest/v1/swing_events` (JSON with classification, gate values, label, confidence, etc.)
-2. **Motion CSV** → upload to `swing-motion` bucket at `{device_id}/{event_id}.csv`
-
-The `storage_path` column in the metadata row points at the CSV.
+`uploadLookbackCapture` writes a `false_negative_groups` row with
+`capture_reason='lookback'`, uploads the raw window (and 800 Hz stream when
+running), then inserts any in-window rejections as ordinary candidates. The window
+ends at the current sensor time and starts at the later of *now − 15s* and a
+boundary that advances on every fired detection and every capture, so it cannot
+re-upload motion another record already covers.
 
 ---
 
 ## Current Status
 
-- [x] Supabase project created and linked
-- [x] `swing_events` table with detection metrics
-- [x] `swing-motion` storage bucket for CSV blobs
-- [x] REST API verified (insert, read, delete all working)
-- [x] Supabase CLI installed and linked
-- [x] Migrations version-controlled in repo
-- [ ] **iOS Swift upload service** — POST metadata + upload CSV after each detection
-- [ ] **Storage upload** — wire CSV blob upload to `swing-motion` bucket
-- [ ] **Python analysis setup** — `supabase-py` + service_role key in env var
-- [ ] **Secret key env var** — store `SUPABASE_SERVICE_ROLE_KEY` in `~/.zshrc` or `.env`
+- [x] `swing_events` with detection metrics, owner-scoped RLS, `user_id`
+- [x] `swing-motion` storage bucket + per-user path policies
+- [x] Watch upload service — CSV then metadata row, with the NULL-label fallback
+- [x] False-positive labeling from undo; practice swings separated from it (00047)
+- [x] False-negative capture — rejected-shape groups and raw lookback windows
+- [x] Swing Test Mode sessions
+- [x] Migrations version-controlled and pushed via `supabase db push`
+- [ ] **Review tooling for `false_negative_candidates`** — every candidate's `label`
+      is still NULL and nothing sifts them into `true_positive_match` / `noise`
+- [ ] **Confirm-a-detection affordance** — nothing promotes `positive/low` to
+      `positive/high`, so the positive class stays largely unverified
 
 ---
 
 ## Future Phases
 
-### Phase 2: Auth + User Rounds
-- Sign in with Apple via Supabase Auth
-- `rounds` table (offline-first on device, background sync to Supabase)
-- `profiles` table (user metadata, paid-tier flag)
-- RLS re-enabled with `auth.uid()` scoping
-- Anonymous → authenticated migration (link device_id history to user account)
+Phase 2 (auth + user rounds) is **done**: Sign in with Apple, `rounds`,
+`profiles`, and `auth.uid()`-scoped RLS all shipped. There was no anonymous →
+authenticated migration — 00008 dropped `device_id` outright, so pre-auth swing
+history is not attributable to a user.
 
 ### Phase 3: Paid Tier
 - In-app purchase (StoreKit) for data-sharing opt-out
