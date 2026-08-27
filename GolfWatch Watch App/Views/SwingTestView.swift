@@ -91,9 +91,20 @@ struct SwingTestView: View {
     private var falsePositiveButton: some View {
         Button(action: { session.markLastFalsePositive() }) {
             HStack(spacing: 6) {
-                Image(systemName: session.lastMarkedFalsePositive ? "checkmark" : "xmark.circle.fill")
-                Text(session.lastMarkedFalsePositive ? "Marked" : "False Positive")
+                Image(systemName: session.justMarked && !session.canMarkFalsePositive
+                      ? "checkmark" : "xmark.circle.fill")
+                Text("False Positive")
                     .font(.system(size: 14, weight: .semibold))
+                // Depth of the unmarked stack, so a burst of detections shows
+                // how many presses are still available instead of leaving it
+                // to be guessed.
+                if session.markableCount > 1 {
+                    Text("\(session.markableCount)")
+                        .font(.system(size: 12, weight: .bold, design: .rounded))
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 1)
+                        .background(Capsule().fill(Color.white.opacity(0.25)))
+                }
             }
             .frame(maxWidth: .infinity)
             .padding(.vertical, 10)

@@ -27,13 +27,31 @@ final class SwingTestSession: ObservableObject {
     @Published private(set) var detectedCount = 0
     @Published private(set) var falsePositiveCount = 0
     @Published private(set) var lookbackCount = 0
-    /// Set when the last detection has been marked a false positive, so the
-    /// button can show it landed and can't be pressed twice for one event.
-    @Published private(set) var lastMarkedFalsePositive = false
+    /// How many detections are still unmarked and therefore still markable.
+    /// Surfaced so the count of remaining presses is visible rather than
+    /// guessed — see `unmarkedEventIds`.
+    @Published private(set) var markableCount = 0
+    /// Brief post-press acknowledgement. Not a gate: with a stack behind it the
+    /// button stays live as long as anything is left to mark.
+    @Published private(set) var justMarked = false
     @Published private(set) var lastEventAt: Date?
 
     private var sessionId: UUID?
-    private var lastEventId: UUID?
+
+    /// Detections not yet marked a false positive, oldest first.
+    ///
+    /// This was a single `lastEventId` slot, which quietly lost data whenever
+    /// two detections landed before the user could react: the second overwrote
+    /// the first, and the first stayed `positive/low` forever — filed in the
+    /// training set as a correct detection. Bursts are exactly when that
+    /// happens (fidgeting, setting the club down, walking), so the failure
+    /// case was the common one, and it was invisible: the counter showed five
+    /// detections, three got marked, and two misfires were recorded as right.
+    ///
+    /// A stack instead, matching the round's undo button walking back through
+    /// `autoAddStack`. Each press pops the most recent, so consecutive false
+    /// positives can be cleared after the fact rather than only between them.
+    private var unmarkedEventIds: [UUID] = []
     private var cancellables = Set<AnyCancellable>()
 
     /// Detector settings this mode overrides, restored on stop so a test
@@ -53,8 +71,9 @@ final class SwingTestSession: ObservableObject {
         detectedCount = 0
         falsePositiveCount = 0
         lookbackCount = 0
-        lastMarkedFalsePositive = false
-        lastEventId = nil
+        unmarkedEventIds.removeAll()
+        markableCount = 0
+        justMarked = false
         lastEventAt = nil
 
         // Auto-add is what makes the uploader publish an event id per
@@ -112,7 +131,10 @@ final class SwingTestSession: ObservableObject {
             ])
         }
         sessionId = nil
-        lastEventId = nil
+        // Anything still unmarked at stop stays positive/low — the user saw it
+        // fire and chose not to flag it, which is the same signal a round gives.
+        unmarkedEventIds.removeAll()
+        markableCount = 0
     }
 
     // MARK: - Labeling
@@ -120,10 +142,15 @@ final class SwingTestSession: ObservableObject {
     private func onDetection() {
         detectedCount += 1
         lastEventAt = Date()
-        lastMarkedFalsePositive = false
+        justMarked = false
         // Published by the uploader on the auto-add path; consumed here so a
-        // later detection can't reuse a stale id.
-        lastEventId = detector.lastSwingEventId
+        // later detection can't reuse a stale id. A detection that produced no
+        // id never reached `swing_events`, so there is nothing to mislabel and
+        // nothing to push.
+        if let eventId = detector.lastSwingEventId {
+            unmarkedEventIds.append(eventId)
+            markableCount = unmarkedEventIds.count
+        }
         detector.lastSwingEventId = nil
     }
 
@@ -132,16 +159,21 @@ final class SwingTestSession: ObservableObject {
     /// Unlike the round's undo button this is unambiguous: there is no stroke
     /// to remove and no practice-swing replacement sharing the label, so
     /// everything marked here is a genuine detector misfire.
-    var canMarkFalsePositive: Bool { lastEventId != nil && !lastMarkedFalsePositive }
+    var canMarkFalsePositive: Bool { !unmarkedEventIds.isEmpty }
 
+    /// Pops the most recent unmarked detection and flips it to
+    /// false_positive/high. Press it once per bad detection; the stack walks
+    /// backwards, so two that fired in a burst take two presses.
     func markLastFalsePositive() {
-        guard let eventId = lastEventId, !lastMarkedFalsePositive else { return }
+        guard let eventId = unmarkedEventIds.popLast() else { return }
+        markableCount = unmarkedEventIds.count
         SupabaseUploader.shared.markFalsePositive(eventId: eventId)
         falsePositiveCount += 1
-        lastMarkedFalsePositive = true
+        justMarked = true
         WKInterfaceDevice.current().play(.failure)
         ClientEventLogger.log("swingTest.falsePositive", detail: [
-            "eventId": .string(eventId.uuidString)
+            "eventId": .string(eventId.uuidString),
+            "remainingMarkable": .integer(unmarkedEventIds.count)
         ])
     }
 
