@@ -12,6 +12,7 @@ struct SettingsView: View {
     @State private var deleteError: String?
     @AppStorage(PlaygroupChannel.liveDotsEnabledKey) private var liveDotsEnabled = true
     @AppStorage(ClientEventLogger.userDefaultsKey) private var debugLoggingEnabled = false
+    @AppStorage("swingTestModeEnabled") private var swingTestModeEnabled = false
     @AppStorage("autoAdvanceGreenLeftThresholdYards") private var greenLeftThresholdYards: Double = 10
     @AppStorage("autoAdvanceTeeBoxThresholdYards") private var teeBoxThresholdYards: Double = 10
     @AppStorage("autoAdvanceHistoricalShotThresholdYards") private var historicalShotThresholdYards: Double = 10
@@ -127,6 +128,15 @@ struct SettingsView: View {
                         Toggle("Debug logging", isOn: $debugLoggingEnabled)
                             .onChange(of: debugLoggingEnabled) { _, newValue in
                                 WatchConnectivityManager.shared.sendDebugLoggingEnabled(newValue)
+                            }
+
+                        // Exposes the Swing Test button on the watch home
+                        // screen — the detector running with no round, for
+                        // labeling false positives and misses deliberately.
+                        Toggle("Swing test mode (watch)", isOn: $swingTestModeEnabled)
+                            .onChange(of: swingTestModeEnabled) { _, newValue in
+                                WatchConnectivityManager.shared.sendDevParam(
+                                    key: "swingTestModeEnabled", boolValue: newValue)
                             }
 
                         // Moved here from CourseDetailView, which is now a

@@ -1,0 +1,173 @@
+import Foundation
+import Combine
+import WatchKit
+
+/// Swing Test Mode — detector tuning without a round.
+///
+/// Runs the detector exactly as round play does (same gates, same thresholds,
+/// same haptics, same uploads) but starts no round: no course, no holes, no
+/// strokes, no GPS requirement. Its whole purpose is to make the three
+/// outcomes we tune against cheap to produce and unambiguous to label:
+///
+///   * **true positive** — it fired and it was a swing. No button. The counter
+///     increments and the wrist buzzes, exactly as in a round.
+///   * **false positive** — it fired and it wasn't. One button, flipping the
+///     event to false_positive/high.
+///   * **false negative** — you swung and nothing happened. One button,
+///     uploading the raw motion window (see `captureLookback`).
+///
+/// The counters exist because the whole exercise depends on knowing whether a
+/// swing registered at all, and on a watch the only other signal is a haptic
+/// you might have missed.
+@MainActor
+final class SwingTestSession: ObservableObject {
+    static let shared = SwingTestSession()
+
+    @Published private(set) var isRunning = false
+    @Published private(set) var detectedCount = 0
+    @Published private(set) var falsePositiveCount = 0
+    @Published private(set) var lookbackCount = 0
+    /// Set when the last detection has been marked a false positive, so the
+    /// button can show it landed and can't be pressed twice for one event.
+    @Published private(set) var lastMarkedFalsePositive = false
+    @Published private(set) var lastEventAt: Date?
+
+    private var sessionId: UUID?
+    private var lastEventId: UUID?
+    private var cancellables = Set<AnyCancellable>()
+
+    /// Detector settings this mode overrides, restored on stop so a test
+    /// session can never leave the app configured differently for a round.
+    private var savedAutoAdd: Bool?
+
+    private let detector = SwingDetectionManager.shared
+
+    private init() {}
+
+    // MARK: - Lifecycle
+
+    func start() {
+        guard !isRunning else { return }
+        let id = UUID()
+        sessionId = id
+        detectedCount = 0
+        falsePositiveCount = 0
+        lookbackCount = 0
+        lastMarkedFalsePositive = false
+        lastEventId = nil
+        lastEventAt = nil
+
+        // Auto-add is what makes the uploader publish an event id per
+        // detection (manual mode holds the event pending for a popup that
+        // does not exist here). Without an id there is nothing for the false-
+        // positive button to flip.
+        savedAutoAdd = detector.autoAdd
+        detector.autoAdd = true
+
+        detector.testModeActive = true
+        SupabaseUploader.shared.currentTestSessionId = id
+        SupabaseUploader.shared.createTestSession(id: id)
+
+        // Count detections off the same publisher the round UI uses, so the
+        // counter cannot disagree with what the detector actually fired.
+        detector.$lastDetectedSwing
+            .compactMap { $0 }
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in self?.onDetection() }
+            .store(in: &cancellables)
+
+        detector.startMonitoring()
+        isRunning = true
+
+        ClientEventLogger.log("swingTest.start", detail: [
+            "sessionId": .string(id.uuidString)
+        ])
+    }
+
+    func stop() {
+        guard isRunning else { return }
+        isRunning = false
+        cancellables.removeAll()
+
+        detector.stopMonitoring()
+        detector.testModeActive = false
+        SupabaseUploader.shared.flushPending()
+        SupabaseUploader.shared.currentTestSessionId = nil
+
+        if let savedAutoAdd { detector.autoAdd = savedAutoAdd }
+        savedAutoAdd = nil
+
+        if let id = sessionId {
+            SupabaseUploader.shared.endTestSession(
+                id: id,
+                detected: detectedCount,
+                falsePositives: falsePositiveCount,
+                lookbacks: lookbackCount
+            )
+            ClientEventLogger.log("swingTest.stop", detail: [
+                "sessionId": .string(id.uuidString),
+                "detected": .integer(detectedCount),
+                "falsePositives": .integer(falsePositiveCount),
+                "lookbacks": .integer(lookbackCount)
+            ])
+        }
+        sessionId = nil
+        lastEventId = nil
+    }
+
+    // MARK: - Labeling
+
+    private func onDetection() {
+        detectedCount += 1
+        lastEventAt = Date()
+        lastMarkedFalsePositive = false
+        // Published by the uploader on the auto-add path; consumed here so a
+        // later detection can't reuse a stale id.
+        lastEventId = detector.lastSwingEventId
+        detector.lastSwingEventId = nil
+    }
+
+    /// It fired and it shouldn't have. Flips the event to false_positive/high.
+    ///
+    /// Unlike the round's undo button this is unambiguous: there is no stroke
+    /// to remove and no practice-swing replacement sharing the label, so
+    /// everything marked here is a genuine detector misfire.
+    var canMarkFalsePositive: Bool { lastEventId != nil && !lastMarkedFalsePositive }
+
+    func markLastFalsePositive() {
+        guard let eventId = lastEventId, !lastMarkedFalsePositive else { return }
+        SupabaseUploader.shared.markFalsePositive(eventId: eventId)
+        falsePositiveCount += 1
+        lastMarkedFalsePositive = true
+        WKInterfaceDevice.current().play(.failure)
+        ClientEventLogger.log("swingTest.falsePositive", detail: [
+            "eventId": .string(eventId.uuidString)
+        ])
+    }
+
+    /// You swung and nothing happened. Uploads the raw motion window.
+    ///
+    /// The window shrinks to cover only motion nothing has claimed yet, so
+    /// pressing this after a detection captures just the swing since it, and
+    /// pressing it twice in a row sends nothing the second time.
+    @discardableResult
+    func captureLookback() -> Bool {
+        guard let capture = detector.captureLookbackWindow() else {
+            WKInterfaceDevice.current().play(.failure)
+            return false
+        }
+        SupabaseUploader.shared.uploadLookbackCapture(
+            motionSlice: capture.motionSlice,
+            rawAccelSlice: capture.rawAccelSlice,
+            rejections: capture.rejections,
+            windowSeconds: capture.windowSeconds,
+            roundId: nil,
+            holeNumber: nil,
+            clubType: detector.selectedClubTypeName,
+            testSessionId: sessionId
+        )
+        lookbackCount += 1
+        WKInterfaceDevice.current().play(.success)
+        return true
+    }
+}

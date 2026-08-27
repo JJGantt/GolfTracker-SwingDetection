@@ -18,6 +18,13 @@ class SupabaseUploader {
         didSet { UserDefaults.standard.set(rejectAll, forKey: "supabaseRejectAll") }
     }
 
+    /// Non-nil while Swing Test Mode is running. Stamped onto every event
+    /// constructed for its lifetime so test detections stay filterable from
+    /// round play without a parallel schema. Set by `SwingTestSession.start`,
+    /// cleared on stop — reading it here rather than threading it through
+    /// `fireSmartDetection` keeps the detector unaware that test mode exists.
+    var currentTestSessionId: UUID?
+
     // MARK: - Pending Event
 
     struct PendingEvent {
@@ -28,6 +35,7 @@ class SupabaseUploader {
         let clubType: String?
         var label: String       // "positive" or "false_positive"
         var confidence: String  // "high" or "low"
+        var testSessionId: UUID?
     }
 
     private var pending: PendingEvent?
@@ -74,7 +82,8 @@ class SupabaseUploader {
                 rawAccelSlice: rawAccelSlice,
                 clubType: clubType,
                 label: "false_positive",
-                confidence: "high"
+                confidence: "high",
+                testSessionId: currentTestSessionId
             )
             upload(event: event)
             // Flush any stale manual pending too
@@ -99,7 +108,8 @@ class SupabaseUploader {
                 rawAccelSlice: rawAccelSlice,
                 clubType: clubType,
                 label: "positive",
-                confidence: "low"
+                confidence: "low",
+                testSessionId: currentTestSessionId
             )
             upload(event: event)
             return event.id
@@ -117,7 +127,8 @@ class SupabaseUploader {
             rawAccelSlice: rawAccelSlice,
             clubType: clubType,
             label: "false_positive",
-            confidence: "low"
+            confidence: "low",
+            testSessionId: currentTestSessionId
         )
         return nil
     }
@@ -168,6 +179,47 @@ class SupabaseUploader {
                 ])
             } catch {
                 ClientEventLogger.log("swing.update.falsePositive.failed", detail: [
+                    "eventId": .string(eventId.uuidString),
+                    "error": .string("\(error)")
+                ])
+            }
+        }
+    }
+
+    /// Mark a correctly-detected swing that did not become a counted stroke.
+    ///
+    /// Used by the practice-swing replacement path, which drops the previous
+    /// auto-added stroke when the user swings twice in the same spot without
+    /// walking. That used to call `markFalsePositive`, which was backwards:
+    /// `label` states whether the DETECTOR was right, and on a practice swing
+    /// it was — real swing motion, correctly identified. It just wasn't a shot.
+    ///
+    /// The distinction is not cosmetic. The replacement heuristic fires only on
+    /// an unambiguous, attended, repeated swing, which makes it the strongest
+    /// true-positive evidence the app generates; labeling it `false_positive`
+    /// took the best positive samples available and trained against them.
+    /// `label=positive/high` records the detection was right, and
+    /// `not_a_stroke_reason` records why it wasn't counted.
+    func markPracticeSwing(eventId: UUID) {
+        struct UpdateRow: Encodable {
+            let label: String
+            let confidence: String
+            let not_a_stroke_reason: String
+        }
+        Task { [weak self] in
+            guard let self = self else { return }
+            do {
+                try await self.supabase
+                    .from("swing_events")
+                    .update(UpdateRow(label: "positive", confidence: "high",
+                                      not_a_stroke_reason: "practice"))
+                    .eq("id", value: eventId.uuidString)
+                    .execute()
+                ClientEventLogger.log("swing.update.practice.ok", detail: [
+                    "eventId": .string(eventId.uuidString)
+                ])
+            } catch {
+                ClientEventLogger.log("swing.update.practice.failed", detail: [
                     "eventId": .string(eventId.uuidString),
                     "error": .string("\(error)")
                 ])
@@ -241,12 +293,20 @@ class SupabaseUploader {
         let stroke_id: String?
         let hole_number: Int?
         let candidate_count: Int
+        let capture_reason: String
+        let storage_path: String?
+        let test_session_id: String?
+        let window_seconds: Double?
     }
 
     private func insertFalseNegativeGroup(
         groupId: UUID, userId: String,
         roundId: UUID?, strokeId: UUID?,
-        holeNumber: Int?, candidateCount: Int
+        holeNumber: Int?, candidateCount: Int,
+        captureReason: String = "rejected_shapes",
+        storagePath: String? = nil,
+        testSessionId: UUID? = nil,
+        windowSeconds: Double? = nil
     ) async -> Bool {
         let row = FalseNegativeGroupRow(
             id: groupId.uuidString,
@@ -254,7 +314,11 @@ class SupabaseUploader {
             round_id: roundId?.uuidString,
             stroke_id: strokeId?.uuidString,
             hole_number: holeNumber,
-            candidate_count: candidateCount
+            candidate_count: candidateCount,
+            capture_reason: captureReason,
+            storage_path: storagePath,
+            test_session_id: testSessionId?.uuidString,
+            window_seconds: windowSeconds
         )
         do {
             try await supabase.from("false_negative_groups").insert(row).execute()
@@ -267,6 +331,221 @@ class SupabaseUploader {
                 "error": .string("\(error)")
             ])
             return false
+        }
+    }
+
+    // MARK: - Lookback Capture ("Missed It")
+
+    /// Upload a raw motion window for a swing the detector gave no sign of.
+    ///
+    /// `uploadFalseNegativeGroup` can only describe a miss the detector ALMOST
+    /// caught, because `recordRejection` is reachable only from the
+    /// post-pairing gates — setup, backswing top and follow-through peak all
+    /// paired, then a contact gate killed it. A swing that fails earlier (no
+    /// setup event, no valley or peak clearing prominence, pairing blocked by
+    /// an intervening event) produces no rejection at all, so the manual-add
+    /// path finds an empty buffer and uploads nothing. The miss that is
+    /// hardest to reconstruct afterwards was the one generating no data.
+    ///
+    /// This is the escape hatch: dump the raw rolling buffer for the window
+    /// the user just swung in. Any rejections that fall INSIDE that window ride
+    /// along as candidates — the buffer is maintained regardless, so attaching
+    /// them costs nothing and answers "which gate killed it" alongside the raw
+    /// "what did my arm actually do". A candidate count of zero is not a failed
+    /// capture; it is the finding, and it means nothing paired.
+    func uploadLookbackCapture(
+        motionSlice: [SwingDetectionManager.RecordedDataPoint],
+        rawAccelSlice: [SwingDetectionManager.RawAccelDataPoint],
+        rejections: [SwingDetectionManager.RejectedShape],
+        windowSeconds: Double,
+        roundId: UUID?,
+        holeNumber: Int?,
+        clubType: String?,
+        testSessionId: UUID?
+    ) {
+        guard !motionSlice.isEmpty else {
+            ClientEventLogger.log("lookback.upload.bail.noMotion")
+            return
+        }
+        guard let userId = WatchAuthSession.shared.currentUserId else {
+            ClientEventLogger.log("lookback.upload.bail.noAuth", detail: [
+                "sampleCount": .integer(motionSlice.count)
+            ])
+            return
+        }
+        let groupId = UUID()
+        let storagePath = "\(userId)/lookback/\(groupId.uuidString)/window.csv"
+        ClientEventLogger.log("lookback.upload.start", detail: [
+            "groupId": .string(groupId.uuidString),
+            "sampleCount": .integer(motionSlice.count),
+            "rawAccelCount": .integer(rawAccelSlice.count),
+            "candidateCount": .integer(rejections.count),
+            "windowSeconds": .double(windowSeconds)
+        ])
+        Task { [weak self] in
+            guard let self else { return }
+            guard await self.insertFalseNegativeGroup(
+                groupId: groupId, userId: userId,
+                roundId: roundId, strokeId: nil,
+                holeNumber: holeNumber, candidateCount: rejections.count,
+                captureReason: "lookback", storagePath: storagePath,
+                testSessionId: testSessionId, windowSeconds: windowSeconds
+            ) else { return }
+
+            await self.uploadLookbackCSV(
+                storagePath: storagePath, motionSlice: motionSlice
+            )
+            if !rawAccelSlice.isEmpty {
+                await self.uploadLookbackRawCSV(
+                    storagePath: "\(userId)/lookback/\(groupId.uuidString)/window_raw.csv",
+                    rawAccelSlice: rawAccelSlice
+                )
+            }
+            // Rejections inside the window, as ordinary candidates — same
+            // schema and same downstream tooling as a manual-add group.
+            for (index, rejected) in rejections.enumerated() {
+                let inserted = await self.insertFalseNegativeCandidate(
+                    groupId: groupId, userId: userId,
+                    position: index, rejected: rejected, clubType: clubType
+                )
+                if inserted {
+                    await self.uploadFalseNegativeCSV(
+                        groupId: groupId, userId: userId, position: index, rejected: rejected
+                    )
+                }
+            }
+            ClientEventLogger.log("lookback.upload.done", detail: [
+                "groupId": .string(groupId.uuidString)
+            ])
+        }
+    }
+
+    private func uploadLookbackCSV(
+        storagePath: String, motionSlice: [SwingDetectionManager.RecordedDataPoint]
+    ) async {
+        var csv = "SensorTime,UserAccelX,UserAccelY,UserAccelZ,UserAccelMag,RotationX,RotationY,RotationZ,RotationMag,GravityX,GravityY,GravityZ,Pitch,Roll,Yaw,MagAccuracy\n"
+        let f = { (v: Double) -> String in String(format: "%.4f", v) }
+        for dp in motionSlice {
+            csv += "\(f(dp.sensorTime)),\(f(dp.userAccelX)),\(f(dp.userAccelY)),\(f(dp.userAccelZ)),\(f(dp.userAccelMag)),\(f(dp.rotationX)),\(f(dp.rotationY)),\(f(dp.rotationZ)),\(f(dp.rotationMag)),\(f(dp.gravityX)),\(f(dp.gravityY)),\(f(dp.gravityZ)),\(f(dp.pitch)),\(f(dp.roll)),\(f(dp.yaw)),\(dp.magAccuracy)\n"
+        }
+        guard let data = csv.data(using: .utf8) else {
+            ClientEventLogger.log("lookback.csv.encodeFailed", detail: [
+                "storagePath": .string(storagePath)
+            ])
+            return
+        }
+        do {
+            _ = try await supabase.storage
+                .from(storageBucket)
+                .upload(storagePath, data: data, options: FileOptions(contentType: "text/csv"))
+            ClientEventLogger.log("lookback.csv.ok", detail: [
+                "storagePath": .string(storagePath),
+                "sampleCount": .integer(motionSlice.count)
+            ])
+        } catch {
+            ClientEventLogger.log("lookback.csv.failed", detail: [
+                "storagePath": .string(storagePath),
+                "error": .string("\(error)")
+            ])
+        }
+    }
+
+    private func uploadLookbackRawCSV(
+        storagePath: String, rawAccelSlice: [SwingDetectionManager.RawAccelDataPoint]
+    ) async {
+        var csv = "SensorTime,RawAccelX,RawAccelY,RawAccelZ,RawAccelMag\n"
+        let f = { (v: Double) -> String in String(format: "%.4f", v) }
+        for dp in rawAccelSlice {
+            csv += "\(f(dp.sensorTime)),\(f(dp.rawAccelX)),\(f(dp.rawAccelY)),\(f(dp.rawAccelZ)),\(f(dp.rawAccelMag))\n"
+        }
+        guard let data = csv.data(using: .utf8) else { return }
+        do {
+            _ = try await supabase.storage
+                .from(storageBucket)
+                .upload(storagePath, data: data, options: FileOptions(contentType: "text/csv"))
+            ClientEventLogger.log("lookback.rawCsv.ok", detail: [
+                "storagePath": .string(storagePath),
+                "sampleCount": .integer(rawAccelSlice.count)
+            ])
+        } catch {
+            ClientEventLogger.log("lookback.rawCsv.failed", detail: [
+                "storagePath": .string(storagePath),
+                "error": .string("\(error)")
+            ])
+        }
+    }
+
+    // MARK: - Test Sessions
+
+    private struct TestSessionRow: Encodable {
+        let id: String
+        let user_id: String
+        let detection_mode: String
+    }
+
+    private struct TestSessionEndRow: Encodable {
+        let ended_at: String
+        let detected_count: Int
+        let false_positive_count: Int
+        let lookback_count: Int
+    }
+
+    /// Insert the session row. Best-effort: `swing_events.test_session_id` is a
+    /// soft reference (matching the `stroke_id` precedent in 00030), so a
+    /// detection in the first moments of a session is never lost to a session
+    /// row that hasn't landed yet.
+    func createTestSession(id: UUID) {
+        guard let userId = WatchAuthSession.shared.currentUserId else {
+            ClientEventLogger.log("swingTest.session.bail.noAuth")
+            return
+        }
+        Task { [weak self] in
+            guard let self else { return }
+            do {
+                try await self.supabase.from("swing_test_sessions")
+                    .insert(TestSessionRow(id: id.uuidString, user_id: userId,
+                                           detection_mode: "unifDetect"))
+                    .execute()
+                ClientEventLogger.log("swingTest.session.created", detail: [
+                    "sessionId": .string(id.uuidString)
+                ])
+            } catch {
+                ClientEventLogger.log("swingTest.session.failed", detail: [
+                    "sessionId": .string(id.uuidString),
+                    "error": .string("\(error)")
+                ])
+            }
+        }
+    }
+
+    /// Close the session and store the counters the watch actually displayed,
+    /// so a session can be checked against its rows without assuming every
+    /// upload landed.
+    func endTestSession(id: UUID, detected: Int, falsePositives: Int, lookbacks: Int) {
+        Task { [weak self] in
+            guard let self else { return }
+            do {
+                try await self.supabase.from("swing_test_sessions")
+                    .update(TestSessionEndRow(
+                        ended_at: ISO8601DateFormatter().string(from: Date()),
+                        detected_count: detected,
+                        false_positive_count: falsePositives,
+                        lookback_count: lookbacks
+                    ))
+                    .eq("id", value: id.uuidString)
+                    .execute()
+                ClientEventLogger.log("swingTest.session.ended", detail: [
+                    "sessionId": .string(id.uuidString),
+                    "detected": .integer(detected),
+                    "falsePositives": .integer(falsePositives),
+                    "lookbacks": .integer(lookbacks)
+                ])
+            } catch {
+                ClientEventLogger.log("swingTest.session.end.failed", detail: [
+                    "sessionId": .string(id.uuidString),
+                    "error": .string("\(error)")
+                ])
+            }
         }
     }
 
@@ -584,6 +863,7 @@ class SupabaseUploader {
         let club_type: String?
         let detection_mode: String
         let storage_path: String?
+        let test_session_id: String?
     }
 
     @discardableResult
@@ -609,7 +889,8 @@ class SupabaseUploader {
             bs_to_fs_gap: meta.fsPeakT - meta.bsTopT,
             club_type: event.clubType,
             detection_mode: "unifDetect",
-            storage_path: storagePath
+            storage_path: storagePath,
+            test_session_id: event.testSessionId?.uuidString
         )
         do {
             try await supabase.from("swing_events").insert(row).execute()

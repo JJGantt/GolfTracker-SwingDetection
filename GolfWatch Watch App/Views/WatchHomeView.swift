@@ -4,6 +4,9 @@ struct WatchHomeView: View {
     @StateObject private var store = WatchDataStore.shared
     @StateObject private var connectivity = WatchConnectivityManager.shared
     @State private var navigateToActiveRound = false
+    /// Mirrored from the iPhone's Developer section via the devParams
+    /// applicationContext path, which writes straight to UserDefaults.
+    @AppStorage("swingTestModeEnabled") private var swingTestModeEnabled = false
 
     var body: some View {
         NavigationStack {
@@ -60,6 +63,21 @@ struct WatchHomeView: View {
                 }
                 .buttonStyle(.plain)
                 .disabled(store.roundStartStatus != nil)
+
+                // Detector tuning without a round. Gated on the iPhone's
+                // Settings → Developer toggle, mirrored here through the
+                // standard devParams UserDefaults path.
+                if swingTestModeEnabled {
+                    NavigationLink(destination: SwingTestView()) {
+                        Label("Swing Test", systemImage: "figure.golf.circle.fill")
+                            .frame(maxWidth: .infinity)
+                            .padding()
+                            .background(Color.orange.opacity(0.8))
+                            .foregroundColor(.white)
+                            .cornerRadius(10)
+                    }
+                    .buttonStyle(.plain)
+                }
 
                 // General-purpose data-collection mode (not golf-specific).
                 NavigationLink(destination: SensorCaptureView()) {
