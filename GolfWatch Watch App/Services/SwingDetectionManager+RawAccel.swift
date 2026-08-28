@@ -60,6 +60,7 @@ extension SwingDetectionManager {
     }
 
     func onUnifSetupStarted() {
+        unifSetupActive = true
         ClientEventLogger.log("rawAccel.setupStarted", level: .diagnostic, detail: [
             "isPutterSelected": .bool(isPutterSelected),
             "selectedClubType": selectedClubTypeName.map { .string($0) } ?? .null,
@@ -75,6 +76,7 @@ extension SwingDetectionManager {
     }
 
     func onUnifSetupEnded() {
+        unifSetupActive = false
         guard batchedAccelForPutt else { return }
         // Start timeout — if no BS top pairs within setupEndTimeoutS, spin down
         setupEndTimeoutTimer?.invalidate()
