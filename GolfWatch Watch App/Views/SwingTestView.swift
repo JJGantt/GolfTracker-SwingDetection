@@ -44,7 +44,7 @@ struct SwingTestView: View {
 
     private var counters: some View {
         HStack(spacing: 6) {
-            counter(value: session.detectedCount, label: "HIT", color: .green)
+            counter(value: session.truePositiveCount, label: "HIT", color: .green)
             counter(value: session.falsePositiveCount, label: "FP", color: .red)
             counter(value: session.lookbackCount, label: "MISS", color: .orange)
         }

@@ -24,9 +24,20 @@ final class SwingTestSession: ObservableObject {
     static let shared = SwingTestSession()
 
     @Published private(set) var isRunning = false
+    /// Every detection the detector fired, good or bad. Not what the HIT
+    /// counter shows — see `truePositiveCount`.
     @Published private(set) var detectedCount = 0
     @Published private(set) var falsePositiveCount = 0
     @Published private(set) var lookbackCount = 0
+
+    /// Detections the user did not flag — what HIT displays.
+    ///
+    /// HIT used to show `detectedCount`, so a misfire incremented the green
+    /// counter AND the red one, and the number the eye lands on first was
+    /// really "times the detector fired" rather than "times it was right".
+    /// Marking a false positive now takes it back out, so HIT + FP is the
+    /// total and HIT alone answers the question the mode exists to ask.
+    var truePositiveCount: Int { max(0, detectedCount - falsePositiveCount) }
     /// How many detections are still unmarked and therefore still markable.
     /// Surfaced so the count of remaining presses is visible rather than
     /// guessed — see `unmarkedEventIds`.
