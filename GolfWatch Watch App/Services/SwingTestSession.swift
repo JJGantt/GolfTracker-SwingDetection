@@ -65,9 +65,24 @@ final class SwingTestSession: ObservableObject {
     private var unmarkedEventIds: [UUID] = []
     private var cancellables = Set<AnyCancellable>()
 
+    /// Optional club for the session. Written to `club_type` on every row the
+    /// session produces; null when unselected. Also applied to the detector so
+    /// the putter-specific paths behave as they would in a round.
+    @Published var clubTypeName: String? = nil {
+        didSet { if isRunning { detector.selectedClubTypeName = clubTypeName } }
+    }
+
+    /// Optional note. Session-scoped and persistent: once set, every event
+    /// saved while it is active — detection, false-positive mark, miss — is
+    /// linked to it. Changing the text starts a new note; clearing it stops
+    /// linking. Lives in its own table so round swings never carry one.
+    @Published private(set) var noteText: String = ""
+    private var activeNoteId: UUID?
+
     /// Detector settings this mode overrides, restored on stop so a test
     /// session can never leave the app configured differently for a round.
     private var savedAutoAdd: Bool?
+    private var savedClubTypeName: String??
 
     private let detector = SwingDetectionManager.shared
 
@@ -94,6 +109,9 @@ final class SwingTestSession: ObservableObject {
         savedAutoAdd = detector.autoAdd
         detector.autoAdd = true
 
+        savedClubTypeName = detector.selectedClubTypeName
+        detector.selectedClubTypeName = clubTypeName
+
         detector.testModeActive = true
         SupabaseUploader.shared.currentTestSessionId = id
         SupabaseUploader.shared.createTestSession(id: id)
@@ -108,6 +126,10 @@ final class SwingTestSession: ObservableObject {
 
         detector.startMonitoring()
         isRunning = true
+
+        // A note set before Start was created without a session id; re-create
+        // it now so its row points at this session.
+        if !noteText.isEmpty { setNote(noteText) }
 
         ClientEventLogger.log("swingTest.start", detail: [
             "sessionId": .string(id.uuidString)
@@ -126,6 +148,9 @@ final class SwingTestSession: ObservableObject {
 
         if let savedAutoAdd { detector.autoAdd = savedAutoAdd }
         savedAutoAdd = nil
+        if let savedClubTypeName { detector.selectedClubTypeName = savedClubTypeName }
+        savedClubTypeName = nil
+        activeNoteId = nil
 
         if let id = sessionId {
             SupabaseUploader.shared.endTestSession(
@@ -148,6 +173,19 @@ final class SwingTestSession: ObservableObject {
         markableCount = 0
     }
 
+    // MARK: - Note
+
+    /// Set or replace the active note. Empty clears it. Each non-empty value
+    /// is its own row, so events link to exactly the text that was active.
+    func setNote(_ text: String) {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        noteText = trimmed
+        guard !trimmed.isEmpty else { activeNoteId = nil; return }
+        let id = UUID()
+        activeNoteId = id
+        SupabaseUploader.shared.createTestNote(id: id, sessionId: sessionId, text: trimmed)
+    }
+
     // MARK: - Labeling
 
     private func onDetection() {
@@ -161,6 +199,9 @@ final class SwingTestSession: ObservableObject {
         if let eventId = detector.lastSwingEventId {
             unmarkedEventIds.append(eventId)
             markableCount = unmarkedEventIds.count
+            if let noteId = activeNoteId {
+                SupabaseUploader.shared.linkNote(noteId: noteId, kind: "swing_event", eventId: eventId)
+            }
         }
         detector.lastSwingEventId = nil
     }
@@ -209,6 +250,10 @@ final class SwingTestSession: ObservableObject {
         let sid = sessionId
         let club = detector.selectedClubTypeName
         let delay = detector.rawAccelSettleDelay
+        let groupId = UUID()
+        if let noteId = activeNoteId {
+            SupabaseUploader.shared.linkNote(noteId: noteId, kind: "miss", eventId: groupId)
+        }
         DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
             guard let self else { return }
             let settled = self.detector.rawAccelSlice(from: capture.windowStart,
@@ -226,7 +271,8 @@ final class SwingTestSession: ObservableObject {
                 roundId: nil,
                 holeNumber: nil,
                 clubType: club,
-                testSessionId: sid
+                testSessionId: sid,
+                groupId: groupId
             )
         }
         return true

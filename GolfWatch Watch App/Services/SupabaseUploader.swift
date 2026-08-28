@@ -367,7 +367,8 @@ class SupabaseUploader {
         roundId: UUID?,
         holeNumber: Int?,
         clubType: String?,
-        testSessionId: UUID?
+        testSessionId: UUID?,
+        groupId: UUID = UUID()
     ) {
         guard !motionSlice.isEmpty else {
             ClientEventLogger.log("lookback.upload.bail.noMotion")
@@ -379,7 +380,6 @@ class SupabaseUploader {
             ])
             return
         }
-        let groupId = UUID()
         let storagePath = "\(userId)/lookback/\(groupId.uuidString)/window.csv"
         ClientEventLogger.log("lookback.upload.start", detail: [
             "groupId": .string(groupId.uuidString),
@@ -478,6 +478,61 @@ class SupabaseUploader {
                 "storagePath": .string(storagePath),
                 "error": .string("\(error)")
             ])
+        }
+    }
+
+    // MARK: - Test Notes
+
+    private struct TestNoteRow: Encodable {
+        let id: String
+        let user_id: String
+        let test_session_id: String?
+        let text: String
+    }
+    private struct TestNoteLinkRow: Encodable {
+        let note_id: String
+        let event_kind: String
+        let event_id: String
+        let user_id: String
+    }
+
+    /// Insert a session note. Session-scoped and persistent: every event saved
+    /// while it is active is linked to it via `linkNote`. Kept off the swing
+    /// tables because round swings never carry one.
+    func createTestNote(id: UUID, sessionId: UUID?, text: String) {
+        guard let userId = WatchAuthSession.shared.currentUserId else { return }
+        Task { [weak self] in
+            guard let self else { return }
+            do {
+                try await self.supabase.from("swing_test_notes")
+                    .insert(TestNoteRow(id: id.uuidString, user_id: userId,
+                                        test_session_id: sessionId?.uuidString, text: text))
+                    .execute()
+                ClientEventLogger.log("swingTest.note.created", detail: ["noteId": .string(id.uuidString)])
+            } catch {
+                ClientEventLogger.log("swingTest.note.failed", detail: ["error": .string("\(error)")])
+            }
+        }
+    }
+
+    /// Link an event to the active note. `kind` is "swing_event" (a detection —
+    /// a later false-positive mark flips the same row) or "miss" (a lookback
+    /// group). Fire-and-forget; the link is a soft reference so ordering
+    /// against the event's own insert does not matter.
+    func linkNote(noteId: UUID, kind: String, eventId: UUID) {
+        guard let userId = WatchAuthSession.shared.currentUserId else { return }
+        Task { [weak self] in
+            guard let self else { return }
+            do {
+                try await self.supabase.from("swing_test_note_events")
+                    .insert(TestNoteLinkRow(note_id: noteId.uuidString, event_kind: kind,
+                                            event_id: eventId.uuidString, user_id: userId))
+                    .execute()
+            } catch {
+                ClientEventLogger.log("swingTest.note.link.failed", detail: [
+                    "kind": .string(kind), "eventId": .string(eventId.uuidString),
+                    "error": .string("\(error)")])
+            }
         }
     }
 

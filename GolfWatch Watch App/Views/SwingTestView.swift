@@ -17,6 +17,7 @@ struct SwingTestView: View {
     /// even when the upload itself is still in flight.
     @State private var lookbackFlash = false
     @State private var lookbackFailed = false
+    @State private var noteDraft = ""
 
     var body: some View {
         ScrollView {
@@ -28,6 +29,8 @@ struct SwingTestView: View {
                     lookbackButton
                 }
                 startStopButton
+                clubPicker
+                noteField
                 // Which build is on the wrist. The watch app installs
                 // asynchronously after the phone's and can lag well behind, so
                 // without this it is not knowable from here whether a fix under
@@ -45,6 +48,34 @@ struct SwingTestView: View {
             // should outlive the UI that started them.
             if session.isRunning { session.stop() }
         }
+    }
+
+    // MARK: - Club + note (both optional)
+
+    private static let noClub = "—"
+
+    /// Optional. Written to `club_type` on every row the session produces;
+    /// unselected stays null. Changeable mid-session.
+    private var clubPicker: some View {
+        Picker("Club", selection: Binding(
+            get: { session.clubTypeName ?? Self.noClub },
+            set: { session.clubTypeName = ($0 == Self.noClub) ? nil : $0 }
+        )) {
+            Text(Self.noClub).tag(Self.noClub)
+            ForEach(WatchDataStore.shared.clubTypes.map(\.name), id: \.self) { Text($0).tag($0) }
+        }
+        .pickerStyle(.navigationLink)
+    }
+
+    /// Optional. Persistent for the session; every event saved while it is set
+    /// is linked to it. Empty clears it.
+    private var noteField: some View {
+        // Committed on submit, not per keystroke — each committed value is its
+        // own note row, and a row per character would be nonsense.
+        TextField("Note", text: $noteDraft)
+            .textInputAutocapitalization(.sentences)
+            .onSubmit { session.setNote(noteDraft) }
+            .onAppear { noteDraft = session.noteText }
     }
 
     // MARK: - Counters
