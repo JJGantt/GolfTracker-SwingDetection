@@ -28,6 +28,13 @@ struct SwingTestView: View {
                     lookbackButton
                 }
                 startStopButton
+                // Which build is on the wrist. The watch app installs
+                // asynchronously after the phone's and can lag well behind, so
+                // without this it is not knowable from here whether a fix under
+                // test is actually present.
+                Text("build \(WatchConnectivityManager.localBuild)")
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundColor(.secondary)
             }
             .padding(.horizontal, 4)
         }
