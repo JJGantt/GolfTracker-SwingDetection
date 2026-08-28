@@ -496,28 +496,10 @@ extension WatchConnectivityManager: WCSessionDelegate {
         switch key {
         case "ignorePracticeRadius":         if let d = value as? Double { m.ignorePracticeRadius = d }
         case "autoAdd":                      if let b = value as? Bool   { m.autoAdd = b }
+        // Detector thresholds are NOT settable from here any more — they live
+        // in `detector_config` and are read at the point of use. A case here
+        // would be a second writer racing the table.
         case "detectionMode":                if let s = value as? String, let mode = DetectionMode(rawValue: s) { m.detectionMode = mode; m.resetToIdle() }
-        case "unifPreset":                   if let s = value as? String, let p = UnifDetectPreset(rawValue: s) { m.applyUnifPreset(p) }
-        case "unifSetupCeiling":             if let d = value as? Double { m.unifSetupCeiling = d }
-        case "unifSetupMinDur":              if let d = value as? Double { m.unifSetupMinDur = d }
-        case "unifValleyProm":               if let d = value as? Double { m.unifValleyProm = d }
-        case "unifPeakProm":                 if let d = value as? Double { m.unifPeakProm = d }
-        case "unifValleyDist":               if let i = value as? Int    { m.unifValleyDist = i }
-        case "unifPeakDist":                 if let i = value as? Int    { m.unifPeakDist = i }
-        case "unifAreaWindow":               if let d = value as? Double { m.unifAreaWindow = d }
-        case "unifBsMaxRotMag":              if let d = value as? Double { m.unifBsMaxRotMag = d }
-        case "unifSwingFSAreaThresh":        if let d = value as? Double { m.unifSwingFSAreaThresh = d }
-        case "unifContactTVSumMin":          if let d = value as? Double { m.unifContactTVSumMin = d }
-        case "unifContactMinExtrema":        if let i = value as? Int    { m.unifContactMinExtrema = i }
-        case "unifExtremaSpreadMax":         if let d = value as? Double { m.unifExtremaSpreadMax = d }
-        case "unifBaselineTVMax":            if let d = value as? Double { m.unifBaselineTVMax = d }
-        case "unifContactProminence":        if let d = value as? Double { m.unifContactProminence = d }
-        case "unifContactWindowRight":       if let d = value as? Double { m.unifContactWindowRight = d }
-        case "unifMaxReversals":             if let i = value as? Int    { m.unifMaxReversals = i }
-        case "unifBsToFsMin":                if let d = value as? Double { m.unifBsToFsMin = d }
-        case "unifBsToFsMax":                if let d = value as? Double { m.unifBsToFsMax = d }
-        case "unifFSBSRatioMin":             if let d = value as? Double { m.unifFSBSRatioMin = d }
-        case "unifPrePeakDtMax":             if let d = value as? Double { m.unifPrePeakDtMax = d }
         default: break
         }
     }

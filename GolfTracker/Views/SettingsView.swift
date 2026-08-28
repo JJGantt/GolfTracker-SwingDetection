@@ -208,12 +208,7 @@ struct SettingsView: View {
                             }
                         ))
 
-                        NavigationLink {
-                            MotionParametersView()
-                        } label: {
-                            Text("Parameters")
-                        }
-
+                        
                         Toggle("Auto Add", isOn: $autoAdd)
                             .onChange(of: autoAdd) { _, newValue in
                                 WatchConnectivityManager.shared.sendDevParam(key: "autoAdd", boolValue: newValue)
