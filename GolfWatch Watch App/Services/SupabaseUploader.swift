@@ -36,6 +36,8 @@ class SupabaseUploader {
         var label: String       // "positive" or "false_positive"
         var confidence: String  // "high" or "low"
         var testSessionId: UUID?
+        /// Per-gate value/limit/margin/passed — see PostPairingGateResult.report
+        var gateReport: [String: [String: Double]]?
     }
 
     private var pending: PendingEvent?
@@ -71,7 +73,8 @@ class SupabaseUploader {
         motionSlice: [SwingDetectionManager.RecordedDataPoint],
         rawAccelSlice: [SwingDetectionManager.RawAccelDataPoint] = [],
         clubType: String?,
-        autoAdd: Bool
+        autoAdd: Bool,
+        gateReport: [String: [String: Double]]? = nil
     ) -> UUID? {
         if rejectAll {
             // Farming mode: immediate upload, no pending
@@ -83,7 +86,8 @@ class SupabaseUploader {
                 clubType: clubType,
                 label: "false_positive",
                 confidence: "high",
-                testSessionId: currentTestSessionId
+                testSessionId: currentTestSessionId,
+                gateReport: gateReport
             )
             upload(event: event)
             // Flush any stale manual pending too
@@ -109,7 +113,8 @@ class SupabaseUploader {
                 clubType: clubType,
                 label: "positive",
                 confidence: "low",
-                testSessionId: currentTestSessionId
+                testSessionId: currentTestSessionId,
+                gateReport: gateReport
             )
             upload(event: event)
             return event.id
@@ -128,7 +133,8 @@ class SupabaseUploader {
             clubType: clubType,
             label: "false_positive",
             confidence: "low",
-            testSessionId: currentTestSessionId
+            testSessionId: currentTestSessionId,
+            gateReport: gateReport
         )
         return nil
     }
@@ -708,6 +714,8 @@ class SupabaseUploader {
         let test_session_id: String?
         /// Thresholds this detection was judged under — see DetectorConfig.
         let detector_config: [String: Double]?
+        /// Per-gate verdict with limit and margin, on passes as well as fails.
+        let gate_report: [String: [String: Double]]?
     }
 
     @discardableResult
@@ -717,8 +725,12 @@ class SupabaseUploader {
         let rowConfidence = storagePath != nil ? event.confidence : nil
         let row = SwingEventRow(
             id: event.id.uuidString,
-            classification: event.clubType ?? "unknown",
-            swing_type: event.clubType ?? "unknown",
+            // The detector's own verdict, not the club. These both carried
+            // `clubType` since the table was created, so no row on file records
+            // whether a detection was classified putt or swing — the one field
+            // that says what the detector thought it saw.
+            classification: meta.classification.rawValue,
+            swing_type: meta.swingType.rawValue,
             label: rowLabel,
             confidence: rowConfidence,
             fs_peak_rot_mag: meta.fsPeakRotMag,
@@ -735,7 +747,8 @@ class SupabaseUploader {
             detection_mode: "unifDetect",
             storage_path: storagePath,
             test_session_id: event.testSessionId?.uuidString,
-            detector_config: await DetectorConfig.shared.snapshot
+            detector_config: await DetectorConfig.shared.snapshot,
+            gate_report: event.gateReport
         )
         do {
             try await supabase.from("swing_events").insert(row).execute()
