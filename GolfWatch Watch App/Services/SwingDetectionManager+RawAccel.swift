@@ -100,6 +100,13 @@ extension SwingDetectionManager {
     var shouldRunRawAccelHardware: Bool {
         guard isMonitoring else { return false }
         guard rawAccelRunningForCapture else { return false }
+        // Swing Test Mode runs 800Hz continuously rather than setup-gated. The
+        // gating exists to protect battery across a four-hour round; a test
+        // session is minutes long and deliberate, and gating it means the
+        // stream is spinning up and down around the very strokes being
+        // studied — the first session on it produced 0.5-2.5s fragments and
+        // two windows with no contact data at all.
+        if testModeActive { return true }
         switch detectionMode {
         case .unifDetect:
             // Always setup-gated — hardware only runs during an active
