@@ -570,6 +570,7 @@ class SupabaseUploader {
         let club_type: String?
         let detection_mode: String?
         let storage_path: String?
+        let detector_config: [String: Double]?
     }
 
     private func insertFalseNegativeCandidate(
@@ -605,7 +606,8 @@ class SupabaseUploader {
             bs_to_fs_gap: shape.fsPeakT - shape.bsTopT,
             club_type: clubType,
             detection_mode: "unifDetect",
-            storage_path: storagePath
+            storage_path: storagePath,
+            detector_config: await DetectorConfig.shared.snapshot
         )
         do {
             try await supabase.from("false_negative_candidates").insert(row).execute()
@@ -704,6 +706,8 @@ class SupabaseUploader {
         let detection_mode: String
         let storage_path: String?
         let test_session_id: String?
+        /// Thresholds this detection was judged under — see DetectorConfig.
+        let detector_config: [String: Double]?
     }
 
     @discardableResult
@@ -730,7 +734,8 @@ class SupabaseUploader {
             club_type: event.clubType,
             detection_mode: "unifDetect",
             storage_path: storagePath,
-            test_session_id: event.testSessionId?.uuidString
+            test_session_id: event.testSessionId?.uuidString,
+            detector_config: await DetectorConfig.shared.snapshot
         )
         do {
             try await supabase.from("swing_events").insert(row).execute()

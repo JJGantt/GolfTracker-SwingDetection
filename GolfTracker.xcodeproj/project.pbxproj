@@ -13,6 +13,7 @@
 		AA11BB22CC33DD44EE550131 /* SwingDirection.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA11BB22CC33DD44EE550130 /* SwingDirection.swift */; };
 		AA11BB22CC33DD44EE550143 /* SwingTestView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA11BB22CC33DD44EE550142 /* SwingTestView.swift */; };
 		AA11BB22CC33DD44EE550141 /* SwingTestSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA11BB22CC33DD44EE550140 /* SwingTestSession.swift */; };
+		AA11BB22CC33DD44EE550151 /* DetectorConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA11BB22CC33DD44EE550150 /* DetectorConfig.swift */; };
 		1FFC95E79D10456C80AF9B21 /* ActiveRoundView+ClubPrediction.swift in Sources */ = {isa = PBXBuildFile; fileRef = A027586C12704EBCAA1B1736 /* ActiveRoundView+ClubPrediction.swift */; };
 		213F987A236E419F88E9C4C2 /* HolePlayView+MoveStrokeMode.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0F575753710A466D92C391CB /* HolePlayView+MoveStrokeMode.swift */; };
 		25075A32729043CBA13B479B /* ActiveRoundView+StrokeRecording.swift in Sources */ = {isa = PBXBuildFile; fileRef = B395866142294534934CF914 /* ActiveRoundView+StrokeRecording.swift */; };
@@ -273,6 +274,7 @@
 		AA11BB22CC33DD44EE550130 /* SwingDirection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SwingDirection.swift; sourceTree = "<group>"; };
 		AA11BB22CC33DD44EE550142 /* SwingTestView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SwingTestView.swift; sourceTree = "<group>"; };
 		AA11BB22CC33DD44EE550140 /* SwingTestSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SwingTestSession.swift; sourceTree = "<group>"; };
+		AA11BB22CC33DD44EE550150 /* DetectorConfig.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DetectorConfig.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -568,6 +570,7 @@
 				AA11BB22CC33DD44EE550019 /* UnifiedDetector.swift */,
 				AA11BB22CC33DD44EE550130 /* SwingDirection.swift */,
 				AA11BB22CC33DD44EE550140 /* SwingTestSession.swift */,
+				AA11BB22CC33DD44EE550150 /* DetectorConfig.swift */,
 				FB7FE8DA8D214A009C45D055 /* SwingDetectionManager+RawAccel.swift */,
 				870F6DC4F3184CDF81331B32 /* SwingDetectionManager+PostPairingGates.swift */,
 				E0D8E00B351E4F0D84DB3187 /* SupabaseUploader.swift */,
@@ -818,6 +821,7 @@
 				AA11BB22CC33DD44EE550018 /* UnifiedDetector.swift in Sources */,
 				AA11BB22CC33DD44EE550131 /* SwingDirection.swift in Sources */,
 				AA11BB22CC33DD44EE550141 /* SwingTestSession.swift in Sources */,
+				AA11BB22CC33DD44EE550151 /* DetectorConfig.swift in Sources */,
 				17FCA42178A14303B6F331C5 /* SwingDetectionManager+RawAccel.swift in Sources */,
 				AA11BB22CC33DD44EE550143 /* SwingTestView.swift in Sources */,
 				DCD05079795E4F9EB659C7AF /* SwingDetectionManager+PostPairingGates.swift in Sources */,
