@@ -807,6 +807,50 @@ class SupabaseUploader {
         }
     }
 
+    /// Upload (or replace) an event's 800Hz CSV after the fact.
+    ///
+    /// `CMBatchedSensorManager` delivers in ~0.5s batches, and `fireSmartDetection`
+    /// snapshots the raw ring the instant a shape is confirmed — roughly
+    /// `fsPeak + 0.3s`. The batch carrying the impact has usually not arrived
+    /// yet, so the slice that goes up stops 0.1-2.5s BEFORE the forward-swing
+    /// peak: measured on nine detections, seven ended before impact. The stored
+    /// copy was therefore missing the one part of the stroke the contact gate
+    /// exists to measure, which reads downstream as a putt with no contact
+    /// signal rather than as a truncated recording.
+    ///
+    /// Re-slicing once the batches have landed fixes the stored copy without
+    /// touching detection, which keeps its own timing. `upsert: true` because
+    /// the first (short) upload may already occupy the path.
+    func uploadRawAccelLate(eventId: UUID, slice: [SwingDetectionManager.RawAccelDataPoint]) {
+        guard !slice.isEmpty else { return }
+        guard let userId = WatchAuthSession.shared.currentUserId else { return }
+        let storagePath = rawAccelStoragePath(eventId: eventId, userId: userId)
+        var csv = "SensorTime,RawAccelX,RawAccelY,RawAccelZ,RawAccelMag\n"
+        let f = { (v: Double) -> String in String(format: "%.4f", v) }
+        for dp in slice {
+            csv += "\(f(dp.sensorTime)),\(f(dp.rawAccelX)),\(f(dp.rawAccelY)),\(f(dp.rawAccelZ)),\(f(dp.rawAccelMag))\n"
+        }
+        guard let data = csv.data(using: .utf8) else { return }
+        Task { [weak self] in
+            guard let self else { return }
+            do {
+                _ = try await self.supabase.storage
+                    .from(self.storageBucket)
+                    .upload(storagePath, data: data,
+                            options: FileOptions(contentType: "text/csv", upsert: true))
+                ClientEventLogger.log("swing.upload.rawLate.ok", detail: [
+                    "eventId": .string(eventId.uuidString),
+                    "sampleCount": .integer(slice.count)
+                ])
+            } catch {
+                ClientEventLogger.log("swing.upload.rawLate.failed", detail: [
+                    "eventId": .string(eventId.uuidString),
+                    "error": .string("\(error)")
+                ])
+            }
+        }
+    }
+
     private func uploadRawAccelCSV(event: PendingEvent, userId: String) async {
         guard !event.rawAccelSlice.isEmpty else { return }
         let storagePath = rawAccelStoragePath(eventId: event.id, userId: userId)

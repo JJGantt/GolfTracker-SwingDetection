@@ -199,18 +199,36 @@ final class SwingTestSession: ObservableObject {
             WKInterfaceDevice.current().play(.failure)
             return false
         }
-        SupabaseUploader.shared.uploadLookbackCapture(
-            motionSlice: capture.motionSlice,
-            rawAccelSlice: capture.rawAccelSlice,
-            rejections: capture.rejections,
-            windowSeconds: capture.windowSeconds,
-            roundId: nil,
-            holeNumber: nil,
-            clubType: detector.selectedClubTypeName,
-            testSessionId: sessionId
-        )
+        // Count and confirm immediately; upload after the 800Hz batches
+        // covering this window have landed. Batches arrive ~0.5s apart and the
+        // press happens seconds after the stroke, so slicing right now stores a
+        // window whose last moments — the impact — have not been delivered yet.
         lookbackCount += 1
         WKInterfaceDevice.current().play(.success)
+
+        let sid = sessionId
+        let club = detector.selectedClubTypeName
+        let delay = detector.rawAccelSettleDelay
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+            guard let self else { return }
+            let settled = self.detector.rawAccelSlice(from: capture.windowStart,
+                                                      to: capture.windowEnd)
+            let raw = settled.count > capture.rawAccelSlice.count ? settled : capture.rawAccelSlice
+            ClientEventLogger.log("lookback.raw.settled", detail: [
+                "atCapture": .integer(capture.rawAccelSlice.count),
+                "afterSettle": .integer(raw.count)
+            ])
+            SupabaseUploader.shared.uploadLookbackCapture(
+                motionSlice: capture.motionSlice,
+                rawAccelSlice: raw,
+                rejections: capture.rejections,
+                windowSeconds: capture.windowSeconds,
+                roundId: nil,
+                holeNumber: nil,
+                clubType: club,
+                testSessionId: sid
+            )
+        }
         return true
     }
 }
