@@ -12,7 +12,9 @@ import WatchKit
 ///   * **true positive** — it fired and it was a swing. No button. The counter
 ///     increments and the wrist buzzes, exactly as in a round.
 ///   * **false positive** — it fired and it wasn't. One button, flipping the
-///     event to false_positive/high.
+///     event to false_positive/high — or no button at all when
+///     `farmFalsePositives` is on and every detection is a misfire by
+///     construction.
 ///   * **false negative** — you swung and nothing happened. One button,
 ///     uploading the raw motion window (see `captureLookback`).
 ///
@@ -79,6 +81,26 @@ final class SwingTestSession: ObservableObject {
     @Published private(set) var noteText: String = ""
     private var activeNoteId: UUID?
 
+    /// Farm mode — every detection is a false positive, with no press.
+    ///
+    /// There is a whole class of tuning session where the answer is known
+    /// before the detector fires: driving, eating, clapping, carrying the
+    /// clubs — anywhere a swing is impossible, so every detection is a misfire
+    /// by construction. The button is pure overhead there. It interrupts the
+    /// very activity that produced the misfire, and a burst arrives faster
+    /// than it can be pressed, which is the case the unmarked stack exists to
+    /// survive rather than one it makes pleasant. With this on the event is
+    /// flipped to false_positive/high the moment its id lands, so the session
+    /// can be left running and read afterwards.
+    ///
+    /// Persisted, because the session ends when the screen does and a farming
+    /// run is exactly the kind that gets restarted. Settable mid-session:
+    /// detections already on the unmarked stack stay markable by hand.
+    @Published var farmFalsePositives: Bool {
+        didSet { UserDefaults.standard.set(farmFalsePositives, forKey: Self.farmKey) }
+    }
+    private static let farmKey = "swingTestFarmFalsePositives"
+
     /// Detector settings this mode overrides, restored on stop so a test
     /// session can never leave the app configured differently for a round.
     private var savedAutoAdd: Bool?
@@ -86,7 +108,9 @@ final class SwingTestSession: ObservableObject {
 
     private let detector = SwingDetectionManager.shared
 
-    private init() {}
+    private init() {
+        farmFalsePositives = UserDefaults.standard.bool(forKey: Self.farmKey)
+    }
 
     // MARK: - Lifecycle
 
@@ -132,7 +156,8 @@ final class SwingTestSession: ObservableObject {
         if !noteText.isEmpty { setNote(noteText) }
 
         ClientEventLogger.log("swingTest.start", detail: [
-            "sessionId": .string(id.uuidString)
+            "sessionId": .string(id.uuidString),
+            "farmFalsePositives": .bool(farmFalsePositives)
         ])
     }
 
@@ -163,7 +188,8 @@ final class SwingTestSession: ObservableObject {
                 "sessionId": .string(id.uuidString),
                 "detected": .integer(detectedCount),
                 "falsePositives": .integer(falsePositiveCount),
-                "lookbacks": .integer(lookbackCount)
+                "lookbacks": .integer(lookbackCount),
+                "farmFalsePositives": .bool(farmFalsePositives)
             ])
         }
         sessionId = nil
@@ -197,10 +223,17 @@ final class SwingTestSession: ObservableObject {
         // id never reached `swing_events`, so there is nothing to mislabel and
         // nothing to push.
         if let eventId = detector.lastSwingEventId {
-            unmarkedEventIds.append(eventId)
-            markableCount = unmarkedEventIds.count
             if let noteId = activeNoteId {
                 SupabaseUploader.shared.linkNote(noteId: noteId, kind: "swing_event", eventId: eventId)
+            }
+            if farmFalsePositives {
+                // No haptic here: the detector has already buzzed for this
+                // detection, and a second buzz on every one of them says
+                // nothing the counters don't.
+                recordFalsePositive(eventId, farmed: true)
+            } else {
+                unmarkedEventIds.append(eventId)
+                markableCount = unmarkedEventIds.count
             }
         }
         detector.lastSwingEventId = nil
@@ -219,12 +252,21 @@ final class SwingTestSession: ObservableObject {
     func markLastFalsePositive() {
         guard let eventId = unmarkedEventIds.popLast() else { return }
         markableCount = unmarkedEventIds.count
-        SupabaseUploader.shared.markFalsePositive(eventId: eventId)
-        falsePositiveCount += 1
         justMarked = true
         WKInterfaceDevice.current().play(.failure)
+        recordFalsePositive(eventId, farmed: false)
+    }
+
+    /// The single write path for a false positive, whether a press or farm
+    /// mode produced it. `farmed` is recorded because the two are not the same
+    /// evidence: a press is a person looking at the detection and rejecting
+    /// it, farming is a blanket claim about the whole session.
+    private func recordFalsePositive(_ eventId: UUID, farmed: Bool) {
+        SupabaseUploader.shared.markFalsePositive(eventId: eventId)
+        falsePositiveCount += 1
         ClientEventLogger.log("swingTest.falsePositive", detail: [
             "eventId": .string(eventId.uuidString),
+            "farmed": .bool(farmed),
             "remainingMarkable": .integer(unmarkedEventIds.count)
         ])
     }

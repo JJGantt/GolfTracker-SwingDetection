@@ -25,10 +25,17 @@ struct SwingTestView: View {
                 if session.isRunning {
                     counters
                     liveReadout
-                    falsePositiveButton
+                    // Hidden while farming, since nothing reaches the stack
+                    // for it to mark — but kept whenever the stack is
+                    // non-empty, so detections from before the toggle stay
+                    // markable.
+                    if !session.farmFalsePositives || session.canMarkFalsePositive {
+                        falsePositiveButton
+                    }
                     lookbackButton
                 }
                 startStopButton
+                farmToggle
                 clubPicker
                 noteField
                 // Which build is on the wrist. The watch app installs
@@ -48,6 +55,17 @@ struct SwingTestView: View {
             // should outlive the UI that started them.
             if session.isRunning { session.stop() }
         }
+    }
+
+    // MARK: - Farm mode
+
+    /// Every detection auto-marked a false positive. For sessions where a
+    /// swing is impossible and so every detection is one — see
+    /// `SwingTestSession.farmFalsePositives`.
+    private var farmToggle: some View {
+        Toggle("Farm FP", isOn: $session.farmFalsePositives)
+            .font(.system(size: 13, weight: .semibold))
+            .tint(.red)
     }
 
     // MARK: - Club + note (both optional)
