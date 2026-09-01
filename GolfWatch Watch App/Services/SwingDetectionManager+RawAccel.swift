@@ -167,6 +167,7 @@ extension SwingDetectionManager {
                             DispatchQueue.main.async { self.rawAccelAuthOK = true }
                             self.rawAccelMissingWarned = false
                         }
+                        self.noteRawBatchArrived()
                         self.rawAccelQueue.addOperation { [weak self] in
                             guard let self = self else { return }
                             for sample in batch {
@@ -178,8 +179,17 @@ extension SwingDetectionManager {
                         }
                     }
                 } catch {
+                    // The stream dying is the outage that matters — say so to
+                    // the server, not just the local console.
+                    ClientEventLogger.log("rawAccel.stream.ended", detail: [
+                        "error": .string("\(error)"),
+                        "batches": .integer(batchCount)
+                    ])
                     self.phoneLog("[SwingDetection] CMBatchedSensor stream ended: \(error)")
                 }
+                ClientEventLogger.log("rawAccel.stream.loopExited", detail: [
+                    "batches": .integer(batchCount)
+                ])
             }
             phoneLog("[SwingDetection] Raw accel started @800Hz (CMBatchedSensorManager)")
         } else if motionManager.isAccelerometerAvailable {

@@ -127,19 +127,41 @@ struct SwingTestView: View {
     /// question to ask about any miss, so it belongs on screen rather than in
     /// a log.
     private var liveReadout: some View {
-        HStack(spacing: 4) {
-            Circle()
-                .fill(detector.isMonitoring ? Color.green : Color.gray)
-                .frame(width: 6, height: 6)
-            Text("pending \(detector.rejectedShapesSinceLastStroke.count)")
-                .font(.system(size: 10, design: .monospaced))
-                .foregroundColor(.secondary)
-            if let club = detector.selectedClubTypeName {
-                Text("· \(club)")
+        // 1Hz tick so the 800Hz down-counter advances and the rejection count
+        // stays current (neither is @Published-driven at the cadence needed).
+        TimelineView(.periodic(from: .now, by: 1)) { _ in
+            HStack(spacing: 4) {
+                Circle()
+                    .fill(detector.isMonitoring ? Color.green : Color.gray)
+                    .frame(width: 6, height: 6)
+                Text("pending \(detector.rejectedShapesSinceLastStroke.count)")
                     .font(.system(size: 10, design: .monospaced))
                     .foregroundColor(.secondary)
+                raw800Label
+                if let club = detector.selectedClubTypeName {
+                    Text("· \(club)")
+                        .font(.system(size: 10, design: .monospaced))
+                        .foregroundColor(.secondary)
+                }
             }
         }
+    }
+
+    /// 800Hz stream state: green = armed and delivering, red + seconds = armed
+    /// but gone silent (and for how long), dim = not armed (setup-gated off).
+    private var raw800Label: some View {
+        let (color, text): (Color, String) = {
+            switch detector.raw800State {
+            case .live: return (.green, "800")
+            case .off:  return (Color.white.opacity(0.3), "800")
+            case .down:
+                let secs = detector.raw800DownSince.map { Int(-$0.timeIntervalSinceNow) } ?? 0
+                return (.red, "800 ↓\(secs)s")
+            }
+        }()
+        return Text(text)
+            .font(.system(size: 10, weight: .bold, design: .monospaced))
+            .foregroundColor(color)
     }
 
     // MARK: - Buttons
