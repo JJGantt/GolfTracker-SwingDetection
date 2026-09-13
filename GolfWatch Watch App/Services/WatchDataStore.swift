@@ -1070,6 +1070,10 @@ class WatchDataStore: ObservableObject {
         context.insert(newHole)
         round.holes.append(newHole)
         round.currentHoleIndex = nextHoleNumber - 1
+        // Every hole-index write logs battery. This path used to skip it, so a
+        // course whose holes are all added in play (Blue Sky, 2026-09-07)
+        // recorded no battery at all.
+        ClientEventLogger.logBattery(hole: nextHoleNumber)
         try? context.save()
         ClientEventLogger.log("addNextHole.saved", detail: ["holeNumber": .integer(nextHoleNumber), "holeCount": .integer(round.holes.count)])
         SupabaseSync.shared.upsertRound(round)
@@ -1085,6 +1089,7 @@ class WatchDataStore: ObservableObject {
         context.insert(newHole)
         round.holes.append(newHole)
         round.currentHoleIndex = nextHoleNumber - 1
+        ClientEventLogger.logBattery(hole: nextHoleNumber)
         try? context.save()
         SupabaseSync.shared.upsertRound(round)
         objectWillChange.send()

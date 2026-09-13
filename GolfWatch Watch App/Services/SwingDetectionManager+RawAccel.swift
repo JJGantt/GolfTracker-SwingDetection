@@ -5,9 +5,8 @@ extension SwingDetectionManager {
 
     // MARK: - Event Capture
 
-    /// Start/stop raw accelerometer based on whether event capture conditions are met.
-    /// For unifDetect mode, 800Hz is managed dynamically (putter + setup), but the event
-    /// buffer flag stays on so data flows when 800Hz is running.
+    /// Arm or disarm event capture (the 800Hz event buffer) with the detection
+    /// mode, then bring the hardware in line.
     func updateRawAccelForCapture() {
         let shouldCapture = detectionMode == .unifDetect
         if shouldCapture && !rawAccelRunningForCapture {
@@ -17,78 +16,15 @@ extension SwingDetectionManager {
             eventRawAccelBuffer.clear()
             eventBufferLock.unlock()
             syncRawAccelHardwareState()
-            dprint("⌚ [SwingDetection] Event capture enabled (800Hz setup-gated putter)")
+            dprint("⌚ [SwingDetection] Event capture enabled (800Hz for the whole session)")
         } else if !shouldCapture && rawAccelRunningForCapture {
             rawAccelRunningForCapture = false
 
             eventBufferLock.lock()
             eventRawAccelBuffer.clear()
             eventBufferLock.unlock()
-            batchedAccelForPutt = false
-            setupEndTimeoutTimer?.invalidate()
-            setupEndTimeoutTimer = nil
             syncRawAccelHardwareState()
             dprint("⌚ [SwingDetection] Event capture disabled")
-        }
-    }
-
-    // MARK: - Dynamic 800Hz for Putter
-
-    func startBatchedAccelForPutt() {
-        guard !batchedAccelForPutt else { return }
-        batchedAccelForPutt = true
-        setupEndTimeoutTimer?.invalidate()
-        setupEndTimeoutTimer = nil
-        syncRawAccelHardwareState()
-        ClientEventLogger.log("rawAccel.putt.start", level: .diagnostic, detail: [
-            "isPutterSelected": .bool(isPutterSelected),
-            "selectedClubType": selectedClubTypeName.map { .string($0) } ?? .null,
-            "workoutSessionState": .string("\(WorkoutManager.shared.session?.state.rawValue ?? -1)"),
-            "canStartRawAccelNow": .bool(canStartRawAccelNow),
-            "shouldRunRawAccelHardware": .bool(shouldRunRawAccelHardware)
-        ])
-        dprint("[800Hz_PUTT_START]")
-    }
-
-    func stopBatchedAccelForPutt() {
-        guard batchedAccelForPutt else { return }
-        batchedAccelForPutt = false
-        setupEndTimeoutTimer?.invalidate()
-        setupEndTimeoutTimer = nil
-        syncRawAccelHardwareState()
-        dprint("[800Hz_PUTT_STOP]")
-    }
-
-    func onUnifSetupStarted() {
-        unifSetupActive = true
-        ClientEventLogger.log("rawAccel.setupStarted", level: .diagnostic, detail: [
-            "isPutterSelected": .bool(isPutterSelected),
-            "selectedClubType": selectedClubTypeName.map { .string($0) } ?? .null,
-            "workoutSessionState": .string("\(WorkoutManager.shared.session?.state.rawValue ?? -1)")
-        ])
-        guard isPutterSelected || !raw800PutterOnly else {
-            ClientEventLogger.log("rawAccel.setupStarted.bail.notPutter", level: .diagnostic)
-            return
-        }
-        setupEndTimeoutTimer?.invalidate()
-        setupEndTimeoutTimer = nil
-        startBatchedAccelForPutt()
-    }
-
-    func onUnifSetupEnded() {
-        unifSetupActive = false
-        guard batchedAccelForPutt else { return }
-        // Start timeout — if no BS top pairs within setupEndTimeoutS, spin down
-        setupEndTimeoutTimer?.invalidate()
-        setupEndTimeoutTimer = Timer.scheduledTimer(withTimeInterval: setupEndTimeoutS, repeats: false) { [weak self] _ in
-            guard let self = self else { return }
-            // Only spin down if no pending shapes are being checked
-            self.eventsLock.lock()
-            let hasPending = !self.pendingUnifShapes.isEmpty
-            self.eventsLock.unlock()
-            if !hasPending {
-                self.stopBatchedAccelForPutt()
-            }
         }
     }
 
@@ -99,34 +35,34 @@ extension SwingDetectionManager {
         return WorkoutManager.shared.session?.state == .running
     }
 
+    /// 800Hz runs for the whole monitoring session — every round, and every
+    /// Swing Test session, which follows the same rule so it still reproduces
+    /// a round.
+    ///
+    /// It used to arm at each setup and spin down 3s after the setup ended.
+    /// That saved little: the spin-down Timer was scheduled from `motionQueue`,
+    /// an OperationQueue with no run loop, so it never fired and windows ran on
+    /// for minutes (68% of the 2026-09-07 round was covered anyway). And the
+    /// arm/disarm cycle is where the stream's failures lived: a stream that
+    /// went silent while marked armed had no path back until monitoring
+    /// stopped (2026-08-31, 35 minutes with no vibration data). A dead stream
+    /// is now recovered by the watchdog in `checkRaw800Liveness`.
     var shouldRunRawAccelHardware: Bool {
-        guard isMonitoring else { return false }
-        guard rawAccelRunningForCapture else { return false }
-        // Deliberately NOT special-cased for Swing Test Mode. Running 800Hz
-        // continuously there was tried and reverted: the mode exists to
-        // reproduce what happens in a round, and a stream that is always on
-        // cannot reproduce a stream that spins up too late. Whatever the gating
-        // does to a real putt, it must do here.
+        guard isMonitoring, rawAccelRunningForCapture else { return false }
         switch detectionMode {
         case .unifDetect:
-            // Always setup-gated — hardware only runs during an active
-            // detection window (setup start → 3s after setup end or shape
-            // resolution). raw800PutterOnly only controls which club types
-            // trigger onUnifSetupStarted; it does NOT mean "always on."
-            return batchedAccelForPutt
+            return true
         case .off:
-            // Nothing else arms the 800Hz hardware now that Sensor Capture is
-            // gone; detection is the only consumer.
             return false
         }
     }
 
     func syncRawAccelHardwareState() {
-        let shouldRun = shouldRunRawAccelHardware
-        let canStart = canStartRawAccelNow
+        rawAccelControlLock.lock()
+        defer { rawAccelControlLock.unlock() }
 
-        if shouldRun {
-            guard canStart else {
+        if shouldRunRawAccelHardware {
+            guard canStartRawAccelNow else {
                 ClientEventLogger.log("rawAccel.sync.bail.canStartFalse", level: .diagnostic, detail: [
                     "workoutSessionState": .string("\(WorkoutManager.shared.session?.state.rawValue ?? -1)"),
                     "isMonitoring": .bool(isMonitoring),
@@ -134,14 +70,37 @@ extension SwingDetectionManager {
                 ])
                 return
             }
-            ensureBatchedAccelRunning()
+            startRawAccelLocked()
         } else {
-            forceStopBatchedAccel()
+            stopRawAccelLocked()
         }
     }
 
-    /// Start raw accelerometer if not already running.
-    func ensureBatchedAccelRunning() {
+    /// Watchdog recovery: tear the stream down and bring it back up in one
+    /// locked step. A no-op when the stream shouldn't be running, or can't be
+    /// (no running workout session — delivery would stay silent regardless).
+    func restartRawAccel() {
+        rawAccelControlLock.lock()
+        defer { rawAccelControlLock.unlock() }
+        guard shouldRunRawAccelHardware, canStartRawAccelNow else { return }
+        stopRawAccelLocked()
+        startRawAccelLocked()
+    }
+
+    /// Stop the raw accelerometer when monitoring is no longer active.
+    func stopBatchedAccelIfUnneeded() {
+        rawAccelControlLock.lock()
+        defer { rawAccelControlLock.unlock() }
+        guard !isMonitoring else { return }
+        stopRawAccelLocked()
+    }
+
+    // Both below require `rawAccelControlLock`. Start and stop used to run
+    // unlocked from motionQueue, rawAccelQueue and main, so a stop's
+    // `stopAccelerometerUpdates()` could land after a concurrent start and
+    // leave the flags saying running with the hardware off.
+
+    private func startRawAccelLocked() {
         guard !isBatchedAccelRunning else { return }
 
         if CMBatchedSensorManager.isAccelerometerSupported {
@@ -154,6 +113,7 @@ extension SwingDetectionManager {
             }
             isBatchedAccelRunning = true
             isUsingFallbackRawAccel = false
+            noteRawStreamArmed()
             batchedSensorManager.startAccelerometerUpdates()
             batchedAccelTask = Task(priority: .userInitiated) { [weak self] in
                 guard let self = self else { return }
@@ -195,6 +155,7 @@ extension SwingDetectionManager {
         } else if motionManager.isAccelerometerAvailable {
             isBatchedAccelRunning = true
             isUsingFallbackRawAccel = true
+            noteRawStreamArmed()
             motionManager.accelerometerUpdateInterval = 0.01
             motionManager.startAccelerometerUpdates(to: rawAccelQueue) { [weak self] data, error in
                 guard let self = self, let data = data else { return }
@@ -209,41 +170,7 @@ extension SwingDetectionManager {
         }
     }
 
-    /// Common sample handler — called from both the batched and fallback paths.
-    func feedRawAccelSample(x: Double, y: Double, z: Double, t: TimeInterval) {
-        latestRawAccelTime = t
-        let mag = sqrt(x * x + y * y + z * z)
-        let dp = RawAccelDataPoint(sensorTime: t, rawAccelX: x, rawAccelY: y, rawAccelZ: z, rawAccelMag: mag)
-        // Rolling 3-min raw accel buffer — fed continuously while monitoring.
-        if isMonitoring {
-            rollingBufferLock.lock()
-            rollingRawAccelBuffer.append(dp)
-            let cutoff = t - rollingBufferDuration
-            while let first = rollingRawAccelBuffer.first, first.sensorTime < cutoff {
-                rollingRawAccelBuffer.removeFirst()
-            }
-            rollingBufferLock.unlock()
-        }
-        if rawAccelRunningForCapture {
-            eventBufferLock.lock()
-            eventRawAccelBuffer.append(dp)
-            let cutoff = t - eventBufferDuration
-            eventRawAccelBuffer.trim(olderThan: cutoff)
-            eventBufferLock.unlock()
-            // Check pending unified shapes for TV contact confirmation
-            checkPendingUnifShapes(currentRawTime: t)
-        }
-    }
-
-    /// Stop the raw accelerometer when monitoring is no longer active.
-    func stopBatchedAccelIfUnneeded() {
-        guard isBatchedAccelRunning, !isMonitoring else { return }
-        forceStopBatchedAccel()
-    }
-
-    /// Force-stop the raw accelerometer regardless of monitoring state.
-    /// Used by dynamic 800Hz putter logic to spin down while monitoring continues.
-    func forceStopBatchedAccel() {
+    private func stopRawAccelLocked() {
         guard isBatchedAccelRunning else { return }
         isBatchedAccelRunning = false
         if isUsingFallbackRawAccel {
@@ -255,5 +182,21 @@ extension SwingDetectionManager {
         }
         isUsingFallbackRawAccel = false
         dprint("⌚ [SwingDetection] Raw accel stopped")
+    }
+
+    /// Common sample handler — called from both the batched and fallback paths.
+    func feedRawAccelSample(x: Double, y: Double, z: Double, t: TimeInterval) {
+        latestRawAccelTime = t
+        let mag = sqrt(x * x + y * y + z * z)
+        let dp = RawAccelDataPoint(sensorTime: t, rawAccelX: x, rawAccelY: y, rawAccelZ: z, rawAccelMag: mag)
+        if rawAccelRunningForCapture {
+            eventBufferLock.lock()
+            eventRawAccelBuffer.append(dp)
+            let cutoff = t - eventBufferDuration
+            eventRawAccelBuffer.trim(olderThan: cutoff)
+            eventBufferLock.unlock()
+            // Check pending unified shapes for TV contact confirmation
+            checkPendingUnifShapes(currentRawTime: t)
+        }
     }
 }

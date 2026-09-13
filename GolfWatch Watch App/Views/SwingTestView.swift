@@ -147,8 +147,9 @@ struct SwingTestView: View {
         }
     }
 
-    /// 800Hz stream state: green = armed and delivering, red + seconds = armed
-    /// but gone silent (and for how long), dim = not armed (setup-gated off).
+    /// 800Hz stream state: green = running and delivering, red + seconds =
+    /// running but gone silent (and for how long; the watchdog is restarting
+    /// it), dim = not running (no workout session yet).
     private var raw800Label: some View {
         let (color, text): (Color, String) = {
             switch detector.raw800State {
