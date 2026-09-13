@@ -2,6 +2,7 @@ import Foundation
 import CoreLocation
 import MapKit
 import SwiftData
+import UIKit
 
 class DataStore: ObservableObject {
     /// Shared instance — mirrors `WatchDataStore.shared`. Singletons that need
@@ -238,8 +239,11 @@ class DataStore: ObservableObject {
                     "courseFound": .bool(course != nil),
                     "courseName": course.map { .string($0.name) } ?? .null
                 ])
-                guard let course = course else { return }
-                self.runHoleDetection(for: course)
+                guard course != nil else {
+                    WatchConnectivityManager.shared.sendHoleDetectionStatus(courseId: courseId, state: .failed)
+                    return
+                }
+                self.enqueueWatchHoleDetection(courseId)
             }
         }
 
@@ -361,11 +365,95 @@ class DataStore: ObservableObject {
                     "error": .string("\(error)")
                 ])
             }
+            // `done` tells the watch to read the server cache, so it goes out
+            // only once the write has landed (or failed — the WC data push
+            // still carries the blobs then).
+            self.finishHoleDetection(courseId: courseId, state: .done)
         }
     }
 
     func runHoleDetection(for course: Course) {
         startHoleDetection(for: course, allowCache: true, persistResult: true)
+    }
+
+    // MARK: - Watch-requested analysis queue
+
+    private let watchHoleDetectionQueueKey = "watchHoleDetectionQueue"
+
+    /// Courses the watch asked to analyze that have not finished yet.
+    ///
+    /// A watch request usually arrives with this app in the background —
+    /// WatchConnectivity launches it there to deliver the message — and the
+    /// analyzer's MapKit snapshots do not complete for a backgrounded app. On
+    /// 2026-09-07 the Blue Sky request started that way, died without logging
+    /// anything, and the course never got blobs. So a request only ever runs
+    /// while the app is on screen; otherwise it waits here and the watch is
+    /// told `queued`. Persisted, so a request survives the app being killed.
+    private var watchHoleDetectionQueue: [UUID] {
+        get {
+            (UserDefaults.standard.stringArray(forKey: watchHoleDetectionQueueKey) ?? [])
+                .compactMap(UUID.init(uuidString:))
+        }
+        set {
+            UserDefaults.standard.set(newValue.map(\.uuidString), forKey: watchHoleDetectionQueueKey)
+        }
+    }
+
+    /// Covers a run the user backgrounds midway, so it can finish.
+    private var holeDetectionBackgroundTasks: [UUID: UIBackgroundTaskIdentifier] = [:]
+
+    private func enqueueWatchHoleDetection(_ courseId: UUID) {
+        if !watchHoleDetectionQueue.contains(courseId) {
+            watchHoleDetectionQueue.append(courseId)
+        }
+        drainWatchHoleDetectionQueue()
+    }
+
+    /// Run every queued watch request, if the app is on screen. Called when a
+    /// request arrives and on every foreground.
+    func drainWatchHoleDetectionQueue() {
+        let queue = watchHoleDetectionQueue
+        guard !queue.isEmpty, let context = context else { return }
+        let appState = UIApplication.shared.applicationState
+        guard appState == .active else {
+            for courseId in queue {
+                WatchConnectivityManager.shared.sendHoleDetectionStatus(courseId: courseId, state: .queued)
+            }
+            ClientEventLogger.log("blob.request.queued", detail: [
+                "courseIds": .string(queue.map(\.uuidString).joined(separator: ",")),
+                "appState": .string(appState == .background ? "background" : "inactive")
+            ])
+            return
+        }
+        for courseId in queue {
+            let course = courses.first(where: { $0.id == courseId })
+                ?? (try? context.fetch(FetchDescriptor<Course>(predicate: #Predicate { $0.id == courseId })))?.first
+            guard let course else {
+                ClientEventLogger.log("blob.analyzer.courseMissing", detail: [
+                    "courseId": .string(courseId.uuidString)
+                ])
+                finishHoleDetection(courseId: courseId, state: .failed)
+                continue
+            }
+            startHoleDetection(for: course, allowCache: true, persistResult: true)
+        }
+    }
+
+    /// The single exit of every analysis run: tell the watch where it ended,
+    /// drop the course from the queue, release the background task.
+    private func finishHoleDetection(courseId: UUID, state: HoleDetectionPhoneState) {
+        watchHoleDetectionQueue.removeAll { $0 == courseId }
+        WatchConnectivityManager.shared.sendHoleDetectionStatus(courseId: courseId, state: state)
+        if let task = holeDetectionBackgroundTasks.removeValue(forKey: courseId) {
+            UIApplication.shared.endBackgroundTask(task)
+        }
+    }
+
+    /// Domain, code and message — enough to tell a MapKit throttle from a
+    /// render failure from a timeout in `client_events`.
+    private static func describe(_ error: Error) -> String {
+        let ns = error as NSError
+        return "\(ns.domain)#\(ns.code): \(ns.localizedDescription)"
     }
 
     private var holeDetectionFileURL: URL {
@@ -1175,6 +1263,8 @@ class DataStore: ObservableObject {
         persistResult: Bool = true
     ) {
         if holeDetectionRunStateByCourse[course.id]?.isRunning == true {
+            // A re-request mid-run still gets an answer.
+            WatchConnectivityManager.shared.sendHoleDetectionStatus(courseId: course.id, state: .running)
             return
         }
 
@@ -1187,6 +1277,7 @@ class DataStore: ObservableObject {
                 error: nil
             )
             WatchConnectivityManager.shared.sendHoleDetectionData(cached)
+            finishHoleDetection(courseId: course.id, state: .done)
             return
         }
 
@@ -1213,6 +1304,7 @@ class DataStore: ObservableObject {
                         "courseId": .string(courseId.uuidString),
                         "blobCount": .integer(serverCached.blobs.count)
                     ])
+                    self.finishHoleDetection(courseId: courseId, state: .done)
                 } else {
                     ClientEventLogger.log("blob.serverCache.miss", detail: [
                         "courseId": .string(courseId.uuidString)
@@ -1228,18 +1320,36 @@ class DataStore: ObservableObject {
             return
         }
 
-        guard let center = overrideCenter
-                ?? calculateCourseCentroid(course: course)
-                ?? LocationManager.shared.getCurrentLocation()?.coordinate
-                ?? course.holes.first?.coordinate else {
+        // The course's own stored center comes before this phone's GPS. A
+        // queued watch request can run hours after it was made, wherever the
+        // phone happens to be when the app is next opened, and centering on
+        // the phone then scans the wrong place entirely. Placed holes still
+        // win — they are where the greens actually are.
+        let storedCenter: CLLocationCoordinate2D? = {
+            guard let lat = course.centerLat, let lon = course.centerLon else { return nil }
+            return CLLocationCoordinate2D(latitude: lat, longitude: lon)
+        }()
+        let resolvedCenter: (coordinate: CLLocationCoordinate2D, source: String)? = {
+            if let c = overrideCenter { return (c, "override") }
+            if let c = calculateCourseCentroid(course: course) { return (c, "holes") }
+            if let c = storedCenter { return (c, "courseRecord") }
+            if let c = LocationManager.shared.getCurrentLocation()?.coordinate { return (c, "phoneGPS") }
+            return nil
+        }()
+        guard let resolvedCenter else {
             holeDetectionRunStateByCourse[course.id] = HoleDetectionRunState(
                 isRunning: false,
                 message: "Hole detection unavailable",
                 progress: 0,
                 error: "No location available"
             )
+            ClientEventLogger.log("blob.analyzer.noCenter", detail: [
+                "courseId": .string(course.id.uuidString)
+            ])
+            finishHoleDetection(courseId: course.id, state: .failed)
             return
         }
+        let center = resolvedCenter.coordinate
 
         let coverageRadius = holeDetectionCoverageRadius(for: course, center: center)
         // Decode the OSM bounding polygon(s) if we have them — used to gate
@@ -1259,6 +1369,23 @@ class DataStore: ObservableObject {
             progress: 0,
             error: nil
         )
+        let courseIdForTask = course.id
+        holeDetectionBackgroundTasks[course.id] = UIApplication.shared.beginBackgroundTask(withName: "holeDetection") { [weak self] in
+            // Out of background time before the run finished. The analyzer
+            // cannot be cancelled, so its completion still fires later; this
+            // only returns the task so the app is not terminated for holding it.
+            guard let self, let task = self.holeDetectionBackgroundTasks.removeValue(forKey: courseIdForTask) else { return }
+            ClientEventLogger.log("blob.analyzer.backgroundExpired", detail: [
+                "courseId": .string(courseIdForTask.uuidString)
+            ])
+            UIApplication.shared.endBackgroundTask(task)
+        }
+        WatchConnectivityManager.shared.sendHoleDetectionStatus(courseId: course.id, state: .running)
+        ClientEventLogger.log("blob.analyzer.started", detail: [
+            "courseId": .string(course.id.uuidString),
+            "centerSource": .string(resolvedCenter.source),
+            "coverageRadiusMeters": .double(coverageRadius)
+        ])
 
         holeDetectionAnalyzer.detect(
             courseId: course.id,
@@ -1305,6 +1432,16 @@ class DataStore: ObservableObject {
                             error: nil
                         )
                         WatchConnectivityManager.shared.sendHoleDetectionData(detectionData)
+                        ClientEventLogger.log("blob.analyzer.succeeded", detail: [
+                            "courseId": .string(course.id.uuidString),
+                            "tileCount": .integer(output.diagnostics.tileCount),
+                            "blobCount": .integer(detectionData.blobs.count)
+                        ])
+                        // Persisted runs report `done` from the upload, once
+                        // the server cache actually holds the result.
+                        if !persistResult {
+                            self.finishHoleDetection(courseId: course.id, state: .done)
+                        }
                     case .failure(let error):
                         self.holeDetectionRunStateByCourse[course.id] = HoleDetectionRunState(
                             isRunning: false,
@@ -1312,6 +1449,13 @@ class DataStore: ObservableObject {
                             progress: 0,
                             error: error.localizedDescription
                         )
+                        let tileErrors = (error as? HoleDetectionAllTilesFailed)?.errors ?? [error]
+                        ClientEventLogger.log("blob.analyzer.failed", detail: [
+                            "courseId": .string(course.id.uuidString),
+                            "tileErrorCount": .integer(tileErrors.count),
+                            "errors": .string(Set(tileErrors.map(Self.describe)).sorted().joined(separator: " | "))
+                        ])
+                        self.finishHoleDetection(courseId: course.id, state: .failed)
                     }
                 }
             }
@@ -1835,6 +1979,14 @@ struct HoleDetectionRunState {
     var error: String?
 }
 
+/// Every tile failed, so there is nothing to merge. Carries all of the tile
+/// errors rather than the first, because which one surfaced was arbitrary and
+/// the failure log needs to show what MapKit actually returned.
+private struct HoleDetectionAllTilesFailed: LocalizedError {
+    let errors: [Error]
+    var errorDescription: String? { errors.first?.localizedDescription }
+}
+
 private struct HoleDetectionDiagnostics {
     var tileCount: Int
     var totalGreenPixels: Int
@@ -2004,7 +2156,9 @@ private final class HoleDetectionAnalyzer {
                 // A tile that failed shouldn't sink the whole course — partial
                 // coverage still places most greens. Only give up when nothing
                 // came back at all.
-                if tileResults.isEmpty, let first = tileErrors.first { throw first }
+                if tileResults.isEmpty, !tileErrors.isEmpty {
+                    throw HoleDetectionAllTilesFailed(errors: tileErrors)
+                }
 
                 // Merge in tile order so the output is deterministic regardless
                 // of which tile finished first.

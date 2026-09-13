@@ -107,6 +107,72 @@ class WatchDataStore: ObservableObject {
                     "device": .string("watch"),
                     "trigger": .string("resumeRound")
                 ])
+                // The phone may never have run it (killed, or never opened
+                // since the round started). Ask again — it queues until its
+                // app is on screen. Once per app session: this path runs on
+                // every round refresh while the blobs are missing.
+                await MainActor.run {
+                    guard self.currentRound?.courseId == courseId,
+                          self.currentRound?.holeDetectionEnabled == true,
+                          self.blobRequestStatusByCourse[courseId] == nil else { return }
+                    self.requestBlobsFromPhone(courseId: courseId, promptUser: false)
+                }
+            }
+        }
+    }
+
+    /// Ask the iPhone to analyze a course. `promptUser` puts up the
+    /// round-start card, which then tracks the phone's reported state.
+    func requestBlobsFromPhone(courseId: UUID, promptUser: Bool) {
+        blobRequestStatusByCourse[courseId] = .sent
+        if promptUser { blobPromptCourseId = courseId }
+        WatchConnectivityManager.shared.sendHoleDetectionRequest(courseId: courseId) { [weak self] in
+            DispatchQueue.main.async {
+                guard let self = self,
+                      self.holeDetectionDataByCourse[courseId] == nil else { return }
+                self.blobRequestStatusByCourse[courseId] = .unreachable
+                ClientEventLogger.log("blob.request.undeliverable", detail: [
+                    "courseId": .string(courseId.uuidString)
+                ])
+            }
+        }
+    }
+
+    /// Continue on the round-start card: proceed without blobs. Whatever the
+    /// phone produces later still applies through `applyBlobDetectionResults`.
+    func continueWithoutBlobs() {
+        guard let courseId = blobPromptCourseId else { return }
+        ClientEventLogger.log("blob.prompt.continued", detail: [
+            "courseId": .string(courseId.uuidString),
+            "status": .string(blobRequestStatusByCourse[courseId].map { "\($0)" } ?? "none")
+        ])
+        blobPromptCourseId = nil
+    }
+
+    private func handlePhoneBlobStatus(courseId: UUID, state: HoleDetectionPhoneState) {
+        ClientEventLogger.log("blob.phoneStatus", detail: [
+            "courseId": .string(courseId.uuidString),
+            "state": .string(state.rawValue)
+        ])
+        guard holeDetectionDataByCourse[courseId] == nil else { return }
+        switch state {
+        case .queued:  blobRequestStatusByCourse[courseId] = .queued
+        case .running: blobRequestStatusByCourse[courseId] = .running
+        case .failed:  blobRequestStatusByCourse[courseId] = .failed
+        case .done:
+            // The server cache is the fast path; the WC data push is a file
+            // transfer above 50KB and can take minutes. If the upload failed,
+            // that push is still coming and applies on arrival.
+            Task { @MainActor in
+                if let cached = await self.fetchServerCachedBlobs(courseId: courseId) {
+                    self.applyBlobDetectionResults(cached, courseId: courseId)
+                    ClientEventLogger.log("blob.serverCache.hit", detail: [
+                        "courseId": .string(courseId.uuidString),
+                        "blobCount": .integer(cached.blobs.count),
+                        "device": .string("watch"),
+                        "trigger": .string("phoneDone")
+                    ])
+                }
             }
         }
     }
@@ -117,7 +183,8 @@ class WatchDataStore: ObservableObject {
     /// round's `holeDetectionEnabled` flag.
     func applyBlobDetectionResults(_ data: CourseHoleDetectionData, courseId: UUID) {
         holeDetectionDataByCourse[courseId] = data
-        pendingBlobDetectionCourseIds.remove(courseId)
+        blobRequestStatusByCourse[courseId] = nil
+        if blobPromptCourseId == courseId { blobPromptCourseId = nil }
         ensureHoleDetectionEnabled(forCourse: courseId)
     }
 
@@ -281,11 +348,24 @@ class WatchDataStore: ObservableObject {
     }
 
     @Published var holeDetectionDataByCourse: [UUID: CourseHoleDetectionData] = [:]
-    /// Course ids whose blob detection request has been sent to the iPhone
-    /// but not yet returned. Drives the placement-view "Analyzing course
-    /// geometry…" waiting state. Cleared when blob data arrives or after
-    /// a 60s timeout.
-    @Published var pendingBlobDetectionCourseIds: Set<UUID> = []
+    /// Where a blob request to the iPhone stands. `queued`, `running` and
+    /// `failed` are the phone's own reports (`HoleDetectionPhoneState`);
+    /// `sent` and `unreachable` are what the watch knows before it hears back.
+    enum BlobRequestStatus: Equatable {
+        case sent
+        case unreachable
+        case queued
+        case running
+        case failed
+    }
+    /// Per course, the state of an outstanding blob request. Absent once the
+    /// results are in hand (or nothing was ever asked for).
+    @Published var blobRequestStatusByCourse: [UUID: BlobRequestStatus] = [:]
+    /// The round-start card (`BlobRequestCard`): the course whose blobs the
+    /// phone still owes. Cleared by Continue, by the results arriving, or by
+    /// the round ending. Results that land after Continue are still applied —
+    /// the card only decides whether the user is held at round start.
+    @Published var blobPromptCourseId: UUID?
     /// In-memory cache of OSM course data keyed by courseId. Populated when the
     /// resolver completes; consumed by AutoAdvanceMonitor's visited-green check.
     @Published var osmCourseDataByCourse: [UUID: OSMCourseData] = [:]
@@ -918,6 +998,9 @@ class WatchDataStore: ObservableObject {
                 self?.applyBlobDetectionResults(detectionData, courseId: detectionData.courseId)
             }
         }
+        connectivity.onReceiveHoleDetectionStatus = { [weak self] courseId, state in
+            self?.handlePhoneBlobStatus(courseId: courseId, state: state)
+        }
         // Phone is the authority for filter settings now (dev menu lives
         // in iOS Settings → Developer → Green Filters). Watch only RECEIVES
         // — its setupConnectivity assigns to holeFilterSettings on inbound,
@@ -1456,17 +1539,12 @@ class WatchDataStore: ObservableObject {
                 ])
                 objectWillChange.send()
             }
-            // Mark pending so HolePlacementView shows the waiting overlay
-            // and disables manual placement until results arrive (or
-            // timeout). Cleared on direct-fetch hit OR via
-            // `connectivity.onReceiveHoleDetectionData` for the WC fallback.
-            pendingBlobDetectionCourseIds.insert(resolution.courseId)
             let courseId = resolution.courseId
-            // Server-cache direct fetch. The iPhone WC round-trip is only
-            // needed when no cached results exist and the analyzer has to
-            // run — analyzer is iPhone-only. If the cache hits, apply it
-            // here and skip WC entirely. On miss, fall back to the WC
-            // request so the iPhone runs the analyzer.
+            // Server-cache direct fetch. The iPhone is only needed when no
+            // cached results exist and the analyzer has to run — analyzer is
+            // iPhone-only. On a miss, ask the phone and hold the user on the
+            // round-start card, which follows the phone's reported state
+            // (`handlePhoneBlobStatus`) until Continue or the results land.
             Task { @MainActor in
                 if let cached = await self.fetchServerCachedBlobs(courseId: courseId) {
                     self.applyBlobDetectionResults(cached, courseId: courseId)
@@ -1481,40 +1559,7 @@ class WatchDataStore: ObservableObject {
                     "courseId": .string(courseId.uuidString),
                     "device": .string("watch")
                 ])
-                WatchConnectivityManager.shared.sendHoleDetectionRequest(courseId: courseId)
-                // Keep polling the server cache while pending. The iPhone
-                // analyzer typically finishes and uploads in ~20s, but its
-                // WC delivery is a file transfer above 50KB — opportunistic,
-                // can take minutes. A single up-front cache check loses that
-                // race (Wolf Hollow 2026-07-05: upload landed 22s after the
-                // check; the picker opened empty and never looked again).
-                for _ in 0..<5 {
-                    try? await Task.sleep(nanoseconds: 10_000_000_000)
-                    guard self.pendingBlobDetectionCourseIds.contains(courseId),
-                          self.holeDetectionDataByCourse[courseId] == nil else { return }
-                    if let cached = await self.fetchServerCachedBlobs(courseId: courseId) {
-                        self.applyBlobDetectionResults(cached, courseId: courseId)
-                        ClientEventLogger.log("blob.serverCache.hit", detail: [
-                            "courseId": .string(courseId.uuidString),
-                            "blobCount": .integer(cached.blobs.count),
-                            "device": .string("watch"),
-                            "trigger": .string("pendingPoll")
-                        ])
-                        return
-                    }
-                }
-            }
-            // 60s safety timeout — if blobs never come back (iPhone offline,
-            // analyzer error), unstick the UI so user can manually place.
-            DispatchQueue.main.asyncAfter(deadline: .now() + 60) { [weak self] in
-                guard let self = self else { return }
-                if self.pendingBlobDetectionCourseIds.contains(courseId)
-                    && self.holeDetectionDataByCourse[courseId] == nil {
-                    self.pendingBlobDetectionCourseIds.remove(courseId)
-                    ClientEventLogger.log("blob.request.timedOut", detail: [
-                        "courseId": .string(courseId.uuidString)
-                    ])
-                }
+                self.requestBlobsFromPhone(courseId: courseId, promptUser: true)
             }
         }
     }

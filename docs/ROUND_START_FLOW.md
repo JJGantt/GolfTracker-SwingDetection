@@ -160,9 +160,24 @@ IF needsBlobDetection:
    Task: fetchServerCachedBlobs
        cache hit  → store in holeDetectionDataByCourse
        cache miss → WC sendHoleDetectionRequest to iPhone
-                    iPhone runs analyzer, sends back via WC
-                    OR falls through 60s safety timeout
+                    round-start card (BlobRequestCard) holds the user,
+                    showing the phone's reported state, until Continue
+                    or the results land
+                    iPhone on screen → runs now; backgrounded → queues
+                    and runs on its next foreground
+                    iPhone reports queued / running / done / failed;
+                    on done the watch reads the server cache
+                    results arriving after Continue still apply
 ```
+
+The card exists because the phone is the only place the analyzer can run and
+it usually receives the request in the background, where the analyzer's MapKit
+snapshots do not complete (2026-09-07 Blue Sky: request received, run died, no
+error anywhere, course never got blobs). `sent`/`running` show a spinner;
+`unreachable` (the WC send failed or the phone was not reachable) and `queued`
+(the phone has it but its app is not open) show the unreachable message.
+Resuming a round whose blobs are still missing re-sends the request once per
+app session, without the card.
 
 ---
 
@@ -251,7 +266,10 @@ Key events:
   `resolver.scorecard.skipVoteGate`, `resolver.scorecard.searchStart/Ranked`,
   `resolver.scorecard.pickRecorded`, `resolver.scorecard.skipRecorded`
 - Stage 4: `canonicalPlacements.fetched`, `blob.serverCache.hit/miss/uploaded`,
-  `blob.request*`
+  `blob.request*` (`.undeliverable` on the watch, `.queued` on the phone),
+  `blob.phoneStatus`, `blob.prompt.continued`, and phone-side
+  `blob.analyzer.started/succeeded/failed/noCenter/courseMissing/backgroundExpired`
+  — `failed` carries every tile's error
 - Stage 5: `HolePlacementView.onAppear`, `HolePlacementView.save.tapped`,
   `updateHole.start/saved`
 - Stage 6: `addNextHole.start/saved/canonicalHydrated`

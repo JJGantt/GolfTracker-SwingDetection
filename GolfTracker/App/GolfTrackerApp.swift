@@ -58,6 +58,9 @@ struct GolfTrackerApp: App {
                         // Finish any elevation fold-in that got cut off by
                         // an app suspension at round end.
                         Task { await ElevationFoldIn.retryPending() }
+                        // Run blob analyses the watch asked for while this
+                        // app was in the background.
+                        store.drainWatchHoleDetectionQueue()
                     }
                 }
         }

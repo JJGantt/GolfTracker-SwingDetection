@@ -1,6 +1,17 @@
 import Foundation
 import WatchConnectivity
 
+/// Where the iPhone is with a blob analysis the watch asked for.
+enum HoleDetectionPhoneState: String {
+    /// Received while the app was not on screen. It runs on the next
+    /// foreground — MapKit snapshots do not render reliably in the background.
+    case queued
+    case running
+    /// Results are in the server cache (and on their way over WC).
+    case done
+    case failed
+}
+
 /// Now demoted: Round/Stroke/Club sync moves to the database (via Supabase
 /// Realtime + SwiftData local cache). The remaining responsibilities of this
 /// manager are the things that genuinely need a direct phone↔watch channel
@@ -44,6 +55,8 @@ class WatchConnectivityManager: NSObject, ObservableObject {
     /// Watch asks iPhone to run hole detection for a course id. iPhone-only
     /// callback; consumed by `DataStore` which kicks off `startHoleDetection`.
     var onReceiveHoleDetectionRequest: ((UUID) -> Void)?
+    /// iPhone reports progress on a requested analysis. Watch-only consumer.
+    var onReceiveHoleDetectionStatus: ((UUID, HoleDetectionPhoneState) -> Void)?
     /// Fires once activation completes (success path). Currently used by
     /// iOS DataStore to push the authoritative hole-filter settings down
     /// to the watch on each (re)activation.
@@ -248,27 +261,63 @@ class WatchConnectivityManager: NSObject, ObservableObject {
     // MARK: - Hole detection request (Watch → iPhone)
 
     /// Watch asks the iPhone to run blob hole-detection for a course it just
-    /// started a round on. iPhone responds asynchronously via the existing
-    /// `sendHoleDetectionData` flow once the analyzer finishes (or sends
-    /// the cached result immediately if it has one). Used so the watch can
-    /// compare blob-detected greens against OSM green polygons even when
-    /// the iOS user never explicitly opted into hole detection on iPhone.
-    func sendHoleDetectionRequest(courseId: UUID) {
-        guard WCSession.default.activationState == .activated else { return }
+    /// started a round on. The iPhone answers with `sendHoleDetectionStatus`
+    /// as it goes (queued / running / done / failed) and ships the blobs
+    /// through `sendHoleDetectionData` and the server cache.
+    ///
+    /// `onUndeliverable` fires when the live message could not reach the
+    /// phone — not reachable, or the send errored. The request is still left
+    /// in the application context so the phone picks it up on its next launch,
+    /// but nothing will happen until then, and the watch has to be able to say
+    /// so rather than wait on an answer that is not coming.
+    func sendHoleDetectionRequest(courseId: UUID, onUndeliverable: @escaping () -> Void) {
+        guard WCSession.default.activationState == .activated else {
+            onUndeliverable()
+            return
+        }
         let payload: [String: Any] = [
             "type": "holeDetectionRequest",
             "courseId": courseId.uuidString
         ]
+        // `at` makes each request a distinct context: an identical dictionary
+        // is not redelivered, so a re-request for the same course would
+        // otherwise never arrive.
+        mergeIntoApplicationContext(["holeDetectionRequest": [
+            "courseId": courseId.uuidString,
+            "at": Date().timeIntervalSince1970
+        ]])
+        guard WCSession.default.isReachable else {
+            onUndeliverable()
+            return
+        }
+        WCSession.default.sendMessage(payload, replyHandler: nil) { _ in onUndeliverable() }
+    }
+
+    /// iPhone → Watch progress on a watch-requested blob analysis. Sent both
+    /// live and through the application context (latest-wins), so a watch that
+    /// was not reachable at the moment still converges on the current state.
+    func sendHoleDetectionStatus(courseId: UUID, state: HoleDetectionPhoneState) {
+        guard WCSession.default.activationState == .activated else { return }
+        let payload: [String: Any] = [
+            "courseId": courseId.uuidString,
+            "state": state.rawValue,
+            "at": Date().timeIntervalSince1970
+        ]
+        mergeIntoApplicationContext(["holeDetectionStatus": payload])
         if WCSession.default.isReachable {
-            WCSession.default.sendMessage(payload, replyHandler: nil) { _ in }
-        } else {
-            // applicationContext can deliver to the iPhone when the watch
-            // app isn't currently driving WC traffic; iPhone-side handler
-            // looks for the same key. Latest-wins is fine; multiple watch
-            // restarts just re-request the same course.
-            mergeIntoApplicationContext(["holeDetectionRequest": [
-                "courseId": courseId.uuidString
-            ]])
+            var message = payload
+            message["type"] = "holeDetectionStatus"
+            WCSession.default.sendMessage(message, replyHandler: nil) { _ in }
+        }
+    }
+
+    private func handleHoleDetectionStatus(_ payload: [String: Any]) {
+        guard let idString = payload["courseId"] as? String,
+              let courseId = UUID(uuidString: idString),
+              let raw = payload["state"] as? String,
+              let state = HoleDetectionPhoneState(rawValue: raw) else { return }
+        DispatchQueue.main.async {
+            self.onReceiveHoleDetectionStatus?(courseId, state)
         }
     }
 
@@ -338,6 +387,10 @@ extension WatchConnectivityManager: WCSessionDelegate {
         #if os(watchOS)
         if let type = message["type"] as? String, type == "testModeState" {
             applyTestModePayload(message)
+            return
+        }
+        if let type = message["type"] as? String, type == "holeDetectionStatus" {
+            handleHoleDetectionStatus(message)
             return
         }
         #endif
@@ -441,6 +494,12 @@ extension WatchConnectivityManager: WCSessionDelegate {
         // the latest state since applicationContext is latest-wins persistent.
         if let payload = applicationContext["testModeState"] as? [String: Any] {
             applyTestModePayload(payload)
+        }
+
+        // Latest phone-side state of a requested blob analysis, for a watch
+        // that was not reachable when the live message went out.
+        if let payload = applicationContext["holeDetectionStatus"] as? [String: Any] {
+            handleHoleDetectionStatus(payload)
         }
         #endif
 

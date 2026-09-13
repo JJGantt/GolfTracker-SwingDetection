@@ -31,15 +31,6 @@ struct HolePlacementView: View {
         greenCandidates.filter { $0.polygonCoordinates.count >= 3 }
     }
 
-    /// True while we've asked the iPhone for blob detection but haven't
-    /// received the result yet. Drives the "Analyzing course geometry…"
-    /// overlay and disables tap-to-place so the user doesn't accidentally
-    /// commit a manual placement during the wait.
-    private var isWaitingForBlobs: Bool {
-        guard let courseId = store.currentRound?.courseId else { return false }
-        return store.pendingBlobDetectionCourseIds.contains(courseId)
-    }
-
     /// API-derived par for this hole at the round's selected tee. When
     /// non-nil, the par picker is skipped — tapping a position auto-saves
     /// with this par.
@@ -123,7 +114,6 @@ struct HolePlacementView: View {
                 .mapStyle(.standard(pointsOfInterest: .excludingAll))
                 .modifier(HideMapControlsModifier(isInteractive: true))
                 .onTapGesture { screenCoord in
-                    if isWaitingForBlobs { return }
                     if let coordinate = proxy.convert(screenCoord, from: .local) {
                         if isManualPlacement || greenCandidates.isEmpty {
                             temporaryHolePosition = coordinate
@@ -149,31 +139,6 @@ struct HolePlacementView: View {
                 }
             }
             .ignoresSafeArea()
-
-            // Waiting overlay — covers the map while blob detection is in
-            // flight from the iPhone. Disables tap-to-place (handled in the
-            // tap handler above) and tells the user what's happening.
-            if isWaitingForBlobs {
-                VStack(spacing: 8) {
-                    ProgressView()
-                        .scaleEffect(1.2)
-                        .tint(.white)
-                    Text("Analyzing course geometry…")
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundColor(.white)
-                        .multilineTextAlignment(.center)
-                    Text("Open the iPhone app if this takes more than a few seconds.")
-                        .font(.system(size: 10))
-                        .foregroundColor(.white.opacity(0.75))
-                        .multilineTextAlignment(.center)
-                        .padding(.horizontal, 12)
-                }
-                .padding(.vertical, 14)
-                .padding(.horizontal, 10)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(Color.black.opacity(0.65))
-                .ignoresSafeArea()
-            }
 
             // Top overlay: title + optional manual-placement toggle + distance label
             VStack(spacing: 2) {
