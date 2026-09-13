@@ -31,7 +31,9 @@ struct LoginView: View {
                     }
                 )
                 .signInWithAppleButtonStyle(.black)
-                .frame(maxWidth: .infinity, minHeight: 50)
+                // Fixed height: between the two Spacers a min-only frame lets
+                // the button grow to fill the screen.
+                .frame(maxWidth: .infinity, minHeight: 50, maxHeight: 50)
                 .cornerRadius(12)
                 .overlay(
                     // Make the whole button clickable and route through AuthManager
