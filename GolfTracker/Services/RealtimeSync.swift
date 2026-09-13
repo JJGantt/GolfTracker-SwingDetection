@@ -209,6 +209,22 @@ final class RealtimeSync {
     /// Adds only. A local round the server lacks is left alone — its upload
     /// may still be queued. Cheap when nothing is missing: one query for ids.
     func syncMissingRoundsWithSupabase() async {
+        // Sign-in and app foreground both fire this at launch; without
+        // coalescing, both diffed before either applied and the whole history
+        // downloaded twice.
+        if let running = historySync {
+            await running.value
+            return
+        }
+        let task = Task { await performHistorySync() }
+        historySync = task
+        await task.value
+        historySync = nil
+    }
+
+    private var historySync: Task<Void, Never>?
+
+    private func performHistorySync() async {
         guard let userId = resolvedUserId() else { return }
         do {
             let serverIds = try await pagedSelect("rounds", columns: "id") {

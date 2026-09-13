@@ -141,15 +141,13 @@ final class TestModeService: ObservableObject {
         // backgrounding, OS-induced socket teardown, etc).
         startSocketStatusObserver()
 
-        // Never call `supabase.realtime.connect()` here. On a socket that is
-        // already open (RealtimeSync's channel usually opens it moments
-        // earlier), supabase-swift 2.45 re-runs its connected handler, which
-        // drops the message listener: every frame — join replies, heartbeats,
-        // postgres changes — goes nowhere until the heartbeat times out ~52s
-        // later. That was behind every first-attempt "Maximum retry attempts
-        // reached" subscribe failure since August. The channel subscribe
-        // connects the socket itself; if the socket is not up yet, the
-        // attempt fails and `subscribePersistently` retries it a second later.
+        // No explicit `supabase.realtime.connect()`: the channel subscribe
+        // connects the socket itself, and if it is not up yet the attempt
+        // fails and `subscribePersistently` retries a second later. A connect
+        // here raced RealtimeSync's channel, and before supabase-swift 2.47.2
+        // a duplicate connect dropped the message listener until the
+        // heartbeat timed out ~52s later — the first-attempt "Maximum retry
+        // attempts reached" failures since August.
 
         let ch = supabase.realtime.channel("user_test_state:\(uid)")
         channel = ch
