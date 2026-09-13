@@ -80,7 +80,13 @@ class WorkoutManager: NSObject, ObservableObject {
             let errMsg = error?.localizedDescription ?? "none"
             dprint("⌚ [WorkoutManager] requestAuthorization completed: success=\(success) error=\(errMsg)")
             self?.refreshAuthorizationStatus()
-            completion(success, error)
+            // HealthKit calls back on a background queue, and every caller's
+            // next step is `startWorkout()`, which publishes `isWorkoutActive`.
+            // Run from here, that SwiftUI update happened off the main thread
+            // and UIKit aborted the app ("These UI changes are not supported
+            // off the main thread") — on the watch 2026-05-08 (twice) and at
+            // round start 2026-09-13. Hand the result over on main.
+            DispatchQueue.main.async { completion(success, error) }
         }
     }
 
@@ -92,7 +98,18 @@ class WorkoutManager: NSObject, ObservableObject {
         keepAliveActive = sessionState == .running && (!collectingRequested || isCollecting)
     }
 
+    /// Main thread only: it publishes `isWorkoutActive` synchronously so the
+    /// next caller sees it. A no-op while a session is already active — round
+    /// start asks twice (`SwingDetectionManager.startMonitoring` and
+    /// `ActiveRoundView.handleViewAppear` each request authorization and start
+    /// a workout in the callback), and the second call used to replace `session`
+    /// with a new one, leaving the first running with nothing referencing it.
     func startWorkout() {
+        assert(Thread.isMainThread, "startWorkout publishes UI state; call it on main")
+        guard !isWorkoutActive else {
+            dprint("⌚ [WorkoutManager] startWorkout: session already active — ignoring")
+            return
+        }
         let collecting = useCollectingBuilder
         collectingRequested = collecting
         DispatchQueue.main.async {
