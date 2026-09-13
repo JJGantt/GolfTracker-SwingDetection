@@ -336,8 +336,13 @@ struct HolePlayView: View {
     }
 
     var contentWithModifiers: some View {
-        mainContent
-            .ignoresSafeArea(edges: .all)
+        // Measured outside the edge-to-edge content, which can no longer see
+        // the safe area once it ignores it — see `playControlsBottomInset`.
+        GeometryReader { geo in
+            mainContent
+                .environment(\.playControlsBottomInset, geo.safeAreaInsets.bottom)
+                .ignoresSafeArea(edges: .all)
+        }
             .navigationTitle(isAddingHole ? "" : currentCourse.name)
             #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)

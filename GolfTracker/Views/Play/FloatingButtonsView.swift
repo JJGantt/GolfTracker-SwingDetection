@@ -1,7 +1,18 @@
 import SwiftUI
 import CoreLocation
 
+extension EnvironmentValues {
+    /// Bottom safe-area height (tab bar + home indicator) for the play-screen
+    /// overlays. `HolePlayView` ignores the safe area so the map runs edge to
+    /// edge, which hides this from everything inside it, so it is measured
+    /// outside and handed down. iOS 26's floating tab bar is tall enough to
+    /// cover controls positioned by a fixed guess.
+    @Entry var playControlsBottomInset: CGFloat = 20
+}
+
 struct FloatingButtonsView: View {
+    @Environment(\.playControlsBottomInset) private var bottomInset
+
     // State
     let hasLocation: Bool
     let hasActiveRound: Bool
@@ -75,7 +86,7 @@ struct FloatingButtonsView: View {
                     .opacity((!hasLocation || !hasActiveRound || isCurrentHoleCompleted) ? 0.3 : 1.0)
                 }
                 .padding(.trailing, 20)
-                .padding(.bottom, 200)
+                .padding(.bottom, 180 + bottomInset)
                 .frame(maxWidth: .infinity, alignment: .trailing)
             }
 
@@ -176,7 +187,7 @@ struct FloatingButtonsView: View {
 
                     Spacer()
                 }
-                .padding(.bottom, 200)
+                .padding(.bottom, 180 + bottomInset)
             }
         }
     }

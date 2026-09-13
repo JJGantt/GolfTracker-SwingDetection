@@ -56,6 +56,8 @@ struct HoleOverlayControls: View {
         return blob.contains(userCoord)
     }
 
+    @Environment(\.playControlsBottomInset) private var bottomInset
+
     var body: some View {
         ZStack {
             VStack(spacing: 0) {
@@ -159,7 +161,7 @@ struct HoleOverlayControls: View {
                 }
             }
             .padding()
-            .padding(.bottom, 20)
+            .padding(.bottom, bottomInset)
             .background(.ultraThinMaterial)
             }
 

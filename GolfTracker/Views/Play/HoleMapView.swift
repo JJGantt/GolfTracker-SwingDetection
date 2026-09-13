@@ -338,6 +338,9 @@ struct HoleMapView: View {
                                     .padding(.vertical, 3)
                                     .background(Color.white.opacity(0.9))
                                     .clipShape(RoundedRectangle(cornerRadius: 6))
+                                    // Size to the text. The marker's 32pt frame
+                                    // below otherwise squeezes "118" down to "1…".
+                                    .fixedSize()
                                     .offset(y: 24) // Position below the scope icon
                                 }
                                 .frame(height: 32)
