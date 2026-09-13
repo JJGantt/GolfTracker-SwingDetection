@@ -13,6 +13,16 @@ import SwiftData
 /// Single channel per user (`user:<uid>`); within it, separate subscriptions
 /// per table. Channel lifecycle is tied to sign-in/sign-out — we (re-)subscribe
 /// when an auth session is present and tear down on sign-out.
+///
+/// `@MainActor` because everything here writes the platform DataStore's single
+/// shared `ModelContext`, which was created on main and is not thread-safe.
+/// The per-table stream loops used to call `apply` on whatever cooperative
+/// thread they happened to run on, so a burst across two tables (a round plus
+/// its round_holes, a stroke delete+insert) mutated the context from several
+/// threads at once — the SwiftData crash in `applyRound` (2026-09-13) and the
+/// `performAndWait` assertion on the phone (2026-09-07). Network fetches still
+/// run off-main; only the context work is on main.
+@MainActor
 final class RealtimeSync {
     static let shared = RealtimeSync()
 
@@ -39,6 +49,9 @@ final class RealtimeSync {
     /// (retry/backoff/reconnect via RealtimeReconnect). Cancelled on
     /// `teardown()` to stop the loop and unsubscribe the channel.
     private var subscribeLoopTask: Task<Void, Never>?
+    /// The most recent start/stop. Each new one awaits it first, so restarts
+    /// and teardowns run strictly in call order — see `start(forUserId:)`.
+    private var lifecycle: Task<Void, Never>?
 
     private init() {}
 
@@ -59,14 +72,30 @@ final class RealtimeSync {
     /// idle bandwidth (~8MB/month per device just heartbeats) and watch
     /// battery for no benefit when no round is in flight. Cross-device sync
     /// only matters during active play.
+    ///
+    /// Start and stop are serialized: each waits for the previous lifecycle
+    /// step before touching the channel. They used to fire independent Tasks,
+    /// so leaving the Play tab and coming back ran `teardown()` and `restart()`
+    /// concurrently — the restart registered streams on the channel the
+    /// teardown was releasing and crashed in `RealtimeChannelV2.status`
+    /// (2026-09-13). The idempotency check runs inside the chain, against the
+    /// state the previous step actually left.
     func start(forUserId userId: String) {
-        if activeUserId == userId, !subscriptions.isEmpty { return }
-        Task { await self.restart(forUserId: userId) }
+        let previous = lifecycle
+        lifecycle = Task {
+            await previous?.value
+            if activeUserId == userId, activeChannel != nil { return }
+            await restart(forUserId: userId)
+        }
     }
 
-    /// Tear down all subscriptions and unsubscribe the channel.
+    /// Tear down all subscriptions and remove the channel.
     func stop() {
-        Task { await self.teardown() }
+        let previous = lifecycle
+        lifecycle = Task {
+            await previous?.value
+            await teardown()
+        }
     }
 
     /// Pull recent rounds + their `round_holes` and `strokes` from Supabase
@@ -87,19 +116,20 @@ final class RealtimeSync {
     /// WatchDataStore doesn't expose the same constant.
     private static let reconcileWindowSeconds: TimeInterval = 8 * 60 * 60
 
+    /// Prefer activeUserId (set when Realtime is running); fall back to the
+    /// platform auth source so reconcile can fire from app-foreground / sign-in
+    /// hooks even if start() hasn't been called yet on this launch.
+    private func resolvedUserId() -> String? {
+        if let uid = activeUserId { return uid }
+        #if os(watchOS)
+        return WatchAuthSession.shared.currentUserId
+        #else
+        return AuthManager.shared.currentUserId
+        #endif
+    }
+
     func reconcileRoundsWithSupabase() async {
-        // Prefer activeUserId (set when Realtime is running); fall back to the
-        // platform auth source so reconcile can fire from app-foreground / sign-in
-        // hooks even if start() hasn't been called yet on this launch.
-        let resolvedUserId: String? = {
-            if let uid = activeUserId { return uid }
-            #if os(watchOS)
-            return WatchAuthSession.shared.currentUserId
-            #else
-            return AuthManager.shared.currentUserId
-            #endif
-        }()
-        guard let userId = resolvedUserId else { return }
+        guard let userId = resolvedUserId() else { return }
         let cutoff = Date().addingTimeInterval(-Self.reconcileWindowSeconds)
         let cutoffISO = Self.isoFormatter.string(from: cutoff)
         do {
@@ -117,10 +147,9 @@ final class RealtimeSync {
                 roundRows.compactMap { $0.objectValue?["course_id"]?.stringValue }
             ))
 
-            // Pull child rows BEFORE touching the context. Networking stays
-            // off-main; ModelContext mutation is wrapped in MainActor.run
-            // below because the context was created on the main queue and
-            // SwiftData fatal-errors if it's mutated from a Task.
+            // Pull child rows BEFORE touching the context; the awaits suspend
+            // off-main, and the context work below runs on main (class-level
+            // @MainActor).
             // Courses (and their holes) are included: a round recovered via
             // reconcile is unrenderable without its course row — the live
             // courses INSERT is easy to miss since it fires once, at
@@ -158,60 +187,117 @@ final class RealtimeSync {
                     .value) ?? []
             }
 
-            await MainActor.run {
-                guard let context = context else { return }
-                // Courses before rounds/holes so parent linkage resolves.
-                for row in courseRows {
-                    guard let dict = row.objectValue,
-                          let idStr = dict["id"]?.stringValue,
-                          let id = UUID(uuidString: idStr) else { continue }
-                    applyCourse(context: context, kind: .update, id: id, record: dict)
-                }
-                for row in courseHoleRows {
-                    guard let dict = row.objectValue,
-                          let idStr = dict["id"]?.stringValue,
-                          let id = UUID(uuidString: idStr) else { continue }
-                    applyHole(context: context, kind: .update, id: id, record: dict, fromRoundHoles: false)
-                }
-                for row in roundRows {
-                    guard let dict = row.objectValue,
-                          let idStr = dict["id"]?.stringValue,
-                          let id = UUID(uuidString: idStr) else { continue }
-                    applyRound(context: context, kind: .update, id: id, record: dict)
-                }
-                for row in holeRows {
-                    guard let dict = row.objectValue,
-                          let idStr = dict["id"]?.stringValue,
-                          let id = UUID(uuidString: idStr) else { continue }
-                    applyHole(context: context, kind: .update, id: id, record: dict, fromRoundHoles: true)
-                }
-                for row in strokeRows {
-                    guard let dict = row.objectValue,
-                          let idStr = dict["id"]?.stringValue,
-                          let id = UUID(uuidString: idStr) else { continue }
-                    applyStroke(context: context, kind: .update, id: id, record: dict)
-                }
-                try? context.save()
-                ClientEventLogger.log("realtime.reconcile.ok", detail: [
-                    "rounds": .integer(roundRows.count)
-                ])
-
-                // Push the platform store to refresh @Published arrays so the UI
-                // observes the new state — same pattern as `apply(...)`'s tail.
-                #if os(watchOS)
-                WatchDataStore.shared.refreshCurrentRound()
-                WatchDataStore.shared.objectWillChange.send()
-                #else
-                DataStore.shared.loadRounds()
-                DataStore.shared.loadCourses()
-                DataStore.shared.objectWillChange.send()
-                #endif
-            }
+            applyFetched(courses: courseRows, courseHoles: courseHoleRows, rounds: roundRows,
+                         roundHoles: holeRows, strokes: strokeRows)
+            ClientEventLogger.log("realtime.reconcile.ok", detail: [
+                "rounds": .integer(roundRows.count)
+            ])
         } catch {
             ClientEventLogger.log("realtime.reconcile.failed", detail: [
                 "error": .string("\(error)")
             ])
         }
+    }
+
+    /// Download every one of this user's rounds that is not on this device,
+    /// with its holes, strokes and course — so a reinstall, a new phone, or a
+    /// round played on the watch while this app sat closed past the 8-hour
+    /// catch-up window all arrive. Nothing else downloads history: reconcile
+    /// only looks back 8 hours and live events only cover what happens while
+    /// subscribed, so a fresh install used to see an empty History and Stats.
+    ///
+    /// Adds only. A local round the server lacks is left alone — its upload
+    /// may still be queued. Cheap when nothing is missing: one query for ids.
+    func syncMissingRoundsWithSupabase() async {
+        guard let userId = resolvedUserId() else { return }
+        do {
+            let serverIds = try await pagedSelect("rounds", columns: "id") {
+                $0.eq("user_id", value: userId)
+            }.compactMap { $0.objectValue?["id"]?.stringValue?.lowercased() }
+            guard let context = context else { return }
+            let localIds = Set(((try? context.fetch(FetchDescriptor<Round>())) ?? [])
+                .map { $0.id.uuidString.lowercased() })
+            let missing = serverIds.filter { !localIds.contains($0) }
+            guard !missing.isEmpty else { return }
+
+            // Short `in (...)` lists per batch; pagedSelect pages each result,
+            // since PostgREST caps a response at 1000 rows and a single round
+            // carries ~90 strokes.
+            for start in stride(from: 0, to: missing.count, by: 50) {
+                let ids = Array(missing[start..<min(start + 50, missing.count)])
+                let rounds = try await pagedSelect("rounds") { $0.in("id", values: ids) }
+                let roundHoles = try await pagedSelect("round_holes") { $0.in("round_id", values: ids) }
+                let strokes = try await pagedSelect("strokes") { $0.in("round_id", values: ids) }
+                let courseIds = Array(Set(rounds.compactMap { $0.objectValue?["course_id"]?.stringValue }))
+                var courses: [AnyJSON] = []
+                var courseHoles: [AnyJSON] = []
+                if !courseIds.isEmpty {
+                    courses = try await pagedSelect("courses") { $0.in("id", values: courseIds) }
+                    courseHoles = try await pagedSelect("holes") { $0.in("course_id", values: courseIds) }
+                }
+                applyFetched(courses: courses, courseHoles: courseHoles, rounds: rounds,
+                             roundHoles: roundHoles, strokes: strokes)
+            }
+            #if os(iOS)
+            // Stats are cached and only rebuilt on a round-count change at
+            // launch; rebuild now so the downloaded rounds show immediately.
+            DataStore.shared.rebuildPlayerStats()
+            #endif
+            ClientEventLogger.log("realtime.history.synced", detail: [
+                "rounds": .integer(missing.count)
+            ])
+        } catch {
+            ClientEventLogger.log("realtime.history.failed", detail: [
+                "error": .string("\(error)")
+            ])
+        }
+    }
+
+    /// Every row matching `filter`, a page at a time — PostgREST silently
+    /// truncates an unpaged response at 1000 rows.
+    private func pagedSelect(_ table: String, columns: String = "*",
+                             _ filter: (PostgrestFilterBuilder) -> PostgrestFilterBuilder) async throws -> [AnyJSON] {
+        let page = 1000
+        var out: [AnyJSON] = []
+        while true {
+            let rows: [AnyJSON] = try await filter(supabase.from(table).select(columns))
+                .order("id")
+                .range(from: out.count, to: out.count + page - 1)
+                .execute()
+                .value
+            out += rows
+            if rows.count < page { return out }
+        }
+    }
+
+    /// Upsert fetched rows in dependency order (courses before the rounds and
+    /// holes that link to them), save once, and refresh the platform store's
+    /// published arrays. Shared by the 8-hour catch-up and the history download.
+    private func applyFetched(courses: [AnyJSON], courseHoles: [AnyJSON], rounds: [AnyJSON],
+                              roundHoles: [AnyJSON], strokes: [AnyJSON]) {
+        guard let context = context else { return }
+        func each(_ rows: [AnyJSON], _ body: (UUID, [String: AnyJSON]) -> Void) {
+            for row in rows {
+                guard let dict = row.objectValue,
+                      let idStr = dict["id"]?.stringValue,
+                      let id = UUID(uuidString: idStr) else { continue }
+                body(id, dict)
+            }
+        }
+        each(courses) { applyCourse(context: context, kind: .update, id: $0, record: $1) }
+        each(courseHoles) { applyHole(context: context, kind: .update, id: $0, record: $1, fromRoundHoles: false) }
+        each(rounds) { applyRound(context: context, kind: .update, id: $0, record: $1) }
+        each(roundHoles) { applyHole(context: context, kind: .update, id: $0, record: $1, fromRoundHoles: true) }
+        each(strokes) { applyStroke(context: context, kind: .update, id: $0, record: $1) }
+        try? context.save()
+        #if os(watchOS)
+        WatchDataStore.shared.refreshCurrentRound()
+        WatchDataStore.shared.objectWillChange.send()
+        #else
+        DataStore.shared.loadRounds()
+        DataStore.shared.loadCourses()
+        DataStore.shared.objectWillChange.send()
+        #endif
     }
 
     private func restart(forUserId userId: String) async {
@@ -258,7 +344,11 @@ final class RealtimeSync {
         subscribeLoopTask?.cancel()
         subscribeLoopTask = nil
         if let channel = activeChannel {
-            await channel.unsubscribe()
+            // removeChannel, not unsubscribe: the client caches channels by
+            // topic, so an unsubscribed-but-registered channel came straight
+            // back from `channel("user:…")` on the next restart — the same
+            // object this teardown was releasing.
+            await supabase.realtime.removeChannel(channel)
         }
         activeChannel = nil
         activeUserId = nil
@@ -329,27 +419,25 @@ final class RealtimeSync {
         // until the user navigates the watch UI manually.
         let isClubsRelated = (table == "clubs" || table == "club_types" || table == "club_sets")
         let isRoundsRelated = (table == "rounds" || table == "round_holes" || table == "holes")
-        Task { @MainActor in
-            #if os(watchOS)
-            if isClubsRelated { WatchDataStore.shared.refreshClubsCache() }
-            // Re-evaluate "current round" when an inbound Round / Hole event
-            // lands. Without this, a phone-started round wouldn't show as
-            // current on the watch even though its row IS in our SwiftData.
-            if isRoundsRelated { WatchDataStore.shared.refreshCurrentRound() }
-            WatchDataStore.shared.objectWillChange.send()
-            #else
-            // iPhone: refresh the @Published `rounds`/`courses` arrays when
-            // those tables change. The arrays are loaded once via SwiftData
-            // fetch at launch and are NOT live-bound to the store, so
-            // applyRound's SwiftData writes are invisible to view code
-            // (RoundsHistoryView reads `store.rounds`) without an explicit
-            // refresh. Same gap caused watch-started rounds to not appear in
-            // the iPhone rounds list.
-            if isRoundsRelated { DataStore.shared.loadRounds() }
-            if table == "courses" { DataStore.shared.loadCourses() }
-            DataStore.shared.objectWillChange.send()
-            #endif
-        }
+        #if os(watchOS)
+        if isClubsRelated { WatchDataStore.shared.refreshClubsCache() }
+        // Re-evaluate "current round" when an inbound Round / Hole event
+        // lands. Without this, a phone-started round wouldn't show as
+        // current on the watch even though its row IS in our SwiftData.
+        if isRoundsRelated { WatchDataStore.shared.refreshCurrentRound() }
+        WatchDataStore.shared.objectWillChange.send()
+        #else
+        // iPhone: refresh the @Published `rounds`/`courses` arrays when
+        // those tables change. The arrays are loaded once via SwiftData
+        // fetch at launch and are NOT live-bound to the store, so
+        // applyRound's SwiftData writes are invisible to view code
+        // (RoundsHistoryView reads `store.rounds`) without an explicit
+        // refresh. Same gap caused watch-started rounds to not appear in
+        // the iPhone rounds list.
+        if isRoundsRelated { DataStore.shared.loadRounds() }
+        if table == "courses" { DataStore.shared.loadCourses() }
+        DataStore.shared.objectWillChange.send()
+        #endif
     }
 
     private func applyRound(context: ModelContext, kind: ChangeKind, id: UUID, record: [String: AnyJSON]) {

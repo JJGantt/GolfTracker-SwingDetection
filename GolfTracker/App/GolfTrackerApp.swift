@@ -54,7 +54,12 @@ struct GolfTrackerApp: App {
                     // Catch up on rounds rows we may have missed while
                     // backgrounded — Realtime postgres-changes don't replay.
                     if phase == .active {
-                        Task { await RealtimeSync.shared.reconcileRoundsWithSupabase() }
+                        // …and any older rounds another device added while
+                        // this app was closed past the 8-hour window.
+                        Task {
+                            await RealtimeSync.shared.reconcileRoundsWithSupabase()
+                            await RealtimeSync.shared.syncMissingRoundsWithSupabase()
+                        }
                         // Finish any elevation fold-in that got cut off by
                         // an app suspension at round end.
                         Task { await ElevationFoldIn.retryPending() }

@@ -172,7 +172,12 @@ final class AuthManager: NSObject, ObservableObject {
                         // Catch up on any rounds-related rows we missed while
                         // not subscribed (Realtime postgres-changes are
                         // live-only — they don't replay). Idempotent.
-                        Task { await RealtimeSync.shared.reconcileRoundsWithSupabase() }
+                        // Then download any history this device lacks (a
+                        // reinstall or new phone starts empty).
+                        Task {
+                            await RealtimeSync.shared.reconcileRoundsWithSupabase()
+                            await RealtimeSync.shared.syncMissingRoundsWithSupabase()
+                        }
                         // Retry TestModeService bootstrap whenever a real
                         // session arrives. start() is idempotent — bails
                         // if it's already running.

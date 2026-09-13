@@ -141,24 +141,15 @@ final class TestModeService: ObservableObject {
         // backgrounding, OS-induced socket teardown, etc).
         startSocketStatusObserver()
 
-        // Explicitly connect the Realtime socket BEFORE subscribing.
-        // Without this, the watch's first subscribe routinely failed with
-        // Swift.CancellationError — the SDK's runOneSubscribeAttempt calls
-        // ensureSocketConnected() and bails immediately if the WebSocket
-        // isn't up yet. On watchOS the auto-connect was racing the first
-        // subscribe call. await connect() returns once the socket is open.
-        ClientEventLogger.log("testmode.subscribe.connecting", detail: [
-            "socketStatusBefore": .string("\(supabase.realtime.status)"),
-            "hasAccessToken": .bool((try? await supabase.auth.session.accessToken) != nil)
-        ])
-        await supabase.realtime.connect()
-        // The SDK's connect() swallows internal errors and just sets the
-        // socket status to .disconnected. So this log doesn't actually
-        // confirm the socket came up — it just confirms connect() returned.
-        // Capture the real status so we can tell.
-        ClientEventLogger.log("testmode.subscribe.connected", detail: [
-            "socketStatus": .string("\(supabase.realtime.status)")
-        ])
+        // Never call `supabase.realtime.connect()` here. On a socket that is
+        // already open (RealtimeSync's channel usually opens it moments
+        // earlier), supabase-swift 2.45 re-runs its connected handler, which
+        // drops the message listener: every frame — join replies, heartbeats,
+        // postgres changes — goes nowhere until the heartbeat times out ~52s
+        // later. That was behind every first-attempt "Maximum retry attempts
+        // reached" subscribe failure since August. The channel subscribe
+        // connects the socket itself; if the socket is not up yet, the
+        // attempt fails and `subscribePersistently` retries it a second later.
 
         let ch = supabase.realtime.channel("user_test_state:\(uid)")
         channel = ch
