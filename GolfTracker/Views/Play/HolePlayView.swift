@@ -440,8 +440,6 @@ struct HolePlayView: View {
             // Expose the active round id so MultiplayerView can host it.
             store.currentRoundId = activeRound?.id
 
-            applyLocationModeForRound()
-
             // The hole on screen is read from the round; opening this screen
             // writes nothing.
 
@@ -469,9 +467,6 @@ struct HolePlayView: View {
             }
             pushElevationReadoutHole()
             refreshBreadcrumb()
-        }
-        .onChange(of: currentRound) { _, _ in
-            applyLocationModeForRound()
         }
         .onChange(of: locationManager.location) { _, newLocation in
             // When adding first hole and location becomes available, center the map
@@ -752,14 +747,6 @@ struct HolePlayView: View {
             center: userLocation.coordinate,
             span: MKCoordinateSpan(latitudeDelta: spanDegrees, longitudeDelta: spanDegrees)
         ))
-    }
-
-    func applyLocationModeForRound() {
-        // No-op now. Used to read `round.locationTestModeEnabled` (a legacy
-        // per-round flag) and force LocationManager into/out of test mode.
-        // That fought with the global TestModeService (writes user_test_state,
-        // syncs cross-device via Realtime). Test mode is now exclusively
-        // owned by TestModeService — round lifecycle doesn't toggle it.
     }
 
     /// Aims the map from the hole's tee to the pin: the watch's default

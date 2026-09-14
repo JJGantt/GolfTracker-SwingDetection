@@ -66,27 +66,38 @@ struct ContentView: View {
         await MainActor.run { needsName = resolved.isEmpty }
     }
 
+    enum Tab: String { case stats, play, history, settings }
+
+    /// The selected tab, kept for the window. Unbound, the tab view fell back
+    /// to its first tab (Stats) whenever it was rebuilt, which happened as a
+    /// round started or ended.
+    @SceneStorage("selectedTab") private var selectedTab: Tab = .stats
+
     private var mainTabs: some View {
-        TabView {
+        TabView(selection: $selectedTab) {
             StatsView()
                 .tabItem {
                     Label("Stats", systemImage: "chart.bar.fill")
                 }
+                .tag(Tab.stats)
 
             PlayTabView()
                 .tabItem {
                     Label("Play", systemImage: "figure.golf")
                 }
+                .tag(Tab.play)
 
             RoundsHistoryView(store: store)
                 .tabItem {
                     Label("History", systemImage: "list.bullet.clipboard")
                 }
+                .tag(Tab.history)
 
             SettingsView()
                 .tabItem {
                     Label("Settings", systemImage: "gearshape.fill")
                 }
+                .tag(Tab.settings)
         }
     }
 }
