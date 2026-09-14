@@ -154,25 +154,35 @@ final class RealtimeSync {
             // reconcile is unrenderable without its course row — the live
             // courses INSERT is easy to miss since it fires once, at
             // resolve time, often while this device is backgrounded.
+            // Holes, strokes and targets must succeed or throw: the local copy
+            // is then trimmed to exactly these, and a failed fetch read as
+            // "none" would remove everything.
             let holeRows: [AnyJSON]
             let strokeRows: [AnyJSON]
+            let targetRows: [AnyJSON]
             let courseRows: [AnyJSON]
             let courseHoleRows: [AnyJSON]
             if roundIds.isEmpty {
-                holeRows = []; strokeRows = []; courseRows = []; courseHoleRows = []
+                holeRows = []; strokeRows = []; targetRows = []; courseRows = []; courseHoleRows = []
             } else {
-                holeRows = (try? await supabase
+                holeRows = try await supabase
                     .from("round_holes")
                     .select()
                     .in("round_id", values: roundIds)
                     .execute()
-                    .value) ?? []
-                strokeRows = (try? await supabase
+                    .value
+                strokeRows = try await supabase
                     .from("strokes")
                     .select()
                     .in("round_id", values: roundIds)
                     .execute()
-                    .value) ?? []
+                    .value
+                targetRows = try await supabase
+                    .from("targets")
+                    .select()
+                    .in("round_id", values: roundIds)
+                    .execute()
+                    .value
                 courseRows = (try? await supabase
                     .from("courses")
                     .select()
@@ -188,7 +198,9 @@ final class RealtimeSync {
             }
 
             applyFetched(courses: courseRows, courseHoles: courseHoleRows, rounds: roundRows,
-                         roundHoles: holeRows, strokes: strokeRows)
+                         roundHoles: holeRows, strokes: strokeRows, targets: targetRows)
+            removeLocalRowsMissingFromServer(roundIds: roundIds, roundHoles: holeRows,
+                                             strokes: strokeRows, targets: targetRows)
             ClientEventLogger.log("realtime.reconcile.ok", detail: [
                 "rounds": .integer(roundRows.count)
             ])
@@ -290,21 +302,24 @@ final class RealtimeSync {
     /// holes that link to them), save once, and refresh the platform store's
     /// published arrays. Shared by the 8-hour catch-up and the history download.
     private func applyFetched(courses: [AnyJSON], courseHoles: [AnyJSON], rounds: [AnyJSON],
-                              roundHoles: [AnyJSON], strokes: [AnyJSON]) {
+                              roundHoles: [AnyJSON], strokes: [AnyJSON], targets: [AnyJSON] = []) {
         guard let context = context else { return }
-        func each(_ rows: [AnyJSON], _ body: (UUID, [String: AnyJSON]) -> Void) {
+        // Rows with an unconfirmed local write are skipped, as in `apply`.
+        func each(_ table: String, _ rows: [AnyJSON], _ body: (UUID, [String: AnyJSON]) -> Void) {
             for row in rows {
                 guard let dict = row.objectValue,
                       let idStr = dict["id"]?.stringValue,
-                      let id = UUID(uuidString: idStr) else { continue }
+                      let id = UUID(uuidString: idStr),
+                      !SupabaseSync.shared.hasPendingWrite(table: table, id: id) else { continue }
                 body(id, dict)
             }
         }
-        each(courses) { applyCourse(context: context, kind: .update, id: $0, record: $1) }
-        each(courseHoles) { applyHole(context: context, kind: .update, id: $0, record: $1, fromRoundHoles: false) }
-        each(rounds) { applyRound(context: context, kind: .update, id: $0, record: $1) }
-        each(roundHoles) { applyHole(context: context, kind: .update, id: $0, record: $1, fromRoundHoles: true) }
-        each(strokes) { applyStroke(context: context, kind: .update, id: $0, record: $1) }
+        each("courses", courses) { applyCourse(context: context, kind: .update, id: $0, record: $1) }
+        each("holes", courseHoles) { applyHole(context: context, kind: .update, id: $0, record: $1, fromRoundHoles: false) }
+        each("rounds", rounds) { applyRound(context: context, kind: .update, id: $0, record: $1) }
+        each("round_holes", roundHoles) { applyHole(context: context, kind: .update, id: $0, record: $1, fromRoundHoles: true) }
+        each("strokes", strokes) { applyStroke(context: context, kind: .update, id: $0, record: $1) }
+        each("targets", targets) { applyTarget(context: context, kind: .update, id: $0, record: $1) }
         try? context.save()
         #if os(watchOS)
         WatchDataStore.shared.refreshCurrentRound()
@@ -314,6 +329,44 @@ final class RealtimeSync {
         DataStore.shared.loadCourses()
         DataStore.shared.objectWillChange.send()
         #endif
+    }
+
+    /// Makes each caught-up round's holes, strokes and targets exactly the
+    /// server's by removing local ones it no longer has: undone or deleted on
+    /// the other device while this one wasn't listening (a delete isn't always
+    /// delivered live, and catch-up used to only add). Kept: rows with an
+    /// unconfirmed local write (on their way up, not gone), and the holes of a
+    /// round whose `round_holes` rewrite hasn't landed (the server doesn't
+    /// have their ids yet).
+    private func removeLocalRowsMissingFromServer(roundIds: [String], roundHoles: [AnyJSON],
+                                                  strokes: [AnyJSON], targets: [AnyJSON]) {
+        guard let context = context else { return }
+        func ids(_ rows: [AnyJSON]) -> Set<UUID> {
+            Set(rows.compactMap { $0.objectValue?["id"]?.stringValue.flatMap(UUID.init(uuidString:)) })
+        }
+        let serverHoles = ids(roundHoles), serverStrokes = ids(strokes), serverTargets = ids(targets)
+        let sync = SupabaseSync.shared
+        var removed = 0
+        for idString in roundIds {
+            guard let roundId = UUID(uuidString: idString),
+                  let round = (try? context.fetch(FetchDescriptor<Round>(predicate: #Predicate { $0.id == roundId })))?.first else { continue }
+            let goneStrokes = round.strokes.filter {
+                !serverStrokes.contains($0.id) && !sync.hasPendingWrite(table: "strokes", id: $0.id)
+            }
+            let goneTargets = round.targets.filter {
+                !serverTargets.contains($0.id) && !sync.hasPendingWrite(table: "targets", id: $0.id)
+            }
+            let goneHoles = sync.isRoundHoleRewritePending(roundId) ? [] : round.holes.filter {
+                $0.course == nil && !serverHoles.contains($0.id) && !sync.hasPendingWrite(table: "round_holes", id: $0.id)
+            }
+            goneStrokes.forEach { context.delete($0) }
+            goneTargets.forEach { context.delete($0) }
+            goneHoles.forEach { context.delete($0) }
+            removed += goneStrokes.count + goneTargets.count + goneHoles.count
+        }
+        guard removed > 0 else { return }
+        try? context.save()
+        ClientEventLogger.log("realtime.reconcile.removedLocal", detail: ["rows": .integer(removed)])
     }
 
     private func restart(forUserId userId: String) async {
@@ -410,6 +463,12 @@ final class RealtimeSync {
     private func apply(table: String, kind: ChangeKind, record: [String: AnyJSON]) {
         guard let context = context else { return }
         guard let idString = record["id"]?.stringValue, let id = UUID(uuidString: idString) else { return }
+        // This device's own unconfirmed write to the row wins until the server
+        // has it; the echo of that write then brings the row as it ends up.
+        if SupabaseSync.shared.hasPendingWrite(table: table, id: id) {
+            ClientEventLogger.log("realtime.apply.heldForPendingWrite", detail: ["table": .string(table)])
+            return
+        }
 
         switch table {
         case "rounds":   applyRound(context: context, kind: kind, id: id, record: record)
@@ -424,6 +483,11 @@ final class RealtimeSync {
         default: break
         }
         try? context.save()
+        #if os(iOS)
+        if Self.relayedTables.contains(table), let json = try? JSONEncoder().encode(record) {
+            WatchConnectivityManager.shared.relayRow(table: table, kind: "\(kind)", recordJSON: json)
+        }
+        #endif
         ClientEventLogger.log("realtime.apply", detail: [
             "table": .string(table),
             "kind": .string("\(kind)")
@@ -454,6 +518,19 @@ final class RealtimeSync {
         if table == "courses" { DataStore.shared.loadCourses() }
         DataStore.shared.objectWillChange.send()
         #endif
+    }
+
+    /// Round data the phone forwards to the watch as it arrives, because a solo
+    /// watch round has no live connection of its own: watchOS opens Realtime
+    /// only for multiplayer, and a watch without cellular can't hold one.
+    private static let relayedTables: Set<String> = ["rounds", "round_holes", "strokes", "targets", "holes"]
+
+    /// A row the phone forwarded (`WatchConnectivityManager.relayRow`), applied
+    /// exactly like a live event.
+    func applyRelayed(table: String, kind: String, recordJSON: Data) {
+        guard let record = try? JSONDecoder().decode([String: AnyJSON].self, from: recordJSON) else { return }
+        let change: ChangeKind = kind == "insert" ? .insert : kind == "delete" ? .delete : .update
+        apply(table: table, kind: change, record: record)
     }
 
     private func applyRound(context: ModelContext, kind: ChangeKind, id: UUID, record: [String: AnyJSON]) {

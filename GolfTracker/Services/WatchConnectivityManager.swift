@@ -57,6 +57,8 @@ class WatchConnectivityManager: NSObject, ObservableObject {
     var onReceiveHoleDetectionRequest: ((UUID) -> Void)?
     /// iPhone reports progress on a requested analysis. Watch-only consumer.
     var onReceiveHoleDetectionStatus: ((UUID, HoleDetectionPhoneState) -> Void)?
+    /// A round row the phone forwarded: (table, kind, JSON record). Watch-only.
+    var onReceiveRoundRow: ((String, String, Data) -> Void)?
     /// Fires once activation completes (success path). Currently used by
     /// iOS DataStore to push the authoritative hole-filter settings down
     /// to the watch on each (re)activation.
@@ -363,6 +365,26 @@ class WatchConnectivityManager: NSObject, ObservableObject {
         }
     }
 
+    // MARK: - Round rows (iPhone → Watch)
+
+    /// Forwards a round row the phone just received from the server (see
+    /// `RealtimeSync.relayedTables`). Live when the watch app is reachable,
+    /// otherwise `transferUserInfo`, which queues and delivers in order when
+    /// the watch app next runs. Applying is idempotent, so a row that goes
+    /// both ways after a failed live send is harmless.
+    func relayRow(table: String, kind: String, recordJSON: Data) {
+        #if os(iOS)
+        let session = WCSession.default
+        guard session.activationState == .activated, session.isPaired, session.isWatchAppInstalled else { return }
+        let payload: [String: Any] = ["type": "roundRow", "table": table, "kind": kind, "record": recordJSON]
+        if session.isReachable {
+            session.sendMessage(payload, replyHandler: nil) { _ in session.transferUserInfo(payload) }
+        } else {
+            session.transferUserInfo(payload)
+        }
+        #endif
+    }
+
     // MARK: - Test mode state (iPhone → Watch)
 
     /// Push the test-mode state to the watch. Used because non-LTE watches
@@ -433,6 +455,10 @@ extension WatchConnectivityManager: WCSessionDelegate {
         }
         if let type = message["type"] as? String, type == "holeDetectionStatus" {
             handleHoleDetectionStatus(message)
+            return
+        }
+        if let type = message["type"] as? String, type == "roundRow" {
+            receiveRoundRow(message)
             return
         }
         #endif
@@ -630,6 +656,24 @@ extension WatchConnectivityManager: WCSessionDelegate {
         DispatchQueue.main.async {
             TestModeService.shared.applyFromWatchConnectivity(enabled: enabled, lat: lat, lon: lon)
         }
+    }
+    #endif
+
+    // MARK: Receiving Queued User Info
+
+    func session(_ session: WCSession, didReceiveUserInfo userInfo: [String : Any] = [:]) {
+        #if os(watchOS)
+        receiveRoundRow(userInfo)
+        #endif
+    }
+
+    #if os(watchOS)
+    private func receiveRoundRow(_ payload: [String: Any]) {
+        guard payload["type"] as? String == "roundRow",
+              let table = payload["table"] as? String,
+              let kind = payload["kind"] as? String,
+              let record = payload["record"] as? Data else { return }
+        DispatchQueue.main.async { self.onReceiveRoundRow?(table, kind, record) }
     }
     #endif
 

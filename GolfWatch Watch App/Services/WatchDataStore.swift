@@ -1003,6 +1003,13 @@ class WatchDataStore: ObservableObject {
         connectivity.onReceiveHoleDetectionStatus = { [weak self] courseId, state in
             self?.handlePhoneBlobStatus(courseId: courseId, state: state)
         }
+        // Round rows the phone forwards from the server: the watch's copy of a
+        // solo round follows the phone's changes as they happen.
+        connectivity.onReceiveRoundRow = { table, kind, record in
+            Task { @MainActor in
+                RealtimeSync.shared.applyRelayed(table: table, kind: kind, recordJSON: record)
+            }
+        }
         // Phone is the authority for filter settings now (dev menu lives
         // in iOS Settings → Developer → Green Filters). Watch only RECEIVES
         // — its setupConnectivity assigns to holeFilterSettings on inbound,

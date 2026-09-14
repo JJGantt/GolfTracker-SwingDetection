@@ -32,11 +32,17 @@ final class SupabaseSync {
     private let queueURL: URL
     private let queueLock = NSLock()
     private var retryTimer: Timer?
+    /// Every write this device has not had confirmed, oldest first, mirrored
+    /// to `queueURL` after each change. Guarded by `queueLock`; the head is in
+    /// flight while `pumping`.
+    private var queue: [QueuedOperation] = []
+    private var pumping = false
 
     private init() {
         let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         self.queueURL = dir.appendingPathComponent("supabase_sync_queue.json")
+        queue = loadQueue()
         startRetryTimer()
     }
 
@@ -270,6 +276,24 @@ final class SupabaseSync {
         UserDefaults.standard.set(current.filter { $0 != roundId }, forKey: Self.pendingRewriteKey)
     }
 
+    /// Whether the round's `round_holes` rows still await the rewrite, i.e.
+    /// the server doesn't have its local holes' ids yet.
+    func isRoundHoleRewritePending(_ roundId: UUID) -> Bool {
+        (UserDefaults.standard.stringArray(forKey: Self.pendingRewriteKey) ?? []).contains(roundId.uuidString)
+    }
+
+    /// Whether this device has a write for the row that the server hasn't
+    /// confirmed. `RealtimeSync` keeps such a row as it is locally instead of
+    /// applying an incoming version: that version predates the write, and
+    /// would undo it until the write's own echo arrived.
+    func hasPendingWrite(table: String, id: UUID) -> Bool {
+        let target = id.uuidString
+        queueLock.lock(); defer { queueLock.unlock() }
+        return queue.contains {
+            $0.table == table && $0.rowId?.caseInsensitiveCompare(target) == .orderedSame
+        }
+    }
+
     private struct RoundHoleRow: Encodable {
         let id: String
         let round_id: String
@@ -414,105 +438,157 @@ final class SupabaseSync {
 
     // MARK: - Queue + transport
 
-    /// Queueable representation of a Postgrest mutation. Stored on disk between
-    /// app launches so writes survive offline → relaunch transitions.
+    /// Queueable representation of a Postgrest mutation. Every write goes
+    /// through the on-disk queue and is sent one at a time in order (`pump`).
     private struct QueuedOperation: Codable {
         enum Kind: String, Codable { case upsert, delete, update }
         let kind: Kind
         let table: String
-        // For upsert: JSON-encoded payload + onConflict column list
+        // For upsert/update: JSON-encoded payload; upsert's onConflict column list
         let payloadJSON: Data?
         let onConflict: String?
-        // For delete: column + value
+        // For delete/update: column + value
         let filterColumn: String?
         let filterValue: String?
-    }
 
-    private func upsert(table: String, values: [String: AnyCodableValue], onConflict: String, includeNulls: Bool = false) {
-        let body = encodeValues(values, includeNulls: includeNulls)
-        let op = QueuedOperation(
-            kind: .upsert,
-            table: table,
-            payloadJSON: body,
-            onConflict: onConflict,
-            filterColumn: nil,
-            filterValue: nil
-        )
-        attempt(op) { [weak self] ok in
-            if !ok { self?.enqueue(op) }
-        }
-    }
-
-    private func update(table: String, values: [String: AnyCodableValue], filterColumn: String, filterValue: String) {
-        let op = QueuedOperation(
-            kind: .update,
-            table: table,
-            payloadJSON: encodeValues(values),
-            onConflict: nil,
-            filterColumn: filterColumn,
-            filterValue: filterValue
-        )
-        attempt(op) { [weak self] ok in
-            if !ok { self?.enqueue(op) }
-        }
-    }
-
-    private func delete(table: String, filterColumn: String, filterValue: String) {
-        let op = QueuedOperation(
-            kind: .delete,
-            table: table,
-            payloadJSON: nil,
-            onConflict: nil,
-            filterColumn: filterColumn,
-            filterValue: filterValue
-        )
-        attempt(op) { [weak self] ok in
-            if !ok { self?.enqueue(op) }
-        }
-    }
-
-    private func attempt(_ op: QueuedOperation, completion: @escaping (Bool) -> Void) {
-        guard currentAccessToken != nil else { completion(false); return }
-        Task {
-            do {
-                switch op.kind {
-                case .upsert:
-                    guard let body = op.payloadJSON,
-                          let json = try? JSONDecoder().decode(AnyJSON.self, from: body),
-                          let onConflict = op.onConflict else {
-                        completion(false); return
-                    }
-                    let q = try supabase.from(op.table).upsert(json, onConflict: onConflict)
-                    try await q.execute()
-                    completion(true)
-                case .delete:
-                    guard let col = op.filterColumn, let val = op.filterValue else {
-                        completion(false); return
-                    }
-                    try await supabase.from(op.table).delete().eq(col, value: val).execute()
-                    completion(true)
-                case .update:
-                    guard let body = op.payloadJSON,
-                          let json = try? JSONDecoder().decode(AnyJSON.self, from: body),
-                          let col = op.filterColumn, let val = op.filterValue else {
-                        completion(false); return
-                    }
-                    let q = try supabase.from(op.table).update(json)
-                    try await q.eq(col, value: val).execute()
-                    completion(true)
-                }
-            } catch {
-                dprint("[SupabaseSync] \(op.kind.rawValue) \(op.table) failed: \(error)")
-                completion(false)
+        /// The row this write names by id: the payload's `id` for an upsert,
+        /// the filter value for an id-filtered update or delete.
+        var rowId: String? {
+            switch kind {
+            case .upsert:
+                guard let body = payloadJSON,
+                      let object = (try? JSONSerialization.jsonObject(with: body)) as? [String: Any] else { return nil }
+                return object["id"] as? String
+            case .update, .delete:
+                return filterColumn == "id" ? filterValue : nil
             }
         }
     }
 
+    private func upsert(table: String, values: [String: AnyCodableValue], onConflict: String, includeNulls: Bool = false) {
+        enqueue(QueuedOperation(kind: .upsert, table: table, payloadJSON: encodeValues(values, includeNulls: includeNulls),
+                                onConflict: onConflict, filterColumn: nil, filterValue: nil))
+    }
+
+    private func update(table: String, values: [String: AnyCodableValue], filterColumn: String, filterValue: String) {
+        enqueue(QueuedOperation(kind: .update, table: table, payloadJSON: encodeValues(values),
+                                onConflict: nil, filterColumn: filterColumn, filterValue: filterValue))
+    }
+
+    private func delete(table: String, filterColumn: String, filterValue: String) {
+        enqueue(QueuedOperation(kind: .delete, table: table, payloadJSON: nil,
+                                onConflict: nil, filterColumn: filterColumn, filterValue: filterValue))
+    }
+
+    /// Adds a write, then sends. A write to the same row as the last queued
+    /// one (and not in flight) merges into it, so a burst of hole taps is one
+    /// request: an update folds its fields in, an upsert or delete replaces.
     private func enqueue(_ op: QueuedOperation) {
-        queueLock.lock(); defer { queueLock.unlock() }
-        var queue = loadQueue()
-        queue.append(op)
+        queueLock.lock()
+        let inFlight = pumping ? 1 : 0
+        if queue.count > inFlight, let last = queue.last, let merged = Self.merged(last, op) {
+            queue[queue.count - 1] = merged
+        } else {
+            queue.append(op)
+        }
         saveQueue(queue)
+        queueLock.unlock()
+        pump()
+    }
+
+    private static func merged(_ earlier: QueuedOperation, _ later: QueuedOperation) -> QueuedOperation? {
+        guard earlier.table == later.table, earlier.kind == later.kind,
+              let id = earlier.rowId, id == later.rowId else { return nil }
+        switch earlier.kind {
+        case .upsert:
+            return earlier.onConflict == later.onConflict ? later : nil
+        case .delete:
+            return later
+        case .update:
+            guard let a = earlier.payloadJSON, let b = later.payloadJSON,
+                  let fieldsA = (try? JSONSerialization.jsonObject(with: a)) as? [String: Any],
+                  let fieldsB = (try? JSONSerialization.jsonObject(with: b)) as? [String: Any],
+                  let data = try? JSONSerialization.data(withJSONObject: fieldsA.merging(fieldsB) { _, new in new }) else {
+                return nil
+            }
+            return QueuedOperation(kind: .update, table: earlier.table, payloadJSON: data, onConflict: nil,
+                                   filterColumn: earlier.filterColumn, filterValue: earlier.filterValue)
+        }
+    }
+
+    private enum SendOutcome { case sent, retryLater, rejected }
+
+    /// Sends the queue one write at a time, oldest first, so the server applies
+    /// this device's writes in the order they were made. (Each write used to
+    /// be its own concurrent request, and a failed one was retried after newer
+    /// ones had landed, so an old value could overwrite a new one.) A write
+    /// that doesn't reach the server holds the queue until the next write or
+    /// the 30s retry tick; one the server refuses outright is dropped, since
+    /// resending can never succeed and it would hold up everything behind it.
+    private func pump() {
+        queueLock.lock()
+        guard !pumping, let head = queue.first else { queueLock.unlock(); return }
+        pumping = true
+        queueLock.unlock()
+        Task { [weak self] in
+            guard let self else { return }
+            let outcome = await self.send(head)
+            if outcome == .rejected {
+                ClientEventLogger.log("supabaseSync.write.rejected", detail: [
+                    "table": .string(head.table), "kind": .string(head.kind.rawValue)
+                ])
+            }
+            if self.finishHead(outcome) { self.pump() }
+        }
+    }
+
+    /// Drops the head unless it has to be retried, and says whether more is
+    /// queued. Synchronous, so the lock is never held across a suspension.
+    private func finishHead(_ outcome: SendOutcome) -> Bool {
+        queueLock.lock(); defer { queueLock.unlock() }
+        pumping = false
+        guard outcome != .retryLater else { return false }
+        if !queue.isEmpty { queue.removeFirst() }
+        saveQueue(queue)
+        return !queue.isEmpty
+    }
+
+    private func send(_ op: QueuedOperation) async -> SendOutcome {
+        guard currentAccessToken != nil else { return .retryLater }
+        do {
+            switch op.kind {
+            case .upsert:
+                guard let body = op.payloadJSON,
+                      let json = try? JSONDecoder().decode(AnyJSON.self, from: body),
+                      let onConflict = op.onConflict else { return .rejected }
+                try await supabase.from(op.table).upsert(json, onConflict: onConflict).execute()
+            case .delete:
+                guard let col = op.filterColumn, let val = op.filterValue else { return .rejected }
+                try await supabase.from(op.table).delete().eq(col, value: val).execute()
+            case .update:
+                guard let body = op.payloadJSON,
+                      let json = try? JSONDecoder().decode(AnyJSON.self, from: body),
+                      let col = op.filterColumn, let val = op.filterValue else { return .rejected }
+                try await supabase.from(op.table).update(json).eq(col, value: val).execute()
+            }
+            return .sent
+        } catch let error as PostgrestError {
+            dprint("[SupabaseSync] \(op.kind.rawValue) \(op.table) failed: \(error)")
+            return Self.isPermanent(error.code) ? .rejected : .retryLater
+        } catch {
+            dprint("[SupabaseSync] \(op.kind.rawValue) \(op.table) failed: \(error)")
+            return .retryLater
+        }
+    }
+
+    /// Errors that resending can't fix: a malformed request (PGRST1xx/2xx) or
+    /// the database refusing the data (SQLSTATE class 22 data exception, 23
+    /// constraint violation, 42 undefined column/table or privilege). Auth
+    /// errors (PGRST3xx) and anything without a code are retried.
+    private static func isPermanent(_ code: String?) -> Bool {
+        guard let code else { return false }
+        if code.hasPrefix("PGRST") { return code.hasPrefix("PGRST1") || code.hasPrefix("PGRST2") }
+        return ["22", "23", "42"].contains(String(code.prefix(2)))
     }
 
     private func loadQueue() -> [QueuedOperation] {
@@ -531,23 +607,9 @@ final class SupabaseSync {
     private func startRetryTimer() {
         retryTimer?.invalidate()
         retryTimer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
-            self?.drainQueue()
+            self?.pump()
         }
-        DispatchQueue.main.async { [weak self] in self?.drainQueue() }
-    }
-
-    private func drainQueue() {
-        queueLock.lock()
-        let queue = loadQueue()
-        saveQueue([])
-        queueLock.unlock()
-        guard !queue.isEmpty else { return }
-        dprint("[SupabaseSync] draining \(queue.count) queued operations")
-        for op in queue {
-            attempt(op) { [weak self] ok in
-                if !ok { self?.enqueue(op) }
-            }
-        }
+        DispatchQueue.main.async { [weak self] in self?.pump() }
     }
 
     private func iso(_ date: Date) -> String {
