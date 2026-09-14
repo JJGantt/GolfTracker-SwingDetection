@@ -456,8 +456,9 @@ struct HolePlayView: View {
             refreshBreadcrumb()
         }
         .onDisappear {
-            // Realtime is round-scoped — drop the WebSocket when leaving play.
-            RealtimeSync.shared.stop()
+            // Realtime stays up: the phone is the watch's live link to the
+            // server (`relayRow`), and a round ended elsewhere closes this
+            // screen, which used to cut the watch off.
             PlaygroupChannel.shared.stop()
             store.currentRoundId = nil
         }

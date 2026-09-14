@@ -1259,6 +1259,9 @@ struct ActiveRoundView: View {
                                     .padding(.vertical, 2)
                                     .background(Color.white.opacity(0.9))
                                     .clipShape(RoundedRectangle(cornerRadius: 4))
+                                    // Size to the text. The marker's 24pt frame
+                                    // below otherwise squeezes "208" down to "…".
+                                    .fixedSize()
                                     .offset(y: 18) // Position below the scope icon
                                 }
                                 .frame(height: 24)

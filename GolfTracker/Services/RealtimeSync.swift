@@ -463,6 +463,15 @@ final class RealtimeSync {
     private func apply(table: String, kind: ChangeKind, record: [String: AnyJSON]) {
         guard let context = context else { return }
         guard let idString = record["id"]?.stringValue, let id = UUID(uuidString: idString) else { return }
+        #if os(iOS)
+        // Forward every server row to the watch, including one held below for
+        // a pending write here: the watch has no such write, and the echo of
+        // the phone's own write is the only way that write reaches it (the echo
+        // often lands before the write's response, i.e. while it's pending).
+        if Self.relayedTables.contains(table), let json = try? JSONEncoder().encode(record) {
+            WatchConnectivityManager.shared.relayRow(table: table, kind: "\(kind)", recordJSON: json)
+        }
+        #endif
         // This device's own unconfirmed write to the row wins until the server
         // has it; the echo of that write then brings the row as it ends up.
         if SupabaseSync.shared.hasPendingWrite(table: table, id: id) {
@@ -483,11 +492,6 @@ final class RealtimeSync {
         default: break
         }
         try? context.save()
-        #if os(iOS)
-        if Self.relayedTables.contains(table), let json = try? JSONEncoder().encode(record) {
-            WatchConnectivityManager.shared.relayRow(table: table, kind: "\(kind)", recordJSON: json)
-        }
-        #endif
         ClientEventLogger.log("realtime.apply", detail: [
             "table": .string(table),
             "kind": .string("\(kind)")
