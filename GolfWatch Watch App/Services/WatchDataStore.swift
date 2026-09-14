@@ -529,6 +529,7 @@ class WatchDataStore: ObservableObject {
         // them up from phone-started rounds whose `round_holes` ids were the
         // course's), then bring the server's rows in line.
         SupabaseSync.shared.markRoundHolesForRewrite(context.separateRoundHolesFromCourseHoles())
+        context.backfillCurrentHoleNumbers()
         Task { @MainActor in
             await SupabaseSync.shared.rewritePendingRoundHoles(context: context)
             await RealtimeSync.shared.removeDuplicateCourseHoles()
@@ -715,14 +716,10 @@ class WatchDataStore: ObservableObject {
         return fetched
     }
 
-    var currentHoleIndex: Int { currentRound?.currentHoleIndex ?? 0 }
+    var currentHole: Hole? { currentRound?.currentHole }
 
-    var currentHole: Hole? {
-        guard let round = currentRound else { return nil }
-        let sortedHoles = round.holes.sorted { $0.number < $1.number }
-        guard currentHoleIndex < sortedHoles.count else { return nil }
-        return sortedHoles[currentHoleIndex]
-    }
+    var hasPreviousHole: Bool { currentRound.map { $0.hole(before: $0.currentHoleNumber) != nil } ?? false }
+    var hasNextHole: Bool { currentRound.map { $0.hole(after: $0.currentHoleNumber) != nil } ?? false }
 
     /// Cached snapshot of `ClubData` rows. Re-fetching from SwiftData on
     /// every access (the previous pattern) was producing a fresh array
@@ -873,13 +870,13 @@ class WatchDataStore: ObservableObject {
 
     // MARK: - Round State Management
 
-    func updateCurrentHoleIndex(newIndex: Int) {
+    func setCurrentHole(number: Int) {
         guard let round = currentRound, let context = context else { return }
-        round.currentHoleIndex = newIndex
+        round.currentHoleNumber = number
         round.lastActivityAt = Date()
         try? context.save()
-        SupabaseSync.shared.upsertRound(round)
-        ClientEventLogger.logBattery(hole: newIndex + 1)
+        SupabaseSync.shared.updateCurrentHole(round)
+        ClientEventLogger.logBattery(hole: number)
         objectWillChange.send()
     }
 
@@ -983,15 +980,11 @@ class WatchDataStore: ObservableObject {
             try? context.save()
             SupabaseSync.shared.deleteStroke(id: strokeId)
             objectWillChange.send()
-        } else if currentHoleIndex > 0 {
-            // No strokes on current hole — check if we just finished the previous hole.
-            let sortedHoles = round.holes.sorted { $0.number < $1.number }
-            let previousHoleIdx = currentHoleIndex - 1
-            let previousHoleNumber = sortedHoles[previousHoleIdx].number
-            if round.isHoleCompleted(previousHoleNumber) {
-                reopenHole(holeNumber: previousHoleNumber)
-                updateCurrentHoleIndex(newIndex: previousHoleIdx)
-            }
+        } else if let previous = round.hole(before: round.currentHoleNumber),
+                  round.isHoleCompleted(previous.number) {
+            // No strokes here and the previous hole was just finished.
+            reopenHole(holeNumber: previous.number)
+            setCurrentHole(number: previous.number)
         }
     }
 
@@ -1042,8 +1035,8 @@ class WatchDataStore: ObservableObject {
     func finishCurrentHole() {
         guard let hole = currentHole, let round = currentRound else { return }
         completeHole(holeNumber: hole.number)
-        if currentHoleIndex < round.holes.count - 1 {
-            updateCurrentHoleIndex(newIndex: currentHoleIndex + 1)
+        if let next = round.hole(after: hole.number) {
+            setCurrentHole(number: next.number)
         }
     }
 
@@ -1059,7 +1052,8 @@ class WatchDataStore: ObservableObject {
             ClientEventLogger.log("addNextHole.guardFailed")
             return
         }
-        let nextHoleNumber = round.holes.count + 1
+        let nextHoleNumber = (round.holes.map(\.number).max() ?? 0) + 1
+        let holeId = Hole.roundHoleId(roundId: round.id, number: nextHoleNumber)
         // If canonical resolution covers this hole_number (this user's
         // own pick or cross-user voting threshold), pre-populate so
         // HolePlacementView is skipped.
@@ -1067,18 +1061,18 @@ class WatchDataStore: ObservableObject {
         let newHole: Hole
         if let pick = canonical {
             let coord = CLLocationCoordinate2D(latitude: pick.lat, longitude: pick.lon)
-            newHole = Hole(number: nextHoleNumber, coordinate: coord, par: pick.par, teeId: round.selectedTeeId)
+            newHole = Hole(id: holeId, number: nextHoleNumber, coordinate: coord, par: pick.par, teeId: round.selectedTeeId)
             ClientEventLogger.log("addNextHole.canonicalHydrated", detail: [
                 "holeNumber": .integer(nextHoleNumber),
                 "lat": .double(pick.lat),
                 "lon": .double(pick.lon)
             ])
         } else {
-            newHole = Hole(number: nextHoleNumber)
+            newHole = Hole(id: holeId, number: nextHoleNumber)
         }
         context.insert(newHole)
         round.holes.append(newHole)
-        round.currentHoleIndex = nextHoleNumber - 1
+        round.currentHoleNumber = nextHoleNumber
         // Every hole-index write logs battery. This path used to skip it, so a
         // course whose holes are all added in play (Blue Sky, 2026-09-07)
         // recorded no battery at all.
@@ -1086,6 +1080,7 @@ class WatchDataStore: ObservableObject {
         try? context.save()
         ClientEventLogger.log("addNextHole.saved", detail: ["holeNumber": .integer(nextHoleNumber), "holeCount": .integer(round.holes.count)])
         SupabaseSync.shared.upsertRound(round)
+        SupabaseSync.shared.upsertRoundHole(newHole, roundId: round.id)
         ClientEventLogger.log("addNextHole.upsertEnqueued")
         objectWillChange.send()
         ClientEventLogger.log("addNextHole.objectWillChangeSent")
@@ -1093,14 +1088,16 @@ class WatchDataStore: ObservableObject {
 
     func addHole(coordinate: CLLocationCoordinate2D, par: Int? = nil) {
         guard let round = currentRound, let context = context else { return }
-        let nextHoleNumber = round.holes.count + 1
-        let newHole = Hole(number: nextHoleNumber, coordinate: coordinate, par: par)
+        let nextHoleNumber = (round.holes.map(\.number).max() ?? 0) + 1
+        let newHole = Hole(id: Hole.roundHoleId(roundId: round.id, number: nextHoleNumber),
+                           number: nextHoleNumber, coordinate: coordinate, par: par)
         context.insert(newHole)
         round.holes.append(newHole)
-        round.currentHoleIndex = nextHoleNumber - 1
+        round.currentHoleNumber = nextHoleNumber
         ClientEventLogger.logBattery(hole: nextHoleNumber)
         try? context.save()
         SupabaseSync.shared.upsertRound(round)
+        SupabaseSync.shared.upsertRoundHole(newHole, roundId: round.id)
         objectWillChange.send()
     }
 
@@ -1119,23 +1116,20 @@ class WatchDataStore: ObservableObject {
         if let par = par { hole.par = par }
         try? context.save()
         ClientEventLogger.log("updateHole.saved")
-        SupabaseSync.shared.upsertRound(round)
+        SupabaseSync.shared.upsertRoundHole(hole, roundId: round.id)
         ClientEventLogger.log("updateHole.upsertEnqueued")
         objectWillChange.send()
         ClientEventLogger.log("updateHole.objectWillChangeSent")
     }
 
     func navigateToNextHole() {
-        guard let round = currentRound else { return }
-        let nextIndex = currentHoleIndex + 1
-        guard nextIndex < round.holes.count else { return }
-        updateCurrentHoleIndex(newIndex: nextIndex)
+        guard let round = currentRound, let next = round.hole(after: round.currentHoleNumber) else { return }
+        setCurrentHole(number: next.number)
     }
 
     func navigateToPreviousHole() {
-        let prevIndex = currentHoleIndex - 1
-        guard prevIndex >= 0 else { return }
-        updateCurrentHoleIndex(newIndex: prevIndex)
+        guard let round = currentRound, let previous = round.hole(before: round.currentHoleNumber) else { return }
+        setCurrentHole(number: previous.number)
     }
 
     // MARK: - Start Round (resolver-backed)
@@ -1366,8 +1360,11 @@ class WatchDataStore: ObservableObject {
         // otherwise a single placeholder hole the user fills in as they go.
         // For the placeholder path, consult canonicalPicks so we skip
         // HolePlacementView for hole 1 if it's resolved.
+        // Hole ids come from the round id and number (`Hole.roundHoleId`).
+        let roundId = UUID()
         let holes: [Hole]
         if resolution.tier == .full, let osm = resolution.osmData {
+            var seen = Set<Int>()
             holes = osm.holes
                 .compactMap { h -> (Int, Hole)? in
                     guard let ref = h.ref, let n = Int(ref) else { return nil }
@@ -1375,15 +1372,18 @@ class WatchDataStore: ObservableObject {
                         latitude: h.greenPoint.latitude,
                         longitude: h.greenPoint.longitude
                     )
-                    return (n, Hole(number: n, coordinate: coord, par: h.par, teeId: selectedTeeId))
+                    return (n, Hole(id: Hole.roundHoleId(roundId: roundId, number: n),
+                                    number: n, coordinate: coord, par: h.par, teeId: selectedTeeId))
                 }
                 .sorted { $0.0 < $1.0 }
+                .filter { seen.insert($0.0).inserted }
                 .map { $0.1 }
         } else if let pick = canonicalPicks[1] {
             let coord = CLLocationCoordinate2D(latitude: pick.lat, longitude: pick.lon)
-            holes = [Hole(number: 1, coordinate: coord, par: pick.par, teeId: selectedTeeId)]
+            holes = [Hole(id: Hole.roundHoleId(roundId: roundId, number: 1),
+                          number: 1, coordinate: coord, par: pick.par, teeId: selectedTeeId)]
         } else {
-            holes = [Hole(number: 1, teeId: selectedTeeId)]
+            holes = [Hole(id: Hole.roundHoleId(roundId: roundId, number: 1), number: 1, teeId: selectedTeeId)]
         }
 
         // Ensure a local Course mirror of the (shared) row exists. The
@@ -1418,6 +1418,7 @@ class WatchDataStore: ObservableObject {
             "holeCount": .integer(holes.count)
         ])
         let newRound = Round(
+            id: roundId,
             courseId: resolution.courseId,
             courseName: resolution.courseName,
             holes: holes,
@@ -1449,6 +1450,7 @@ class WatchDataStore: ObservableObject {
             SupabaseSync.shared.upsertCourse(course)
         }
         SupabaseSync.shared.upsertRound(newRound)
+        SupabaseSync.shared.upsertRoundHoles(newRound)
         ClientEventLogger.log("perform.start.afterUpsertRound")
         dprint("⌚ [WatchDataStore] Started round at \(resolution.courseName) (tier=\(resolution.tier), \(holes.count) holes, tee=\(selectedTeeId?.uuidString ?? "none"), existing=\(resolution.isExistingCourse))")
 
@@ -1460,9 +1462,7 @@ class WatchDataStore: ObservableObject {
             let roundId = newRound.id
             LocationManager.shared.startPathRecording(roundId: roundId, userId: uid) { [weak self] in
                 guard let self, let r = self.currentRound, r.id == roundId else { return 1 }
-                let sorted = r.holes.sorted { $0.number < $1.number }
-                let idx = max(0, min(r.currentHoleIndex, sorted.count - 1))
-                return sorted.indices.contains(idx) ? sorted[idx].number : 1
+                return r.currentHoleNumber
             }
             ClientEventLogger.log("perform.start.afterStartPathRecording")
         } else {
@@ -1601,14 +1601,16 @@ class WatchDataStore: ObservableObject {
 
             let course = Course(name: name)
             context.insert(course)
-            let firstHole = Hole(number: 1)
-            let newRound = Round(courseId: course.id, courseName: name, holes: [firstHole])
+            let roundId = UUID()
+            let firstHole = Hole(id: Hole.roundHoleId(roundId: roundId, number: 1), number: 1)
+            let newRound = Round(id: roundId, courseId: course.id, courseName: name, holes: [firstHole])
             context.insert(firstHole)
             context.insert(newRound)
             try? context.save()
             self.refreshCurrentRound()
             SupabaseSync.shared.upsertCourse(course)
             SupabaseSync.shared.upsertRound(newRound)
+            SupabaseSync.shared.upsertRoundHoles(newRound)
         }
         pendingCourseNamePrompt = true
     }

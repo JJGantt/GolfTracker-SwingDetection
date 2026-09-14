@@ -349,6 +349,22 @@ extension ModelContext {
         try? save()
         return Array(byRound.keys)
     }
+
+    /// Rounds saved before `currentHoleNumber` existed carry only the old list
+    /// position. Resolve it once against the round's own holes; the index is
+    /// then zeroed, so this never matches the round again.
+    func backfillCurrentHoleNumbers() {
+        let stale = (try? fetch(FetchDescriptor<Round>(predicate: #Predicate { $0.currentHoleIndex > 0 }))) ?? []
+        guard !stale.isEmpty else { return }
+        for round in stale {
+            let sorted = round.holesByNumber
+            round.currentHoleNumber = sorted.indices.contains(round.currentHoleIndex)
+                ? sorted[round.currentHoleIndex].number
+                : round.currentHoleIndex + 1
+            round.currentHoleIndex = 0
+        }
+        try? save()
+    }
 }
 
 @Model
@@ -447,7 +463,16 @@ final class Round {
     /// Stored as [Int] (SwiftData support for Set<Int> is flaky); exposed as
     /// Set<Int> via `completedHoles` computed property below.
     var completedHolesArray: [Int]
+    /// Legacy: the current hole's position in a device's own sorted hole list.
+    /// Read only by `backfillCurrentHoleNumbers`, once, for rounds saved before
+    /// `currentHoleNumber` existed. The server keeps its column in step by
+    /// trigger for older builds (migration 00051).
     var currentHoleIndex: Int
+    /// The hole the round is on, by number: the one value both devices read
+    /// for "which hole", resolved against the round's own holes
+    /// (`currentHole`). A list position named different holes whenever the two
+    /// devices' lists differed.
+    var currentHoleNumber: Int = 1
     @Relationship(deleteRule: .cascade, inverse: \Target.round) var targets: [Target]
     var holeDetectionEnabled: Bool?
     var locationTestModeEnabled: Bool?
@@ -484,6 +509,7 @@ final class Round {
         self.holes = holes
         self.completedHolesArray = []
         self.currentHoleIndex = 0
+        self.currentHoleNumber = holes.map(\.number).min() ?? 1
         self.targets = []
         self.holeDetectionEnabled = holeDetectionEnabled
         self.locationTestModeEnabled = locationTestModeEnabled
@@ -500,6 +526,16 @@ final class Round {
     func isHoleCompleted(_ holeNumber: Int) -> Bool {
         completedHolesArray.contains(holeNumber)
     }
+
+    /// The round's holes in number order.
+    var holesByNumber: [Hole] { holes.sorted { $0.number < $1.number } }
+
+    /// The hole the round is on.
+    var currentHole: Hole? { holes.first { $0.number == currentHoleNumber } }
+
+    /// The holes before and after `number` in this round, skipping any gap.
+    func hole(after number: Int) -> Hole? { holesByNumber.first { $0.number > number } }
+    func hole(before number: Int) -> Hole? { holesByNumber.last { $0.number < number } }
 }
 
 // MARK: - Hole Detection Models (transient, JSON-only — not @Model)

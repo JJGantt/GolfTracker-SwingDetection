@@ -534,6 +534,7 @@ class DataStore: ObservableObject {
         // Before anything can start a round: split rounds off the course
         // holes they may still share, then bring the server's rows in line.
         SupabaseSync.shared.markRoundHolesForRewrite(context.separateRoundHolesFromCourseHoles())
+        context.backfillCurrentHoleNumbers()
         Task { @MainActor in
             await SupabaseSync.shared.rewritePendingRoundHoles(context: context)
             await RealtimeSync.shared.removeDuplicateCourseHoles()
@@ -924,8 +925,8 @@ class DataStore: ObservableObject {
                 .max(by: { $0.date < $1.date }),
               let courseHoles = courses.first(where: { $0.id == course.id })?.holes.oneByNumber else { return }
 
-        let oldHoleCount = round.holes.count
         var unmatched = Dictionary(round.holes.map { ($0.number, $0) }, uniquingKeysWith: { first, _ in first })
+        var added: [Int] = []
         for courseHole in courseHoles {
             if let roundHole = unmatched.removeValue(forKey: courseHole.number) {
                 roundHole.latitude = courseHole.latitude
@@ -933,6 +934,7 @@ class DataStore: ObservableObject {
                 roundHole.par = courseHole.par
             } else {
                 round.holes.append(courseHole.roundCopy(roundId: round.id, teeId: round.selectedTeeId))
+                added.append(courseHole.number)
             }
         }
         for extra in unmatched.values {
@@ -942,11 +944,12 @@ class DataStore: ObservableObject {
         }
 
         // If a new hole was added, point the round at it
-        if round.holes.count > oldHoleCount {
-            round.currentHoleIndex = round.holes.count - 1
+        if let newest = added.max() {
+            round.currentHoleNumber = newest
         }
         saveRounds()
         SupabaseSync.shared.upsertRound(round)
+        SupabaseSync.shared.upsertRoundHoles(round)
     }
 
     func deleteHole(_ hole: Hole, from course: Course) {
@@ -1034,18 +1037,17 @@ class DataStore: ObservableObject {
 
         // Round + clubs now sync via DB (Realtime + SwiftData) — no WC push needed.
         SupabaseSync.shared.upsertRound(round)
+        SupabaseSync.shared.upsertRoundHoles(round)
 
         // Start path + altitude capture for the round. Hole-number provider
-        // reads the round's currentHoleIndex live so each sample is tagged
+        // reads the round's currentHoleNumber live so each sample is tagged
         // with the hole the user is actually on at capture time.
         if let uid = AuthManager.shared.currentUserId {
             let roundId = round.id
             LocationManager.shared.startPathRecording(roundId: roundId, userId: uid) { [weak self] in
                 guard let self,
                       let r = self.rounds.first(where: { $0.id == roundId }) else { return 1 }
-                let sorted = r.holes.sorted { $0.number < $1.number }
-                let idx = max(0, min(r.currentHoleIndex, sorted.count - 1))
-                return sorted.indices.contains(idx) ? sorted[idx].number : 1
+                return r.currentHoleNumber
             }
         } else {
             ClientEventLogger.log("altitude.recording.skipped.noUid", detail: [
@@ -1646,6 +1648,7 @@ class DataStore: ObservableObject {
         }
         for round in generated.rounds {
             SupabaseSync.shared.upsertRound(round)
+            SupabaseSync.shared.upsertRoundHoles(round)
             for stroke in round.strokes {
                 SupabaseSync.shared.upsertStroke(stroke, roundId: round.id)
             }
@@ -1778,16 +1781,16 @@ class DataStore: ObservableObject {
 
     // MARK: - Round State Management (with automatic sync)
 
-    func updateCurrentHoleIndex(for round: Round, newIndex: Int) {
+    func setCurrentHole(for round: Round, number: Int) {
         guard let roundIndex = rounds.firstIndex(where: { $0.id == round.id }) else { return }
 
-        rounds[roundIndex].currentHoleIndex = newIndex
+        rounds[roundIndex].currentHoleNumber = number
         rounds[roundIndex].lastActivityAt = Date()
         saveRounds()
-        ClientEventLogger.logBattery(hole: newIndex + 1)
+        ClientEventLogger.logBattery(hole: number)
 
         // Mirror to Supabase (Realtime fans out to the other device)
-        SupabaseSync.shared.upsertRound(rounds[roundIndex])
+        SupabaseSync.shared.updateCurrentHole(rounds[roundIndex])
     }
 
     /// Mark a round finished. Manual button + lifecycle sweep both call this.

@@ -166,7 +166,7 @@ enum DemoDataSeeder {
 
         round.strokes = strokes
         round.completedHoles = completed
-        round.currentHoleIndex = max(0, course.holes.count - 1)
+        round.currentHoleNumber = course.holes.map(\.number).max() ?? 1
         return round
     }
 

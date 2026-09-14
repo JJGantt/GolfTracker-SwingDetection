@@ -136,7 +136,7 @@ struct ScorecardView: View {
         let par = teeHoles?[hole.number]?.par ?? hole.par
         let yardage = teeHoles?[hole.number]?.yardage
         let isCompleted = round.isHoleCompleted(hole.number)
-        let isCurrent = hole.number == (round.currentHoleIndex + 1)
+        let isCurrent = hole.number == round.currentHoleNumber
 
         HStack(spacing: 0) {
             cell("\(hole.number)").frame(width: cellWidth(.hole))
@@ -271,7 +271,7 @@ struct ScorecardView: View {
         // Par defaults to the local round's hole.par; tee-specific par
         // appears alongside the tee yardage column anyway.
         let par = teeHoles?[hole.number]?.par ?? hole.par
-        let isCurrent = hole.number == (round.currentHoleIndex + 1)
+        let isCurrent = hole.number == round.currentHoleNumber
 
         HStack(spacing: 0) {
             cell("\(hole.number)").frame(width: cellWidth(.hole))

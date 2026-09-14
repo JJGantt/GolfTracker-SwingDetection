@@ -467,7 +467,10 @@ final class RealtimeSync {
         let courseId = record["course_id"]?.stringValue.flatMap(UUID.init(uuidString:)) ?? UUID()
         let courseName = record["course_name"]?.stringValue ?? ""
         let date = record["date"]?.stringValue.flatMap(Self.parseISODate) ?? Date()
-        let currentHoleIndex = record["current_hole_index"]?.intValue ?? 0
+        // The server trigger (migration 00051) fills current_hole_number from
+        // an older build's index write; the fallback covers a row from before it.
+        let currentHoleNumber = record["current_hole_number"]?.intValue
+            ?? (record["current_hole_index"]?.intValue ?? 0) + 1
         let completed = (record["completed_holes"]?.arrayValue?.compactMap { $0.intValue }) ?? []
 
         let selectedTeeId = record["selected_tee_id"]?.stringValue.flatMap(UUID.init(uuidString:))
@@ -477,7 +480,7 @@ final class RealtimeSync {
             existing.courseId = courseId
             existing.courseName = courseName
             existing.date = date
-            existing.currentHoleIndex = currentHoleIndex
+            existing.currentHoleNumber = currentHoleNumber
             existing.completedHolesArray = completed
             existing.holeDetectionEnabled = record["hole_detection_enabled"]?.boolValue
             existing.locationTestModeEnabled = record["location_test_mode_enabled"]?.boolValue
@@ -493,7 +496,7 @@ final class RealtimeSync {
                 date: date,
                 selectedTeeId: selectedTeeId
             )
-            r.currentHoleIndex = currentHoleIndex
+            r.currentHoleNumber = currentHoleNumber
             r.completedHolesArray = completed
             r.holeDetectionEnabled = record["hole_detection_enabled"]?.boolValue
             r.locationTestModeEnabled = record["location_test_mode_enabled"]?.boolValue

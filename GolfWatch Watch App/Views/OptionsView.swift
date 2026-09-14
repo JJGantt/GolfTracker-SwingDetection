@@ -31,7 +31,7 @@ struct OptionsView: View {
         ScrollView {
             VStack(spacing: 12) {
                 // Top row: Hole navigation
-                if let hole = store.currentHole, let round = store.currentRound {
+                if let hole = store.currentHole {
                     HStack(spacing: 12) {
                         // Left arrow - previous hole
                         Button(action: {
@@ -45,8 +45,8 @@ struct OptionsView: View {
                                 .clipShape(Circle())
                         }
                         .buttonStyle(PlainButtonStyle())
-                        .disabled(store.currentHoleIndex == 0)
-                        .opacity(store.currentHoleIndex == 0 ? 0.3 : 1.0)
+                        .disabled(!store.hasPreviousHole)
+                        .opacity(store.hasPreviousHole ? 1.0 : 0.3)
 
                         // Hole number
                         Text("Hole \(hole.number)")
@@ -55,7 +55,7 @@ struct OptionsView: View {
                             .frame(maxWidth: .infinity)
 
                         // Right arrow or plus - next hole or add hole
-                        if store.currentHoleIndex < round.holes.count - 1 {
+                        if store.hasNextHole {
                             // Next hole exists - show right arrow
                             Button(action: {
                                 store.navigateToNextHole()

@@ -21,14 +21,8 @@ extension ActiveRoundView {
         }
 
         // Can undo if we just finished the previous hole (no strokes on current, previous is completed)
-        // SwiftData relationship arrays are unordered — sort by number before
-        // indexing, matching `WatchDataStore.currentHole`.
-        if store.currentHoleIndex > 0,
-           let round = store.currentRound {
-            let sortedHoles = round.holes.sorted { $0.number < $1.number }
-            guard store.currentHoleIndex - 1 < sortedHoles.count else { return false }
-            let previousHoleNumber = sortedHoles[store.currentHoleIndex - 1].number
-            return round.isHoleCompleted(previousHoleNumber)
+        if let round = store.currentRound, let previous = round.hole(before: round.currentHoleNumber) {
+            return round.isHoleCompleted(previous.number)
         }
 
         return false

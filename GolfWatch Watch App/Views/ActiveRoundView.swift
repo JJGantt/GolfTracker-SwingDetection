@@ -655,7 +655,7 @@ struct ActiveRoundView: View {
         .onChange(of: needsFlagPlacement) { _, newValue in
             ClientEventLogger.log("needsFlagPlacement.changed", detail: [
                 "value": .bool(newValue),
-                "currentHoleIndex": .integer(store.currentHoleIndex),
+                "currentHoleNumber": store.currentRound.map { .integer($0.currentHoleNumber) } ?? .null,
                 "holesCount": store.currentRound.map { .integer($0.holes.count) } ?? .null
             ])
         }
@@ -664,7 +664,7 @@ struct ActiveRoundView: View {
         // the store via its remembered last request). No-ops when
         // disabled or already cached.
         .onAppear { loadGhostForCurrentHole() }
-        .onChange(of: store.currentHoleIndex) { _, _ in loadGhostForCurrentHole() }
+        .onChange(of: store.currentRound?.currentHoleNumber) { _, _ in loadGhostForCurrentHole() }
     }
 
     var body: some View {
@@ -694,7 +694,7 @@ struct ActiveRoundView: View {
             onViewDisappear: handleViewDisappear,
             onLocationChange: handleLocationChange,
             onDistanceToHoleChange: handleDistanceToHoleChange,
-            onCurrentHoleIndexChange: handleCurrentHoleIndexChange,
+            onCurrentHoleNumberChange: handleCurrentHoleNumberChange,
             onCurrentHoleChange: handleCurrentHoleChange,
             onShowingOptionsChange: handleShowingOptionsChange,
             onMinimalScreenModeChange: handleMinimalScreenModeChange,
@@ -760,7 +760,7 @@ struct ActiveRoundView: View {
         PlaygroupChannel.shared.stop()
     }
 
-    func handleCurrentHoleIndexChange() {
+    func handleCurrentHoleNumberChange() {
         manualClubOverride = false
         onGreenOverride = false
         lastAutoAddedLocation = nil
@@ -769,8 +769,7 @@ struct ActiveRoundView: View {
         restoreCalculatedMapPosition(force: true)
         if let uid = WatchAuthSession.shared.currentUserId,
            let round = store.currentRound {
-            // Hole index → 1-based hole number (round.currentHoleIndex is 0-based).
-            PlaygroupChannel.shared.updateCurrentHole(round.currentHoleIndex + 1, userId: uid)
+            PlaygroupChannel.shared.updateCurrentHole(round.currentHoleNumber, userId: uid)
         }
         pushElevationReadoutHole()
     }
@@ -781,17 +780,13 @@ struct ActiveRoundView: View {
     /// (the hole marker — green centroid for OSM rounds, user-placed
     /// pin for manual rounds).
     func pushElevationReadoutHole() {
-        guard let round = store.currentRound else { return }
-        let sorted = round.holes.sorted { $0.number < $1.number }
-        let idx = max(0, min(round.currentHoleIndex, sorted.count - 1))
-        guard sorted.indices.contains(idx) else { return }
-        let hole = sorted[idx]
+        guard let hole = store.currentRound?.currentHole else { return }
         ElevationReadout.shared.updateHole(number: hole.number, green: hole.coordinate)
     }
 
     private func startPlaygroupChannelIfNeeded(userId: String) {
         guard let round = store.currentRound else { return }
-        let holeNumber = round.currentHoleIndex + 1
+        let holeNumber = round.currentHoleNumber
         Task {
             do {
                 guard let pg = try await PlaygroupService.shared.currentOpenPlaygroup() else { return }

@@ -39,7 +39,7 @@ final class RoundPathCache: ObservableObject {
 
     /// Pull path samples for `(roundId, holeNumber)` if not already
     /// cached, or refresh them. Idempotent — safe to call from
-    /// `onAppear` and `onChange(of: currentHoleIndex)` without
+    /// `onAppear` and `onChange(of: currentHoleNumber)` without
     /// debouncing.
     func loadIfNeeded(roundId: UUID, holeNumber: Int, forceRefresh: Bool = false) {
         let key = Key(roundId: roundId, holeNumber: holeNumber)

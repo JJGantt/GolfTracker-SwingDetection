@@ -6,8 +6,8 @@ struct HoleOverlayControls: View {
     let strokeCount: Int
     let formattedDistance: String
     let errorMessage: String?
-    let currentHoleIndex: Int
-    let totalHoles: Int
+    let hasPreviousHole: Bool
+    let hasNextHole: Bool
     let strokes: [Stroke]
     let userLocation: CLLocation?
     let store: DataStore
@@ -142,9 +142,9 @@ struct HoleOverlayControls: View {
                         .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.bordered)
-                .disabled(currentHoleIndex == 0)
+                .disabled(!hasPreviousHole)
 
-                if currentHoleIndex >= totalHoles - 1 {
+                if !hasNextHole {
                     Button(action: onAddHole) {
                         Label("Add", systemImage: "plus")
                             .labelStyle(.titleAndIcon)

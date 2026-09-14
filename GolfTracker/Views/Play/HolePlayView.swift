@@ -12,7 +12,11 @@ struct HolePlayView: View {
 
     // MARK: - Core State
     @StateObject var locationManager = LocationManager()
-    @State var currentHoleIndex = 0
+    /// Set only when the screen was opened on a hole to look at it (a round's
+    /// detail), and moved by Previous/Next there. Nil in play, where the hole
+    /// on screen is the round's `currentHoleNumber` (the value both devices
+    /// read), so this screen keeps no hole of its own.
+    @State var reviewHoleNumber: Int?
     @State var activeRound: Round?
 
     // MARK: - Map State
@@ -65,14 +69,7 @@ struct HolePlayView: View {
         self.resumingRound = resumingRound
         self.runHoleDetectionAtStart = runHoleDetectionAtStart
         self.runHoleDetectionWithTestCoordinates = runHoleDetectionWithTestCoordinates
-        if let holeNumber = startingHoleNumber {
-            _currentHoleIndex = State(initialValue: holeNumber - 1)
-        } else if let resuming = resumingRound {
-            // Resume on the round's actual hole. Without this the view
-            // defaults to hole 1 and onAppear's index push would yank the
-            // other device (which set the real index) back to hole 1.
-            _currentHoleIndex = State(initialValue: resuming.currentHoleIndex)
-        }
+        _reviewHoleNumber = State(initialValue: startingHoleNumber)
     }
 
     // MARK: - Computed Properties
@@ -80,18 +77,19 @@ struct HolePlayView: View {
         store.courses.first { $0.id == course.id } ?? course
     }
 
-    /// SwiftData relationship arrays are unordered — always index holes
-    /// through this sorted view so `currentHoleIndex` means the same thing
-    /// here as on the watch (which sorts in `WatchDataStore.currentHole`).
+    /// The round's own holes in number order, as the watch reads them; the
+    /// course's only before a round exists.
     var holesSorted: [Hole] {
-        // The round's own holes, as the watch reads them; the course's only
-        // before a round exists.
         (activeRound?.holes ?? currentCourse.holes).sorted { $0.number < $1.number }
     }
 
+    /// The hole on screen, by number: in play, the round's current hole.
+    var currentHoleNumber: Int {
+        reviewHoleNumber ?? (currentRound ?? activeRound)?.currentHoleNumber ?? 1
+    }
+
     var currentHole: Hole? {
-        guard currentHoleIndex < holesSorted.count else { return nil }
-        return holesSorted[currentHoleIndex]
+        holesSorted.first { $0.number == currentHoleNumber }
     }
 
     var currentRound: Round? {
@@ -152,11 +150,8 @@ struct HolePlayView: View {
         }
 
         // Can undo if we just finished the previous hole (no strokes on current, previous is completed)
-        if currentHoleIndex > 0,
-           currentHoleIndex - 1 < holesSorted.count,
-           let round = currentRound {
-            let previousHoleNumber = holesSorted[currentHoleIndex - 1].number
-            return round.isHoleCompleted(previousHoleNumber)
+        if let round = currentRound, let previous = round.hole(before: currentHoleNumber) {
+            return round.isHoleCompleted(previous.number)
         }
 
         return false
@@ -250,8 +245,8 @@ struct HolePlayView: View {
                     strokeCount: strokeCountForCurrentHole,
                     formattedDistance: locationManager.formattedDistance(to: hole.coordinate),
                     errorMessage: locationManager.errorMessage,
-                    currentHoleIndex: currentHoleIndex,
-                    totalHoles: currentCourse.holes.count,
+                    hasPreviousHole: currentRound?.hole(before: currentHoleNumber) != nil,
+                    hasNextHole: currentRound?.hole(after: currentHoleNumber) != nil,
                     strokes: strokesForCurrentHole,
                     userLocation: locationManager.location,
                     store: store,
@@ -447,10 +442,8 @@ struct HolePlayView: View {
 
             applyLocationModeForRound()
 
-            // Sync current hole index to watch on initial load
-            if let round = activeRound {
-                store.updateCurrentHoleIndex(for: round, newIndex: currentHoleIndex)
-            }
+            // The hole on screen is read from the round; opening this screen
+            // writes nothing.
 
             // Update map based on mode
             if isAddingHole {
@@ -468,10 +461,10 @@ struct HolePlayView: View {
             PlaygroupChannel.shared.stop()
             store.currentRoundId = nil
         }
-        .onChange(of: currentHoleIndex) { _, newIndex in
+        .onChange(of: currentHoleNumber) { _, newNumber in
             updateMapPosition()
             if let uid = AuthManager.shared.currentUserId {
-                PlaygroupChannel.shared.updateCurrentHole(newIndex + 1, userId: uid)
+                PlaygroupChannel.shared.updateCurrentHole(newNumber, userId: uid)
             }
             pushElevationReadoutHole()
             refreshBreadcrumb()
@@ -498,16 +491,11 @@ struct HolePlayView: View {
                 updateMapPosition()
             }
         }
-        .onChange(of: currentCourse.holes.count) { oldCount, newCount in
-            // If holes count increased, it came from watch - close add hole screen if open
-            if newCount > oldCount {
-                dprint("📱 [HolePlayView] New hole detected from watch (count: \(oldCount) -> \(newCount))")
-                if isAddingHole {
-                    dprint("📱 [HolePlayView] Closing add hole screen, navigating to new hole")
-                    isAddingHole = false
-                    // Update to the new hole index
-                    currentHoleIndex = newCount - 1
-                }
+        .onChange(of: currentRound?.holes.count ?? 0) { oldCount, newCount in
+            // A hole added on the watch lands in the round, which already
+            // points at it; close the add-hole screen if it's open.
+            if newCount > oldCount, isAddingHole {
+                isAddingHole = false
             }
         }
         .onChange(of: currentHole) { oldHole, newHole in
@@ -546,28 +534,26 @@ struct HolePlayView: View {
             }
         }
         // --- End new onChange blocks for edit modes ---
-        .onChange(of: currentRound?.currentHoleIndex) { _, newIndex in
-            if let newIndex = newIndex, newIndex != currentHoleIndex {
-                dprint("📱 [HolePlayView] Syncing hole index from Watch: \(newIndex)")
-                currentHoleIndex = newIndex
-            }
-        }
     }
 
     // MARK: - Navigation Functions
     func previousHole() {
-        guard let round = activeRound else { return }
-        if currentHoleIndex > 0 {
-            currentHoleIndex -= 1
-            store.updateCurrentHoleIndex(for: round, newIndex: currentHoleIndex)
-        }
+        guard let previous = currentRound?.hole(before: currentHoleNumber) else { return }
+        goToHole(previous.number)
     }
 
     func nextHole() {
-        guard let round = activeRound else { return }
-        if currentHoleIndex < currentCourse.holes.count - 1 {
-            currentHoleIndex += 1
-            store.updateCurrentHoleIndex(for: round, newIndex: currentHoleIndex)
+        guard let next = currentRound?.hole(after: currentHoleNumber) else { return }
+        goToHole(next.number)
+    }
+
+    /// In play this moves the round, on every device; reviewing a hole moves
+    /// only this screen.
+    func goToHole(_ number: Int) {
+        if reviewHoleNumber != nil {
+            reviewHoleNumber = number
+        } else if let round = currentRound ?? activeRound {
+            store.setCurrentHole(for: round, number: number)
         }
     }
 
@@ -579,9 +565,8 @@ struct HolePlayView: View {
         store.completeHole(in: round, holeNumber: hole.number)
 
         // Auto-advance to next hole if available, or start adding a new hole
-        if currentHoleIndex < currentCourse.holes.count - 1 {
-            currentHoleIndex += 1
-            store.updateCurrentHoleIndex(for: round, newIndex: currentHoleIndex)
+        if let next = round.hole(after: hole.number) {
+            goToHole(next.number)
         } else {
             // No more holes, start adding a new one
             hasUserInteractedWithAddHoleMap = false
@@ -623,18 +608,12 @@ struct HolePlayView: View {
         // If there are strokes on current hole, delete the last one
         if let lastStroke = strokesForCurrentHole.last {
             store.deleteStroke(in: round, stroke: lastStroke)
-        } else if currentHoleIndex > 0, currentHoleIndex - 1 < holesSorted.count {
-            // No strokes on current hole - check if we just finished the previous hole
-            // Only undo if: we're on a hole with no strokes AND the immediately previous hole is completed
-            let previousHoleIdx = currentHoleIndex - 1
-            let previousHoleNumber = holesSorted[previousHoleIdx].number
-
-            if currentRound?.isHoleCompleted(previousHoleNumber) == true {
-                // Undo the hole completion and go back to previous hole
-                store.reopenHole(in: round, holeNumber: previousHoleNumber)
-                currentHoleIndex = previousHoleIdx
-                store.updateCurrentHoleIndex(for: round, newIndex: currentHoleIndex)
-            }
+        } else if let previous = currentRound?.hole(before: currentHoleNumber),
+                  currentRound?.isHoleCompleted(previous.number) == true {
+            // No strokes here and the previous hole was just finished: reopen
+            // it and go back to it.
+            store.reopenHole(in: round, holeNumber: previous.number)
+            goToHole(previous.number)
         }
     }
 
@@ -751,8 +730,7 @@ struct HolePlayView: View {
         // Save the hole with par, passing user location for optimal crop centering
         store.addHole(to: currentCourse, coordinate: coordinate, par: par, userLocation: locationManager.location?.coordinate)
 
-        // Navigate to the newly added hole
-        currentHoleIndex = currentCourse.holes.count - 1
+        // addHole points the round at the new hole.
 
         // Exit add mode
         isAddingHole = false
@@ -829,7 +807,7 @@ struct HolePlayView: View {
     /// playgroup. Async because we need to look up `currentOpenPlaygroup`
     /// before deciding; no-ops when not in one.
     private func startPlaygroupChannelIfNeeded(userId: String) {
-        let holeNumber = (activeRound?.currentHoleIndex ?? currentHoleIndex) + 1
+        let holeNumber = currentHoleNumber
         let roundId = activeRound?.id
         Task {
             do {
@@ -864,9 +842,9 @@ struct HolePlayView: View {
     /// between holes during a session doesn't refetch unnecessarily.
     func refreshBreadcrumb() {
         guard let round = activeRound, let hole = currentHole else { return }
-        // Force refresh for the *current* hole (may have new uploads),
-        // cache-first for any other hole (its data is settled).
-        let isCurrentHole = round.currentHoleIndex == currentHoleIndex
+        // Force refresh in play (the hole is live and may have new uploads),
+        // cache-first when reviewing a hole (its data is settled).
+        let isCurrentHole = reviewHoleNumber == nil
         RoundPathCache.shared.loadIfNeeded(
             roundId: round.id,
             holeNumber: hole.number,

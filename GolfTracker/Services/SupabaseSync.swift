@@ -203,7 +203,7 @@ final class SupabaseSync {
             "course_id": .string(round.courseId.uuidString),
             "course_name": .string(round.courseName),
             "date": .string(iso(round.date)),
-            "current_hole_index": .int(round.currentHoleIndex),
+            "current_hole_number": .int(round.currentHoleNumber),
             "completed_holes": .intArray(Array(round.completedHoles)),
             "hole_detection_enabled": round.holeDetectionEnabled.map(AnyCodableValue.bool) ?? .null,
             "location_test_mode_enabled": round.locationTestModeEnabled.map(AnyCodableValue.bool) ?? .null,
@@ -213,10 +213,26 @@ final class SupabaseSync {
             "updated_at": .string(iso(Date()))
         ]
         upsert(table: "rounds", values: body, onConflict: "id")
+    }
 
+    /// Every hole of the round. For a new round; a changed or added hole goes
+    /// through `upsertRoundHole` alone. `upsertRound` used to send all of them
+    /// on every call, so each stroke and hole change was 19 writes that could
+    /// land in any order.
+    func upsertRoundHoles(_ round: Round) {
         for hole in round.holes {
             upsertRoundHole(hole, roundId: round.id)
         }
+    }
+
+    /// Moving to another hole: the two columns that changed, not the round.
+    func updateCurrentHole(_ round: Round) {
+        var values: [String: AnyCodableValue] = [
+            "current_hole_number": .int(round.currentHoleNumber),
+            "updated_at": .string(iso(Date()))
+        ]
+        if let at = round.lastActivityAt { values["last_activity_at"] = .string(iso(at)) }
+        update(table: "rounds", values: values, filterColumn: "id", filterValue: round.id.uuidString)
     }
 
     func upsertRoundHole(_ hole: Hole, roundId: UUID) {
@@ -401,7 +417,7 @@ final class SupabaseSync {
     /// Queueable representation of a Postgrest mutation. Stored on disk between
     /// app launches so writes survive offline → relaunch transitions.
     private struct QueuedOperation: Codable {
-        enum Kind: String, Codable { case upsert, delete }
+        enum Kind: String, Codable { case upsert, delete, update }
         let kind: Kind
         let table: String
         // For upsert: JSON-encoded payload + onConflict column list
@@ -421,6 +437,20 @@ final class SupabaseSync {
             onConflict: onConflict,
             filterColumn: nil,
             filterValue: nil
+        )
+        attempt(op) { [weak self] ok in
+            if !ok { self?.enqueue(op) }
+        }
+    }
+
+    private func update(table: String, values: [String: AnyCodableValue], filterColumn: String, filterValue: String) {
+        let op = QueuedOperation(
+            kind: .update,
+            table: table,
+            payloadJSON: encodeValues(values),
+            onConflict: nil,
+            filterColumn: filterColumn,
+            filterValue: filterValue
         )
         attempt(op) { [weak self] ok in
             if !ok { self?.enqueue(op) }
@@ -460,6 +490,15 @@ final class SupabaseSync {
                         completion(false); return
                     }
                     try await supabase.from(op.table).delete().eq(col, value: val).execute()
+                    completion(true)
+                case .update:
+                    guard let body = op.payloadJSON,
+                          let json = try? JSONDecoder().decode(AnyJSON.self, from: body),
+                          let col = op.filterColumn, let val = op.filterValue else {
+                        completion(false); return
+                    }
+                    let q = try supabase.from(op.table).update(json)
+                    try await q.eq(col, value: val).execute()
                     completion(true)
                 }
             } catch {

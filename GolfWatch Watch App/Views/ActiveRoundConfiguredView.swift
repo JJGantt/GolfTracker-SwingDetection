@@ -30,7 +30,7 @@ struct ActiveRoundConfiguredView: View {
     let onViewDisappear: () -> Void
     let onLocationChange: () -> Void
     let onDistanceToHoleChange: (Int?) -> Void
-    let onCurrentHoleIndexChange: () -> Void
+    let onCurrentHoleNumberChange: () -> Void
     let onCurrentHoleChange: () -> Void
     let onShowingOptionsChange: (Bool) -> Void
     let onMinimalScreenModeChange: (Bool) -> Void
@@ -89,8 +89,8 @@ struct ActiveRoundConfiguredView: View {
             .onChange(of: distanceToHole) { _, newDistance in
                 onDistanceToHoleChange(newDistance)
             }
-            .onChange(of: store.currentHoleIndex) { _, _ in
-                onCurrentHoleIndexChange()
+            .onChange(of: store.currentRound?.currentHoleNumber) { _, _ in
+                onCurrentHoleNumberChange()
             }
             .onChange(of: store.currentHole) { _, _ in
                 onCurrentHoleChange()

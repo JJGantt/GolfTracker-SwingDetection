@@ -7,7 +7,7 @@ import WatchKit
 /// next hole when they've putted out and walked off the green.
 ///
 /// State model: a single ephemeral `currentHoleEnteredAt` timestamp. It
-/// resets to `Date()` on every `currentHoleIndex` change in any direction
+/// resets to `Date()` on every `currentHoleNumber` change in any direction
 /// (forward auto-advance, manual back-nav, manual forward-nav, fresh load).
 /// There is no per-hole memory beyond that — strokes themselves live in
 /// `round.strokes` and we filter by timestamp.
@@ -62,9 +62,9 @@ final class AutoAdvanceMonitor: ObservableObject {
 
     private var cancellables = Set<AnyCancellable>()
     /// Timestamp the user arrived at the current hole. Resets on every
-    /// hole-index change. The putt-gate filters strokes by `> this`.
+    /// hole change. The putt-gate filters strokes by `> this`.
     private var currentHoleEnteredAt: Date = Date()
-    private var lastSeenHoleIndex: Int?
+    private var lastSeenHoleNumber: Int?
     private var lastSeenRoundId: UUID?
 
     private init() {
@@ -90,26 +90,19 @@ final class AutoAdvanceMonitor: ObservableObject {
         let store = WatchDataStore.shared
         guard let round = store.currentRound else { return }
 
-        // SwiftData @Relationship arrays do NOT preserve order — sort by
-        // hole number explicitly. Without this, round.holes[idx] returns
-        // some random hole and we'd evaluate against the wrong green.
-        let sortedHoles = round.holes.sorted { $0.number < $1.number }
-        let idx = round.currentHoleIndex
-        guard idx >= 0, idx < sortedHoles.count else { return }
-        let currentHole = sortedHoles[idx]
-        let hasNextHole = idx + 1 < sortedHoles.count
-        let nextHole: Hole? = hasNextHole ? sortedHoles[idx + 1] : nil
+        guard let currentHole = round.currentHole else { return }
+        let nextHole = round.hole(after: currentHole.number)
         guard let currentGreenMarker = currentHole.coordinate else { return }
 
-        // Reset the arrival timestamp on any hole-index or round change.
+        // Reset the arrival timestamp on any hole or round change.
         // Single source of state — back-nav, forward-nav, new round, all
         // funnel through this one assignment. Prior putts are now "before
         // arrival" and won't satisfy the putt gate until the user putts
         // again from this visit.
-        if lastSeenRoundId != round.id || lastSeenHoleIndex != idx {
+        if lastSeenRoundId != round.id || lastSeenHoleNumber != currentHole.number {
             currentHoleEnteredAt = Date()
             lastSeenRoundId = round.id
-            lastSeenHoleIndex = idx
+            lastSeenHoleNumber = currentHole.number
         }
 
         // Putt-since-arrival flag. Filtered by timestamp so back-nav
