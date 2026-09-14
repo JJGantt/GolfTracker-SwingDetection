@@ -238,6 +238,27 @@ struct HoleMapView: View {
                 // the anchor as text widths varied). Mirrors watch.
                 if let round = currentRound {
                     let strokesForHole = round.strokes.filter { $0.holeNumber == hole.number }
+                    // Line through your own shots, matching the watch: each
+                    // non-putt stroke in order, ending at the first putt (the
+                    // putt count takes over on the green). The phone drew the
+                    // markers but no line between them — only other players'
+                    // shots were connected.
+                    let shotLine: [CLLocationCoordinate2D] = {
+                        let ordered = strokesForHole
+                            .filter { !$0.isPenalty }
+                            .sorted { $0.strokeNumber < $1.strokeNumber }
+                        func isPutt(_ s: Stroke) -> Bool {
+                            guard let club = DataStore.shared.availableClubs.first(where: { $0.id == s.clubId }) else { return false }
+                            return DataStore.shared.getTypeName(for: club) == "Putt"
+                        }
+                        var coords = ordered.filter { !isPutt($0) }.map(\.coordinate)
+                        if let firstPutt = ordered.first(where: isPutt) { coords.append(firstPutt.coordinate) }
+                        return coords
+                    }()
+                    if shotLine.count >= 2 {
+                        MapPolyline(coordinates: shotLine)
+                            .stroke(.white.opacity(0.9), lineWidth: 1.5)
+                    }
                     ForEach(Array(strokesForHole.enumerated()), id: \.element.id) { index, stroke in
                         Annotation("", coordinate: stroke.coordinate) {
                             ZStack {
@@ -264,7 +285,10 @@ struct HoleMapView: View {
                                         .fixedSize()
                                         .offset(x: -32)
                                 }
-                                ElevationDeltaLabel(coordinate: stroke.coordinate, fontSize: 14)
+                                ElevationDeltaLabel(fontSize: 14,
+                                                    shotFrom: stroke.coordinate,
+                                                    shotTo: index + 1 < strokesForHole.count
+                                                        ? strokesForHole[index + 1].coordinate : nil)
                                     .fixedSize()
                                     .offset(x: 32)
                             }

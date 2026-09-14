@@ -1,10 +1,15 @@
 import SwiftUI
 import CoreLocation
 
-/// Compact "↑3" / "↓7" label showing relative elevation in feet to a
-/// query point (positive = uphill = target is above you). Default mode
-/// tracks the active hole's flag. Pass `coordinate:` to show Δ to a
-/// specific point — used by target markers.
+/// Compact "↑3" / "↓7" label showing an elevation change in feet
+/// (positive = uphill). Three modes:
+/// - default: from you to the active hole's flag.
+/// - `coordinate:` from you to that point — target markers.
+/// - `shotFrom:` a shot's own rise or fall, from where it was hit to where the
+///   next shot was played (`shotTo:`), or to where you stand now for the latest
+///   shot. Stroke markers use this. They used to pass `coordinate:`, which
+///   labelled each shot with "that spot relative to you" — so the tee marker of
+///   an uphill drive read ↓ once you walked up to the ball.
 ///
 /// Rounded to the nearest foot. Sub-foot precision is noise from a
 /// barometric altimeter; showing decimals would imply more accuracy
@@ -30,6 +35,10 @@ struct ElevationDeltaLabel: View {
     /// updates because it observes `readout`).
     var coordinate: CLLocationCoordinate2D?
     var fontSize: CGFloat = 14
+    /// Shot mode: where the shot was hit. Takes precedence over `coordinate`.
+    var shotFrom: CLLocationCoordinate2D? = nil
+    /// Shot mode: where the next shot was played; nil = where the user is now.
+    var shotTo: CLLocationCoordinate2D? = nil
 
     var body: some View {
         if let meters = currentDeltaMeters {
@@ -55,6 +64,12 @@ struct ElevationDeltaLabel: View {
     static let noSolutionColor = Color.white.opacity(0.35)
 
     private var currentDeltaMeters: Double? {
+        if let shotFrom {
+            if let shotTo { return readout.deltaMeters(from: shotFrom, to: shotTo) }
+            // Latest shot: from where it was hit up to you. `deltaMeters(to:)`
+            // measures you → point, so flip it.
+            return readout.deltaMeters(to: shotFrom).map { -$0 }
+        }
         if let coordinate {
             return readout.deltaMeters(to: coordinate)
         }

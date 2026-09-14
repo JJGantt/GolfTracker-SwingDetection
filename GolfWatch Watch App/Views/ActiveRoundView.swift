@@ -1196,7 +1196,10 @@ struct ActiveRoundView: View {
                                         .fixedSize()
                                         .offset(x: -18)
                                 }
-                                ElevationDeltaLabel(coordinate: stroke.coordinate, fontSize: 10)
+                                ElevationDeltaLabel(fontSize: 10,
+                                                    shotFrom: stroke.coordinate,
+                                                    shotTo: index + 1 < strokesForHole.count
+                                                        ? strokesForHole[index + 1].coordinate : nil)
                                     .fixedSize()
                                     .offset(x: 18)
                             }
