@@ -1,5 +1,6 @@
 import Foundation
 import CoreLocation
+import CryptoKit
 import SwiftData
 
 // MARK: - Club Models
@@ -290,6 +291,64 @@ final class Hole {
         self.latitude = coordinate.latitude
         self.longitude = coordinate.longitude
     }
+
+    /// The id of hole `number` in round `roundId`, identical on every device:
+    /// SHA-256 of the pair with the UUID version and variant bits set. Two
+    /// devices that create or repair the same round hole write the same row,
+    /// rather than two rows fighting over `round_holes (round_id, number)`.
+    static func roundHoleId(roundId: UUID, number: Int) -> UUID {
+        var b = Array(SHA256.hash(data: Data("\(roundId.uuidString.lowercased())#\(number)".utf8)).prefix(16))
+        b[6] = (b[6] & 0x0F) | 0x50
+        b[8] = (b[8] & 0x3F) | 0x80
+        return UUID(uuid: (b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7],
+                           b[8], b[9], b[10], b[11], b[12], b[13], b[14], b[15]))
+    }
+
+    /// This hole's values as round `roundId`'s own hole.
+    func roundCopy(roundId: UUID, teeId: UUID? = nil) -> Hole {
+        Hole(id: Hole.roundHoleId(roundId: roundId, number: number),
+             number: number, coordinate: coordinate, par: par, teeId: teeId ?? self.teeId)
+    }
+}
+
+extension Array where Element == Hole {
+    /// One hole per number (the first seen), in number order. A course can
+    /// hold two holes for a number until `removeDuplicateCourseHoles` runs,
+    /// and two round copies of one number would share an id.
+    var oneByNumber: [Hole] {
+        var seen = Set<Int>()
+        return sorted { $0.number < $1.number }.filter { seen.insert($0.number).inserted }
+    }
+}
+
+extension ModelContext {
+    /// Rounds from before round holes were copied hold their course's `Hole`
+    /// instances. Give each such round its own copies (the values it was
+    /// sharing) and detach the course's holes, so no course hole belongs to a
+    /// round. Returns the rounds changed: their `round_holes` rows still carry
+    /// the old ids and are rewritten by `SupabaseSync.rewritePendingRoundHoles`.
+    func separateRoundHolesFromCourseHoles() -> [UUID] {
+        let shared = (try? fetch(FetchDescriptor<Hole>(predicate: #Predicate { $0.course != nil && $0.round != nil }))) ?? []
+        guard !shared.isEmpty else { return [] }
+        var byRound: [UUID: (round: Round, holes: [Hole])] = [:]
+        for hole in shared {
+            guard let round = hole.round else { continue }
+            byRound[round.id, default: (round, [])].holes.append(hole)
+        }
+        for entry in byRound.values {
+            let round = entry.round
+            for hole in entry.holes { hole.round = nil }
+            var owned = Set(round.holes.map(\.number))
+            for hole in entry.holes.oneByNumber where owned.insert(hole.number).inserted {
+                let id = Hole.roundHoleId(roundId: round.id, number: hole.number)
+                let copy = (try? fetch(FetchDescriptor<Hole>(predicate: #Predicate { $0.id == id })))?.first
+                    ?? hole.roundCopy(roundId: round.id)
+                if !round.holes.contains(where: { $0.id == copy.id }) { round.holes.append(copy) }
+            }
+        }
+        try? save()
+        return Array(byRound.keys)
+    }
 }
 
 @Model
@@ -378,12 +437,13 @@ final class Round {
     var courseName: String
     var date: Date
     @Relationship(deleteRule: .cascade, inverse: \Stroke.round) var strokes: [Stroke]
-    /// The round's holes — intentionally the SAME Hole instances the parent
-    /// course owns (rounds inherit pars/locations from the course; course
-    /// edits are corrections, greens don't physically move). Delete rule is
-    /// nullify, NOT cascade: deleting a round must never delete the course's
-    /// holes out from under it.
-    @Relationship(deleteRule: .nullify, inverse: \Hole.round) var holes: [Hole]
+    /// The round's own holes, mirroring its `round_holes` rows: copies of the
+    /// course's holes (`Hole.roundCopy`), never the course's instances. A
+    /// `Hole` belongs to at most one round, so handing a round the course's
+    /// holes made the next round at that course crash on insert. Stores that
+    /// still share are split at launch (`separateRoundHolesFromCourseHoles`),
+    /// which is what makes cascade safe here.
+    @Relationship(deleteRule: .cascade, inverse: \Hole.round) var holes: [Hole]
     /// Stored as [Int] (SwiftData support for Set<Int> is flaky); exposed as
     /// Set<Int> via `completedHoles` computed property below.
     var completedHolesArray: [Int]

@@ -293,6 +293,32 @@ class DataStore: ObservableObject {
                 osmId: row.osm_id,
                 externalCourseId: row.external_course_id
             )
+            // The course's hole rows too, under their server ids. A course
+            // brought in without them gets holes built locally with new ids,
+            // and the server's then arrive as a second set.
+            struct HoleRow: Decodable {
+                let id: UUID
+                let number: Int
+                let latitude: Double?
+                let longitude: Double?
+                let par: Int?
+            }
+            let holeRows: [HoleRow] = try await SupabaseManager.shared
+                .from("holes")
+                .select("id,number,latitude,longitude,par")
+                .eq("course_id", value: courseId.uuidString)
+                .execute()
+                .value
+            course.holes = holeRows.map { r in
+                let id = r.id
+                let hole = (try? context.fetch(FetchDescriptor<Hole>(predicate: #Predicate { $0.id == id })))?.first
+                    ?? Hole(id: r.id, number: r.number)
+                hole.number = r.number
+                hole.latitude = r.latitude
+                hole.longitude = r.longitude
+                hole.par = r.par
+                return hole
+            }
             context.insert(course)
             try? context.save()
             ClientEventLogger.log("blob.request.fetchCourse.inserted", detail: [
@@ -503,7 +529,15 @@ class DataStore: ObservableObject {
     /// Called by GolfTrackerApp at startup to wire SwiftData persistence.
     func configure(container: ModelContainer) {
         self.modelContainer = container
-        self.sharedContext = ModelContext(container)
+        let context = ModelContext(container)
+        self.sharedContext = context
+        // Before anything can start a round: split rounds off the course
+        // holes they may still share, then bring the server's rows in line.
+        SupabaseSync.shared.markRoundHolesForRewrite(context.separateRoundHolesFromCourseHoles())
+        Task { @MainActor in
+            await SupabaseSync.shared.rewritePendingRoundHoles(context: context)
+            await RealtimeSync.shared.removeDuplicateCourseHoles()
+        }
         loadCourses()
         loadRounds()
         loadClubTypes()
@@ -881,27 +915,38 @@ class DataStore: ObservableObject {
         updateActiveRoundHoles(for: course)
     }
 
+    /// Carries course hole edits into the round in progress at that course,
+    /// matched by hole number. The round has its own `Hole`s, never the
+    /// course's, so this copies values and adds or removes the round's holes
+    /// to match. Finished rounds keep the holes they were played with.
     private func updateActiveRoundHoles(for course: Course) {
-        // Find the most recent active round for this course
-        guard let roundIndex = rounds.firstIndex(where: { round in
-            round.courseId == course.id && round.date == rounds.max(by: { $0.date < $1.date })?.date
-        }) else { return }
+        guard let round = rounds.filter({ $0.courseId == course.id && $0.endedAt == nil })
+                .max(by: { $0.date < $1.date }),
+              let courseHoles = courses.first(where: { $0.id == course.id })?.holes.oneByNumber else { return }
 
-        // Update the round's holes with the latest from the course
-        if let courseIndex = courses.firstIndex(where: { $0.id == course.id }) {
-            let oldHoleCount = rounds[roundIndex].holes.count
-            rounds[roundIndex].holes = courses[courseIndex].holes
-
-            // If a new hole was added, update the current hole index to point to it
-            if courses[courseIndex].holes.count > oldHoleCount {
-                rounds[roundIndex].currentHoleIndex = courses[courseIndex].holes.count - 1
-                dprint("📱 [DataStore] New hole added, updated currentHoleIndex to \(rounds[roundIndex].currentHoleIndex)")
+        let oldHoleCount = round.holes.count
+        var unmatched = Dictionary(round.holes.map { ($0.number, $0) }, uniquingKeysWith: { first, _ in first })
+        for courseHole in courseHoles {
+            if let roundHole = unmatched.removeValue(forKey: courseHole.number) {
+                roundHole.latitude = courseHole.latitude
+                roundHole.longitude = courseHole.longitude
+                roundHole.par = courseHole.par
+            } else {
+                round.holes.append(courseHole.roundCopy(roundId: round.id, teeId: round.selectedTeeId))
             }
-
-            saveRounds()
-
-            SupabaseSync.shared.upsertRound(rounds[roundIndex])
         }
+        for extra in unmatched.values {
+            round.holes.removeAll { $0.id == extra.id }
+            context?.delete(extra)
+            SupabaseSync.shared.deleteRoundHole(id: extra.id)
+        }
+
+        // If a new hole was added, point the round at it
+        if round.holes.count > oldHoleCount {
+            round.currentHoleIndex = round.holes.count - 1
+        }
+        saveRounds()
+        SupabaseSync.shared.upsertRound(round)
     }
 
     func deleteHole(_ hole: Hole, from course: Course) {
@@ -964,19 +1009,25 @@ class DataStore: ObservableObject {
     func startRound(
         for course: Course,
         runHoleDetection: Bool = true,
-        useHoleDetectionTestCoordinates: Bool = false
+        useHoleDetectionTestCoordinates: Bool = false,
+        selectedTeeId: UUID? = nil
     ) -> Round {
         dprint("📱 [DataStore] startRound called for course: \(course.name)")
         // Auto-end any prior in-progress round — starting a new round
         // implies the old one is finished, regardless of whether the user
         // hit End Round. Avoids stale "ongoing" rounds piling up.
         endAnyOngoingRound(reason: "new round starting")
+        // The round gets its own copies of the course's holes, as on the watch
+        // and in `round_holes` (see `Round.holes`).
+        let roundId = UUID()
         let round = Round(
+            id: roundId,
             courseId: course.id,
             courseName: course.name,
-            holes: course.holes,
+            holes: course.holes.oneByNumber.map { $0.roundCopy(roundId: roundId, teeId: selectedTeeId) },
             holeDetectionEnabled: runHoleDetection,
-            locationTestModeEnabled: useHoleDetectionTestCoordinates
+            locationTestModeEnabled: useHoleDetectionTestCoordinates,
+            selectedTeeId: selectedTeeId
         )
         rounds.append(round)
         saveRounds()
@@ -1177,44 +1228,58 @@ class DataStore: ObservableObject {
     }
 
     private func startRound(from resolution: RoundResolver.Resolution, selectedTeeId: UUID?) {
-        let course: Course
-        if let existing = courses.first(where: { $0.id == resolution.courseId }) {
-            course = existing
-            if let osm = resolution.osmData, let encoded = try? JSONEncoder().encode(osm) {
-                course.osmPolygons = encoded
-                try? context?.save()
-            }
-        } else {
-            let osmEncoded = resolution.osmData.flatMap { try? JSONEncoder().encode($0) }
-            let newCourse = Course(
-                id: resolution.courseId,
-                name: resolution.courseName,
-                centerLat: resolution.courseCoordinate.latitude,
-                centerLon: resolution.courseCoordinate.longitude,
-                osmPolygons: osmEncoded
-            )
-            if resolution.tier == .full, let osm = resolution.osmData {
-                newCourse.holes = osm.holes
-                    .compactMap { h -> Hole? in
-                        guard let ref = h.ref, let n = Int(ref) else { return nil }
-                        return Hole(
-                            number: n,
-                            coordinate: CLLocationCoordinate2D(
-                                latitude: h.greenPoint.latitude,
-                                longitude: h.greenPoint.longitude
-                            ),
-                            par: h.par,
-                            teeId: selectedTeeId
-                        )
-                    }
-                    .sorted { $0.number < $1.number }
-            }
-            courses.append(newCourse)
-            saveCourses()
-            SupabaseSync.shared.upsertCourse(newCourse)
-            course = newCourse
+        Task { @MainActor in
+            let course = await self.courseForRound(resolution)
+            _ = self.startRound(for: course, runHoleDetection: resolution.tier != .full, selectedTeeId: selectedTeeId)
         }
-        _ = startRound(for: course, runHoleDetection: resolution.tier != .full)
+    }
+
+    /// The course a resolved round starts on: the local one, else the server's
+    /// (with its hole rows), else a new one built from the resolution. Building
+    /// a new local copy of a course the server already had gave every hole a
+    /// second id: `holes` is unique on (course_id, number), so the server kept
+    /// its own rows, and they arrived later as more holes.
+    private func courseForRound(_ resolution: RoundResolver.Resolution) async -> Course {
+        let osmEncoded = resolution.osmData.flatMap { try? JSONEncoder().encode($0) }
+        var found = courses.first(where: { $0.id == resolution.courseId })
+        if found == nil {
+            found = await fetchAndInsertCourse(by: resolution.courseId)
+        }
+        let isNew = found == nil
+        let course = found ?? Course(
+            id: resolution.courseId,
+            name: resolution.courseName,
+            centerLat: resolution.courseCoordinate.latitude,
+            centerLon: resolution.courseCoordinate.longitude,
+            osmPolygons: osmEncoded
+        )
+        if let osmEncoded { course.osmPolygons = osmEncoded }
+        if course.holes.isEmpty, resolution.tier == .full, let osm = resolution.osmData {
+            course.holes = osm.holes
+                .compactMap { h -> Hole? in
+                    guard let ref = h.ref, let n = Int(ref) else { return nil }
+                    return Hole(
+                        number: n,
+                        coordinate: CLLocationCoordinate2D(
+                            latitude: h.greenPoint.latitude,
+                            longitude: h.greenPoint.longitude
+                        ),
+                        par: h.par
+                    )
+                }
+                .sorted { $0.number < $1.number }
+            if !isNew {
+                for hole in course.holes { SupabaseSync.shared.upsertHole(hole, courseId: course.id) }
+            }
+        }
+        if isNew {
+            courses.append(course)
+        }
+        saveCourses()
+        if isNew {
+            SupabaseSync.shared.upsertCourse(course)
+        }
+        return course
     }
 
     /// Answer the name-this-course prompt. Nil or blank cancels the round.
@@ -1513,8 +1578,8 @@ class DataStore: ObservableObject {
         // on the next launch — the round only really disappeared when the
         // Supabase delete echoed back through Realtime's `applyRound(.delete)`,
         // so deleting offline (or missing the event) resurrected it.
-        // Cascade takes strokes and targets; `Round.holes` is .nullify, so the
-        // course keeps its holes.
+        // Cascade takes the round's strokes, targets and holes; the holes are
+        // the round's own copies, never the course's.
         if let context = context {
             context.delete(round)
         }

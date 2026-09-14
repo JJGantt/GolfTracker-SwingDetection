@@ -1,6 +1,7 @@
 import Foundation
 import CoreLocation
 import Supabase
+import SwiftData
 
 /// Mirrors every local mutation to Supabase via the supabase-swift SDK.
 /// Fire-and-forget from the caller's perspective; failed requests are queued
@@ -229,6 +230,98 @@ final class SupabaseSync {
             "tee_id": hole.teeId.map { .string($0.uuidString) } ?? .null
         ]
         upsert(table: "round_holes", values: body, onConflict: "id")
+    }
+
+    func deleteRoundHole(id: UUID) {
+        delete(table: "round_holes", filterColumn: "id", filterValue: id.uuidString)
+    }
+
+    // MARK: - Round hole repair
+
+    private static let pendingRewriteKey = "roundHolesPendingRewrite"
+
+    /// Rounds whose `round_holes` rows must be rewritten to match their local
+    /// holes (`ModelContext.separateRoundHolesFromCourseHoles`). Kept until
+    /// the rewrite lands, so a launch without a connection retries next time.
+    func markRoundHolesForRewrite(_ roundIds: [UUID]) {
+        guard !roundIds.isEmpty else { return }
+        let current = Set(UserDefaults.standard.stringArray(forKey: Self.pendingRewriteKey) ?? [])
+        UserDefaults.standard.set(Array(current.union(roundIds.map(\.uuidString))), forKey: Self.pendingRewriteKey)
+    }
+
+    private func finishRoundHoleRewrite(_ roundId: String) {
+        let current = UserDefaults.standard.stringArray(forKey: Self.pendingRewriteKey) ?? []
+        UserDefaults.standard.set(current.filter { $0 != roundId }, forKey: Self.pendingRewriteKey)
+    }
+
+    private struct RoundHoleRow: Encodable {
+        let id: String
+        let round_id: String
+        let number: Int
+        let latitude: Double?
+        let longitude: Double?
+        let par: Int?
+        let tee_id: String?
+
+        // Nulls written out: every row in one upsert must carry the same keys.
+        func encode(to encoder: Encoder) throws {
+            var c = encoder.container(keyedBy: CodingKeys.self)
+            try c.encode(id, forKey: .id)
+            try c.encode(round_id, forKey: .round_id)
+            try c.encode(number, forKey: .number)
+            try c.encode(latitude, forKey: .latitude)
+            try c.encode(longitude, forKey: .longitude)
+            try c.encode(par, forKey: .par)
+            try c.encode(tee_id, forKey: .tee_id)
+        }
+        enum CodingKeys: String, CodingKey { case id, round_id, number, latitude, longitude, par, tee_id }
+    }
+
+    /// For each pending round, make its `round_holes` rows exactly its local
+    /// holes: delete the rows whose ids aren't local, then upsert the local
+    /// ones. Delete first because `(round_id, number)` is unique and the
+    /// copies carry new ids. Every device computes the same ids
+    /// (`Hole.roundHoleId`), so two devices doing this land on the same rows.
+    @MainActor
+    func rewritePendingRoundHoles(context: ModelContext) async {
+        let pending = UserDefaults.standard.stringArray(forKey: Self.pendingRewriteKey) ?? []
+        guard !pending.isEmpty, currentUserId != nil else { return }
+        struct IdRow: Decodable { let id: String }
+        for idString in pending {
+            guard let roundId = UUID(uuidString: idString),
+                  let round = (try? context.fetch(FetchDescriptor<Round>(predicate: #Predicate { $0.id == roundId })))?.first else {
+                finishRoundHoleRewrite(idString)
+                continue
+            }
+            let rows = round.holes.map {
+                RoundHoleRow(id: $0.id.uuidString, round_id: idString, number: $0.number,
+                             latitude: $0.latitude, longitude: $0.longitude, par: $0.par,
+                             tee_id: $0.teeId?.uuidString)
+            }
+            do {
+                let exists: [IdRow] = try await supabase.from("rounds").select("id").eq("id", value: idString).execute().value
+                if exists.isEmpty {
+                    finishRoundHoleRewrite(idString)
+                    continue
+                }
+                var stale = supabase.from("round_holes").delete().eq("round_id", value: idString)
+                if !rows.isEmpty {
+                    stale = stale.not("id", operator: .in, value: "(" + rows.map(\.id).joined(separator: ",") + ")")
+                }
+                try await stale.execute()
+                if !rows.isEmpty {
+                    try await supabase.from("round_holes").upsert(rows, onConflict: "id").execute()
+                }
+                finishRoundHoleRewrite(idString)
+                ClientEventLogger.log("roundHoles.rewritten", detail: [
+                    "roundId": .string(idString), "holes": .integer(rows.count)
+                ])
+            } catch {
+                ClientEventLogger.log("roundHoles.rewrite.failed", detail: [
+                    "roundId": .string(idString), "error": .string("\(error)")
+                ])
+            }
+        }
     }
 
     func upsertStroke(_ stroke: Stroke, roundId: UUID) {

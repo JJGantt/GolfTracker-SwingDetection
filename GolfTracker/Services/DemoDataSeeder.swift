@@ -137,10 +137,12 @@ enum DemoDataSeeder {
             .addingTimeInterval(TimeInterval(Int.random(in: 8...16, using: &rng)) * 3600)
             ?? Date()
 
+        let roundId = UUID()
         var round = Round(
+            id: roundId,
             courseId: course.id,
             courseName: course.name,
-            holes: course.holes,
+            holes: course.holes.oneByNumber.map { $0.roundCopy(roundId: roundId) },
             holeDetectionEnabled: false,
             locationTestModeEnabled: false
         )

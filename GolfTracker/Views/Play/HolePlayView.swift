@@ -84,7 +84,9 @@ struct HolePlayView: View {
     /// through this sorted view so `currentHoleIndex` means the same thing
     /// here as on the watch (which sorts in `WatchDataStore.currentHole`).
     var holesSorted: [Hole] {
-        currentCourse.holes.sorted { $0.number < $1.number }
+        // The round's own holes, as the watch reads them; the course's only
+        // before a round exists.
+        (activeRound?.holes ?? currentCourse.holes).sorted { $0.number < $1.number }
     }
 
     var currentHole: Hole? {
@@ -781,47 +783,46 @@ struct HolePlayView: View {
         // owned by TestModeService — round lifecycle doesn't toggle it.
     }
 
+    /// Aims the map from the hole's tee to the pin: the watch's default
+    /// framing (`ActiveRoundView.updateMapPosition`). It stays put for the
+    /// hole rather than following the user, so the shots already hit, their
+    /// distances and the trail stay on screen; framing from the user put all
+    /// of them below the bottom edge.
     func updateMapPosition() {
         guard let hole = currentHole,
               let holeCoord = hole.coordinate else { return }
 
-        if let userLocation = locationManager.location {
-            let userCoord = userLocation.coordinate
-            let holeLocation = CLLocation(latitude: holeCoord.latitude, longitude: holeCoord.longitude)
-
-            // ALWAYS show user-to-hole view (user at bottom, hole at top)
-            let startCoord = userCoord
-
-            // Calculate bearing and distance from user to hole
-            let bearing = MapCalculations.calculateBearing(from: startCoord, to: holeCoord)
-            let startLocation = CLLocation(latitude: startCoord.latitude, longitude: startCoord.longitude)
-            let distance = max(startLocation.distance(from: holeLocation), 40.0)
-
-            // Calculate span based on distance
-            let spanInMeters = max(distance * 1.8, 40.0) // Minimum 40 meters view
-
-            // Center point exactly between user and hole
-            let centerLat = (holeCoord.latitude + startCoord.latitude) / 2.0
-            let centerLon = (holeCoord.longitude + startCoord.longitude) / 2.0
-            let center = CLLocationCoordinate2D(latitude: centerLat, longitude: centerLon)
-
-            // Create camera with rotation so hole is always at top
-            // Increased distance to zoom out more, giving space above hole for yardage display
-            let camera = MapCamera(
-                centerCoordinate: center,
-                distance: spanInMeters * 2.2, // Zoom out more for extra space at top
-                heading: bearing, // Rotate map so bearing points up
-                pitch: 0
-            )
-
-            position = .camera(camera)
-        } else {
-            // No user location - just center on the hole
+        guard let startCoord = teeCoordinate(for: hole)
+                ?? strokesForCurrentHole.min(by: { $0.strokeNumber < $1.strokeNumber })?.coordinate
+                ?? locationManager.location?.coordinate else {
             position = .region(MKCoordinateRegion(
                 center: holeCoord,
                 span: MKCoordinateSpan(latitudeDelta: 0.0005, longitudeDelta: 0.0005)
             ))
+            return
         }
+
+        let bearing = MapCalculations.calculateBearing(from: startCoord, to: holeCoord)
+        let distance = max(
+            CLLocation(latitude: startCoord.latitude, longitude: startCoord.longitude)
+                .distance(from: CLLocation(latitude: holeCoord.latitude, longitude: holeCoord.longitude)),
+            40.0
+        )
+        let center = CLLocationCoordinate2D(
+            latitude: (holeCoord.latitude + startCoord.latitude) / 2.0,
+            longitude: (holeCoord.longitude + startCoord.longitude) / 2.0
+        )
+        // 4.4x the tee-to-pin distance keeps the tee's shot marker and its
+        // yardage clear of the hole panel at the bottom, and the pin clear of
+        // the yardage header at the top.
+        position = .camera(MapCamera(centerCoordinate: center, distance: distance * 4.4, heading: bearing, pitch: 0))
+    }
+
+    /// The tee end of the course map's centerline for this hole, as the watch
+    /// uses it. Full-tier coverage only: partial-tier refs can be mismapped.
+    private func teeCoordinate(for hole: Hole) -> CLLocationCoordinate2D? {
+        guard let osm = store.osmCourseData(forCourseId: currentCourse.id), osm.tier == .full else { return nil }
+        return osm.holes.first { Int($0.ref ?? "") == hole.number }?.centerline.first?.coordinate
     }
 
     /// Spin up the playgroup Realtime channel if the user is in an open

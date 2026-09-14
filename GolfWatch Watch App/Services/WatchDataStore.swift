@@ -523,7 +523,16 @@ class WatchDataStore: ObservableObject {
     /// Called from GolfWatchApp at startup.
     func configure(container: ModelContainer) {
         self.modelContainer = container
-        self.sharedContext = ModelContext(container)
+        let context = ModelContext(container)
+        self.sharedContext = context
+        // Split rounds off course holes they may still share (the watch picks
+        // them up from phone-started rounds whose `round_holes` ids were the
+        // course's), then bring the server's rows in line.
+        SupabaseSync.shared.markRoundHolesForRewrite(context.separateRoundHolesFromCourseHoles())
+        Task { @MainActor in
+            await SupabaseSync.shared.rewritePendingRoundHoles(context: context)
+            await RealtimeSync.shared.removeDuplicateCourseHoles()
+        }
         // Prime the clubs cache from whatever SwiftData has on disk; the
         // hydrate path will refresh it again once Supabase responds.
         refreshClubsCache()

@@ -567,10 +567,9 @@ final class RealtimeSync {
         if kind == .delete {
             guard let existing else { return }
             if fromRoundHoles, existing.course != nil {
-                // Rounds share the course's Hole instances. A deleted round
-                // cascades its round_holes rows server-side — that must
-                // detach the hole from the round, never delete the course's
-                // hole out from under it.
+                // A `round_holes` row carrying a course hole's id is left
+                // from when rounds shared the course's holes. Deleting it
+                // must never delete the course's hole.
                 existing.round = nil
                 existing.roundIdRef = nil
             } else {
@@ -584,9 +583,19 @@ final class RealtimeSync {
         let par = record["par"]?.intValue
         let teeId = record["tee_id"]?.stringValue.flatMap(UUID.init(uuidString:))
         let roundId = record["round_id"]?.stringValue.flatMap(UUID.init(uuidString:))
+        // Round holes and course holes are separate objects with separate ids
+        // (see `Round.holes`). A row whose id belongs to the other kind is a
+        // leftover from when they were shared; applying it would attach a
+        // course's hole to a round again.
+        if let existing, fromRoundHoles ? existing.course != nil : (existing.round != nil && existing.course == nil) {
+            return
+        }
         if let existing = existing {
             existing.number = number; existing.latitude = lat; existing.longitude = lon; existing.par = par
             existing.teeId = teeId
+            if !fromRoundHoles, let course = existing.course {
+                dropOtherCourseHoles(in: course, number: number, keeping: existing.id, context: context)
+            }
             // Update parent ref + repair link if the row landed orphaned earlier.
             if let roundId = roundId {
                 existing.roundIdRef = roundId
@@ -614,9 +623,46 @@ final class RealtimeSync {
                 let cd = FetchDescriptor<Course>(predicate: #Predicate { $0.id == courseId })
                 if let course = (try? context.fetch(cd))?.first {
                     course.holes.append(h)
+                    dropOtherCourseHoles(in: course, number: number, keeping: h.id, context: context)
                 }
             }
         }
+    }
+
+    /// `holes` is unique on (course_id, number), so the server's row for a
+    /// number replaces any other local course hole with that number. Course
+    /// holes never belong to a round, so nothing else references it.
+    private func dropOtherCourseHoles(in course: Course, number: Int, keeping id: UUID, context: ModelContext) {
+        for other in course.holes.filter({ $0.number == number && $0.id != id }) {
+            course.holes.removeAll { $0.id == other.id }
+            context.delete(other)
+        }
+    }
+
+    /// Repairs a course left with two local holes for one number (the phone
+    /// built its own copy of a course the server already had): keeps the
+    /// server's. Runs at launch; only courses with a repeated number are
+    /// fetched.
+    func removeDuplicateCourseHoles() async {
+        guard let context = context else { return }
+        let courses = (try? context.fetch(FetchDescriptor<Course>())) ?? []
+        for course in courses where Set(course.holes.map(\.number)).count < course.holes.count {
+            let courseId = course.id.uuidString
+            guard let rows = try? await pagedSelect("holes", columns: "id", { $0.eq("course_id", value: courseId) }) else { continue }
+            let serverIds = Set(rows.compactMap { $0.objectValue?["id"]?.stringValue.flatMap(UUID.init(uuidString:)) })
+            let local = course.holes.filter { hole in
+                !serverIds.contains(hole.id)
+                    && course.holes.contains { $0.number == hole.number && serverIds.contains($0.id) }
+            }
+            for hole in local {
+                course.holes.removeAll { $0.id == hole.id }
+                context.delete(hole)
+            }
+            ClientEventLogger.log("courseHoles.deduplicated", detail: [
+                "courseId": .string(courseId), "removed": .integer(local.count)
+            ])
+        }
+        try? context.save()
     }
 
     private func applyStroke(context: ModelContext, kind: ChangeKind, id: UUID, record: [String: AnyJSON]) {
