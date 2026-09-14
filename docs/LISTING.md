@@ -126,5 +126,7 @@ Sign in with Apple. Your rounds follow you across devices. Delete everything fro
 **Screenshots — the only remaining blocker.** Required: 6.9" iPhone (1320x2868), 6.5"
 iPhone (1242x2688), Apple Watch. Minimum 3 per size.
 
-Capture from Jared's device, not a fresh install: elevation and the ghost overlay only
-render on courses with existing history, so a clean install shows neither.
+Captured from the simulators with staged rounds; the method and its traps are in
+`docs/V1_PUNCHLIST.md` (A2). Elevation and the ghost overlay only render on courses with
+existing history, so a staged round on a course without height cells (Disney's Palm)
+shows a dash where the elevation readout goes.
