@@ -66,6 +66,22 @@ class WatchConnectivityManager: NSObject, ObservableObject {
     private var pendingHoleDetectionData: CourseHoleDetectionData?
     private var pendingHoleFilterSettings: HoleDetectionFilterSettings?
 
+    /// Application-context entries not yet written. `updateApplicationContext`
+    /// throws until the session is activated, and the phone pushes its login
+    /// from `AuthManager.init` — before activation completes — so a write that
+    /// is not held here is simply lost and the watch sits at "Sign in on
+    /// iPhone" with a signed-in phone. Entries also stay here after a failed
+    /// write (watch app not installed yet) and go out with the next one.
+    /// Keyed, so it holds at most one value per context key.
+    private var pendingContextEntries: [String: Any] = [:]
+    /// Serializes context writes: the activation flush runs on the WC delegate
+    /// queue, most other writers on main.
+    private let contextLock = NSLock()
+
+    #if os(iOS)
+    private static let lastHoleDetectionRequestKey = "lastHandledHoleDetectionRequestAt"
+    #endif
+
     private override init() {
         super.init()
         if WCSession.isSupported() {
@@ -148,13 +164,20 @@ class WatchConnectivityManager: NSObject, ObservableObject {
 
     // MARK: - Background context updates
 
+    /// Every entry passes through `pendingContextEntries`, so a write before
+    /// activation is held rather than dropped, and the first write after it
+    /// (the activation flush, or anything later) carries everything held.
     private func mergeIntoApplicationContext(_ newEntries: [String: Any]) {
+        contextLock.lock()
+        defer { contextLock.unlock() }
+        pendingContextEntries.merge(newEntries) { _, new in new }
+        guard WCSession.default.activationState == .activated,
+              !pendingContextEntries.isEmpty else { return }
         var context = WCSession.default.applicationContext
-        for (key, value) in newEntries {
-            context[key] = value
-        }
+        context.merge(pendingContextEntries) { _, new in new }
         do {
             try WCSession.default.updateApplicationContext(context)
+            pendingContextEntries = [:]
         } catch {
             dprint("📱 Failed to update application context: \(error)")
         }
@@ -275,22 +298,23 @@ class WatchConnectivityManager: NSObject, ObservableObject {
             onUndeliverable()
             return
         }
-        let payload: [String: Any] = [
-            "type": "holeDetectionRequest",
-            "courseId": courseId.uuidString
-        ]
-        // `at` makes each request a distinct context: an identical dictionary
-        // is not redelivered, so a re-request for the same course would
-        // otherwise never arrive.
-        mergeIntoApplicationContext(["holeDetectionRequest": [
+        // `at` identifies the request. It makes each one a distinct context (an
+        // identical dictionary is not redelivered, so a re-request for the same
+        // course would otherwise never arrive), and it is how the phone tells
+        // a new request from this one arriving again: the live message and the
+        // context both deliver it, and the context is re-read at every launch.
+        let request: [String: Any] = [
             "courseId": courseId.uuidString,
             "at": Date().timeIntervalSince1970
-        ]])
+        ]
+        mergeIntoApplicationContext(["holeDetectionRequest": request])
         guard WCSession.default.isReachable else {
             onUndeliverable()
             return
         }
-        WCSession.default.sendMessage(payload, replyHandler: nil) { _ in onUndeliverable() }
+        var message = request
+        message["type"] = "holeDetectionRequest"
+        WCSession.default.sendMessage(message, replyHandler: nil) { _ in onUndeliverable() }
     }
 
     /// iPhone → Watch progress on a watch-requested blob analysis. Sent both
@@ -310,6 +334,24 @@ class WatchConnectivityManager: NSObject, ObservableObject {
             WCSession.default.sendMessage(message, replyHandler: nil) { _ in }
         }
     }
+
+    #if os(iOS)
+    /// Runs a watch request once. Without the `at` check the phone re-ran the
+    /// last requested course's analysis every time the watch's context was
+    /// re-delivered, which happens on every watch launch.
+    private func handleHoleDetectionRequest(_ payload: [String: Any]) {
+        guard let idString = payload["courseId"] as? String,
+              let courseId = UUID(uuidString: idString) else { return }
+        let at = payload["at"] as? Double
+        DispatchQueue.main.async {
+            if let at {
+                guard at != UserDefaults.standard.double(forKey: Self.lastHoleDetectionRequestKey) else { return }
+                UserDefaults.standard.set(at, forKey: Self.lastHoleDetectionRequestKey)
+            }
+            self.onReceiveHoleDetectionRequest?(courseId)
+        }
+    }
+    #endif
 
     private func handleHoleDetectionStatus(_ payload: [String: Any]) {
         guard let idString = payload["courseId"] as? String,
@@ -399,12 +441,8 @@ extension WatchConnectivityManager: WCSessionDelegate {
         // analyzer for the named course and ships results back through
         // the existing sendHoleDetectionData flow.
         #if os(iOS)
-        if let type = message["type"] as? String, type == "holeDetectionRequest",
-           let courseIdString = message["courseId"] as? String,
-           let courseId = UUID(uuidString: courseIdString) {
-            DispatchQueue.main.async {
-                self.onReceiveHoleDetectionRequest?(courseId)
-            }
+        if let type = message["type"] as? String, type == "holeDetectionRequest" {
+            handleHoleDetectionRequest(message)
             return
         }
         #endif
@@ -440,13 +478,7 @@ extension WatchConnectivityManager: WCSessionDelegate {
         // watch's auto-recovery flow when a Supabase call returned 401.
         if let type = message["type"] as? String, type == "authSession",
            let data = message["data"] as? Data {
-            DispatchQueue.main.async {
-                if data.isEmpty {
-                    WatchAuthSession.shared.apply(nil)
-                } else if let session = try? JSONDecoder().decode(AuthSession.self, from: data) {
-                    WatchAuthSession.shared.apply(session)
-                }
-            }
+            receiveAuthSessionData(data)
             return
         }
         #endif
@@ -467,6 +499,20 @@ extension WatchConnectivityManager: WCSessionDelegate {
     // MARK: Receiving Application Context (Background)
 
     func session(_ session: WCSession, didReceiveApplicationContext applicationContext: [String : Any]) {
+        handleApplicationContext(applicationContext)
+    }
+
+    /// Applies a context from the other device. Runs for every delivered
+    /// context and once more at activation on `receivedApplicationContext`,
+    /// since a context that arrived while this app was closed does not
+    /// reliably fire the delegate. A context always holds EVERY key the sender
+    /// has ever set, so each one arrives many times: every key's handler must
+    /// be safe to repeat, and the three that are not (the watch's auth
+    /// session, the phone's blob request, the watch's dev params) check
+    /// whether their value is new.
+    private func handleApplicationContext(_ applicationContext: [String: Any]) {
+        guard !applicationContext.isEmpty else { return }
+
         // Hole detection data
         if let data = applicationContext["holeDetectionData"] as? Data,
            let detectionData = try? JSONDecoder().decode(CourseHoleDetectionData.self, from: data) {
@@ -483,11 +529,7 @@ extension WatchConnectivityManager: WCSessionDelegate {
         // Empty Data == explicit sign-out sentinel; absent key == no change.
         #if os(watchOS)
         if let data = applicationContext["authSession"] as? Data {
-            if data.isEmpty {
-                WatchAuthSession.shared.apply(nil)
-            } else if let session = try? JSONDecoder().decode(AuthSession.self, from: data) {
-                WatchAuthSession.shared.apply(session)
-            }
+            receiveAuthSessionData(data)
         }
 
         // Test mode state mirrored from iPhone. Fires on app launch with
@@ -514,12 +556,8 @@ extension WatchConnectivityManager: WCSessionDelegate {
         // delivered when watch wasn't reachable at the time of the original
         // sendMessage. iPhone-only consumer.
         #if os(iOS)
-        if let payload = applicationContext["holeDetectionRequest"] as? [String: Any],
-           let courseIdString = payload["courseId"] as? String,
-           let courseId = UUID(uuidString: courseIdString) {
-            DispatchQueue.main.async {
-                self.onReceiveHoleDetectionRequest?(courseId)
-            }
+        if let payload = applicationContext["holeDetectionRequest"] as? [String: Any] {
+            handleHoleDetectionRequest(payload)
         }
         #endif
 
@@ -533,9 +571,14 @@ extension WatchConnectivityManager: WCSessionDelegate {
         }
 
         // Dev-section parameters mirrored from iPhone via applicationContext.
+        // Only changed ones: this dictionary rides along with every context
+        // the phone sends (an hourly token refresh included), and applying
+        // `detectionMode` resets the swing detector to idle.
         if let params = applicationContext["devParams"] as? [String: Any] {
             DispatchQueue.main.async {
                 for (k, v) in params {
+                    if let current = UserDefaults.standard.object(forKey: k) as? NSObject,
+                       current.isEqual(v) { continue }
                     UserDefaults.standard.set(v, forKey: k)
                     self.applyDevParamToLiveObjects(key: k, value: v)
                 }
@@ -543,6 +586,17 @@ extension WatchConnectivityManager: WCSessionDelegate {
         }
         #endif
     }
+
+    #if os(watchOS)
+    /// Empty data is the phone's sign-out sentinel.
+    private func receiveAuthSessionData(_ data: Data) {
+        let session = data.isEmpty ? nil : try? JSONDecoder().decode(AuthSession.self, from: data)
+        if !data.isEmpty && session == nil { return }
+        DispatchQueue.main.async {
+            WatchAuthSession.shared.receiveFromPhone(session)
+        }
+    }
+    #endif
 
     #if os(watchOS)
     /// Writes-through dev params to the live @Published vars on the
@@ -611,17 +665,13 @@ extension WatchConnectivityManager: WCSessionDelegate {
             DispatchQueue.main.async { self.onSessionActivated?() }
             #if os(watchOS)
             // Report which build the watch is actually running, so the phone's
-            // dev menu can show the skew.
+            // dev menu can show the skew. This write also flushes anything
+            // merged before activation.
             self.mergeIntoApplicationContext(["watchBuild": Self.localBuild])
+            #else
+            self.mergeIntoApplicationContext([:])
             #endif
-            #if os(iOS)
-            // A context delivered while this app was closed sits in
-            // receivedApplicationContext rather than firing the delegate, so
-            // read it once at activation too.
-            if let build = session.receivedApplicationContext["watchBuild"] as? String {
-                DispatchQueue.main.async { self.watchBuild = build }
-            }
-            #endif
+            self.handleApplicationContext(session.receivedApplicationContext)
             if let detectionData = self.pendingHoleDetectionData {
                 self.actuallySendHoleDetectionData(detectionData)
                 self.pendingHoleDetectionData = nil

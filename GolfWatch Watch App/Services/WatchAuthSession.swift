@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import Supabase
 
@@ -40,9 +41,33 @@ final class WatchAuthSession: ObservableObject {
     var isSignedIn: Bool { session != nil }
     var currentUserId: String? { session?.userId }
 
-    /// Replace the stored session (called when iPhone forwards a new one).
-    /// Pushes into the SDK so it can take over refresh.
-    func apply(_ newSession: AuthSession?) {
+    /// SHA-256 of the refresh token in the last session the phone sent
+    /// (hashed because UserDefaults is not the keychain).
+    private static let lastPhoneSessionKey = "lastPhoneSessionFingerprint"
+
+    /// A session from the iPhone, over either WC path. The same session
+    /// arrives many times — the phone's context carries it on every update to
+    /// any key, and it is re-read at every launch — and by then the SDK here
+    /// may have refreshed past it. Setting it again would put a spent refresh
+    /// token back in charge, and the next refresh with it trips Supabase's
+    /// reuse detection, which revokes the session on both devices. So a
+    /// repeat is ignored unless the watch has no session at all.
+    func receiveFromPhone(_ newSession: AuthSession?) {
+        guard let newSession else {
+            UserDefaults.standard.removeObject(forKey: Self.lastPhoneSessionKey)
+            apply(nil)
+            return
+        }
+        let fingerprint = SHA256.hash(data: Data(newSession.refreshToken.utf8))
+            .map { String(format: "%02x", $0) }.joined()
+        if isSignedIn && UserDefaults.standard.string(forKey: Self.lastPhoneSessionKey) == fingerprint { return }
+        UserDefaults.standard.set(fingerprint, forKey: Self.lastPhoneSessionKey)
+        apply(newSession)
+    }
+
+    /// Replace the stored session and push it into the SDK so it can take
+    /// over refresh.
+    private func apply(_ newSession: AuthSession?) {
         queue.async { [weak self] in
             guard let self = self else { return }
             Task {
