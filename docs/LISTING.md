@@ -21,7 +21,7 @@ keep the old `GolfTracker` name; see the naming table in CLAUDE.md.
 | Support URL | https://jjgantt.github.io/golftracker-site/support.html |
 | Marketing URL | https://jjgantt.github.io/golftracker-site/ |
 | Copyright | 2026 Jared Gantt |
-| Version | 1.0.0 (build 52, uploaded 2026-08-19 — next upload must be 53) |
+| Version | 1.0.0 (the current build number and how to bump it are in [APP_STORE.md](./APP_STORE.md)) |
 
 ## Keywords (100 max)
 
@@ -126,7 +126,7 @@ Sign in with Apple. Your rounds follow you across devices. Delete everything fro
 **Screenshots — the only remaining blocker.** Required: 6.9" iPhone (1320x2868), 6.5"
 iPhone (1242x2688), Apple Watch. Minimum 3 per size.
 
-Captured from the simulators with staged rounds; the method and its traps are in
-`docs/V1_PUNCHLIST.md` (A2). Elevation and the ghost overlay only render on courses with
-existing history, so a staged round on a course without height cells (Disney's Palm)
-shows a dash where the elevation readout goes.
+Captured from the simulators with staged rounds; the method, the traps and where the set
+stands are in [APP_STORE.md](./APP_STORE.md). Elevation and the ghost overlay only render
+on courses with existing history, so a staged round on a course without height cells
+(Disney's Palm) shows a dash where the elevation readout goes.

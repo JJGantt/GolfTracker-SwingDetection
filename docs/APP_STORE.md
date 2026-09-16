@@ -1,191 +1,158 @@
-# App Store Submission Checklist
+# Getting StrokeSaver on the App Store
 
-Living checklist for StrokeSaver's path to the App Store. Check items off as they land. Add new rows as gaps surface.
-
-Legend: `[ ]` not started · `[~]` in progress / partial · `[x]` done · `[?]` needs confirmation
-
----
-
-## Must-Have — Apple will reject without these
-
-### Privacy & compliance
-- [x] **PrivacyInfo.xcprivacy manifest** — created for both targets (2026-04-23) and registered in pbxproj. Both ship in their respective .app bundles (verified against Debug build output).
-- [x] **Export-compliance key** — `ITSAppUsesNonExemptEncryption = false` added to both Info.plists (2026-04-23).
-- [x] **Privacy Policy URL** — https://jjgantt.github.io/golftracker-site/privacy.html (2026-04-23).
-
-### Bundle metadata
-- [x] **Version / build** — now `CFBundleShortVersionString = 1.0.0`, `CFBundleVersion = 52` in both Info.plists. `GENERATE_INFOPLIST_FILE = NO`, so these are literals and `CURRENT_PROJECT_VERSION` is ignored; bump both plists in lockstep on every upload.
-- [?] **Bundle IDs** — declared in CLAUDE.md as `com.Jared.GolfTracker` + `com.Jared.GolfTracker.watchkitapp`. Needs matching App IDs + provisioning profiles in App Store Connect.
-- [x] **CFBundleIconName** — `AppIcon` set in iOS Info.plist.
-- [x] **App icons** — both targets have `AppIcon.appiconset` with full size set (iOS: 20/29/40/60 @2x@3x + 1024; Watch: all complication/corner/circular sizes + 1024).
-
-### Launch / UI infra
-- [x] **iOS launch screen** — `UILaunchScreen = {}` in Info.plist (blank screen, valid for iOS 13+). If we want a branded launch, replace empty dict with `UIImageName` entry pointing at an asset.
-- [x] **Supported orientations** — iOS locked to `UIInterfaceOrientationPortrait`.
-
-### Usage descriptions (already in place)
-- [x] `NSLocationWhenInUseUsageDescription` (iOS) — "StrokeSaver needs your location to calculate distances to holes and track your shots during a round."
-- [x] `NSLocationAlwaysAndWhenInUseUsageDescription` (iOS) — same copy. Consider differentiating: "...during a round even when the app is in the background."
-- [x] `NSMotionUsageDescription` (Watch) — per CLAUDE.md.
-- [x] `NSHealthShareUsageDescription` + `NSHealthUpdateUsageDescription` (Watch) — per CLAUDE.md.
-
-### Backend data pipeline (v1 blocker)
-- [ ] **Full round data → Supabase** — currently only motion slices upload via `SupabaseUploader`. Round-level data (courses, holes, strokes, targets, scores) still lives only in local JSON. Wire up upload on every mutation so Supabase is the source of truth. Keyed to the same per-install device UUID.
-- [x] **In-app "Delete my data" button** — `SettingsView` (opens from gear icon on `HomeView`) has "Delete My Data" with confirmation. Calls `SupabaseSync.deleteAllUserData()` → parallel DELETEs on `rounds`, `courses`, `club_sets`, `clubs`, `club_types` scoped to `user_id`; CASCADE handles children. Motion data (device-id keyed) untouched. Signs out on completion.
-
-### App Store Connect side
-- [x] **Support URL** — https://jjgantt.github.io/golftracker-site/support.html (2026-04-23).
-- [ ] **Marketing URL** (optional) — can be same as Support URL.
-- [ ] **Screenshots** — iPhone (6.7", 6.5", 5.5" display sizes) + Apple Watch (all series currently shipping). Min 1 screenshot per device size; typical is 3-5. Use TestFlight build for fresh captures.
-- [~] **App description + keywords** — drafted in [LISTING.md](./LISTING.md). Review before pasting into App Store Connect.
-- [x] **Age rating** — 4+, set in App Store Connect (see [LISTING.md](./LISTING.md)).
-- [ ] **Category** — "Sports" (primary), "Health & Fitness" (secondary).
-- [ ] **Review notes** — brief note to reviewer explaining how to test (e.g., "Enable motion permission, tap Motion Test from Watch home to see the detection UI"). Not required but speeds up review.
-- [ ] **Demo account** — not applicable, no login.
-
-### Deployment targets
-- [x] **Deployment targets** — locked in at iOS 17.0 / watchOS 10.0 (2026-04-23). CLAUDE.md updated to match Info.plists. `#available(watchOS 11.0, *)` gates verified in `WatchOS10Compatibility.swift` + `ActiveRoundView.swift` — genuine watchOS 10 compatibility.
+Everything about submission: where it stands, how a build reaches App Store Connect, how
+the store screenshots are made, and what Apple requires before review. Store copy lives in
+[LISTING.md](./LISTING.md); the wider v1 work list is [V1_PUNCHLIST.md](./V1_PUNCHLIST.md).
 
 ---
 
-## Strongly Recommended — code quality before launch
+## Where it stands
 
-### Build hygiene
-- [ ] **Release build smoke test** — run `xcodebuild -configuration Release` end-to-end. `#if DEBUG`-gated `dprint` calls behave differently; verify nothing in release console spam or missing logs that you actually need.
-- [ ] **Archive builds cleanly** — from Xcode, `Product > Archive` must succeed for both targets. This is what you upload to App Store Connect.
-
-### User experience
-- [x] **Permission-denied UX** (2026-04-23; location banner re-homed 2026-07-31)
-  - [x] Motion: `MotionAuthDeniedView` (pre-existing).
-  - [x] Location: `LocationPermissionBanner` (iOS) on the **Play tab** (`PlayTabView`) — observes `LocationManager.authorizationStatus`, deep-links to Settings. It was mounted on `HomeView`, which was deleted when the tab bar became Stats/Play/History/Settings; the banner was therefore **unreachable** and a location-denied user got no guidance at all (Start Round just fell through to the course-name prompt). Now on the screen that actually needs location.
-  - [x] HealthKit: `HealthKitBanner` (Watch) on `WatchHomeView` — observes `WorkoutManager.healthKitAuthorizationStatus`, instructs user to re-enable via iPhone Watch app.
-- [x] **First-run onboarding** — permissions primer implemented 2026-04-23. iOS `OnboardingView` primes Location; Watch `WatchOnboardingView` primes Motion + HealthKit. Each primer fires the system prompt inline; deep-links to Settings if previously denied. Gated by `@AppStorage("hasSeenOnboarding")` (iOS) and `@AppStorage("hasSeenWatchOnboarding")` (Watch). Empty state / "Create your first course" CTA deferred — not in v1 scope.
-- [~] **Crash-mid-round recovery** — skipped for v1 (2026-04-23). Audit confirmed every mutation in `DataStore` / `WatchDataStore` calls `saveRounds()` / `saveRound()`; no visible gaps. Rounds will also be backed by Supabase once the round-data pipeline lands.
-- [~] **Data-model migration safety** — skipped (2026-04-23). Nothing shipped yet, no production data to migrate.
-
-### Accessibility
-- [ ] **VoiceOver labels** on critical buttons (record stroke, undo, aim direction, penalty). Currently buttons are icons only, so labels are inferred — verify they read sensibly.
-- [ ] **Dynamic Type** — text scaling in Settings > Display & Brightness > Text Size. Watch cares less; iPhone screens must not overflow at largest size.
-- [ ] **Dark Mode** — the app uses system colors by default. Verify no hardcoded light/dark-only colors.
-
-### Privacy & data
-- [?] **Data export** — not required, but if we ever collect analytics, users can ask for their data. Currently all data is local, so a zero-effort compliance statement.
-- [x] **Data deletion** — the app *does* have accounts now (Sign in with Apple, `LoginView`), so this is required and is satisfied by Settings → "Delete My Data" (`SupabaseSync.deleteAllUserData()`, signs out on completion).
+- **App record:** `GolfTrackerJP`, bundle `com.Jared.GolfTracker` (watch companion
+  `com.Jared.GolfTracker.watchkitapp`), team `XMH4AVFC78`. It already exists on App Store
+  Connect — never "create new app".
+- **Version:** both Info.plists read `1.0.0 (72)` (checked 2026-09-16).
+- **Uploads:** archive → export → `altool` is proven from this Mac; builds have reached
+  TestFlight this way.
+- **Left before submitting:** pick and upload screenshots, read the listing copy through,
+  set category and review notes in App Store Connect, install a Release build on a device
+  and play a round, and delete the staged screenshot data.
 
 ---
 
-## Nice-to-Have — post-launch or optional polish
+## Build and upload
 
-- [ ] **TestFlight external beta** — invite 5-10 golfers before public launch. Real-world sensor data will surface detection-tuning issues you won't find on the range.
-- [ ] **Crash reporting** — Sentry, Bugsnag, or Apple's own Xcode Organizer crash reports. Xcode Organizer is free + built-in; Sentry gives richer context.
-- [ ] **Analytics** — optional. Not collecting any today; if added, declare in PrivacyInfo manifest.
-- [ ] **iCloud / CloudKit sync** — multi-device round history. Significant scope; post-launch.
-- [ ] **Apple Watch complications** — distance-to-hole on the watch face. Requires `ClockKit` or WidgetKit setup.
-- [ ] **iOS widgets** — round-in-progress widget, course quick-stats.
-- [ ] **Siri Shortcuts** — "Start a round at [course]", "Record a stroke".
-- [ ] **Haptic richness** — currently uses `.click` / `.notification`; could differentiate putt vs swing vs penalty.
-- [ ] **StoreKit in-app purchase** — if monetizing later (pro features, course pack).
+1. **Bump the build number in BOTH Info.plists**, in lockstep, above the last uploaded
+   build. `CFBundleVersion` is a literal in `GolfTracker/Info.plist` and
+   `GolfWatch Watch App/Info.plist`, and `GENERATE_INFOPLIST_FILE = NO`, so
+   `CURRENT_PROJECT_VERSION` is ignored. Edit with PlistBuddy.
+2. **Install the device platforms.** Xcode 26 ships without the iOS/watchOS *device*
+   platforms, and archiving the embedded-watch scheme needs both. Get them from
+   Xcode → Settings → Components. `xcodebuild -downloadPlatform iOS` also drags in the
+   ~8.5 GB simulator runtime.
+3. **Archive, then export with the App Store Connect API key.** The Xcode Apple ID
+   session is expired, so automatic signing can't log in; the key mints the distribution
+   certificate and App Store profile headlessly:
+   `-authenticationKeyPath ~/.appstoreconnect/private_keys/AuthKey_P8Y337A8RC.p8`
+   `-authenticationKeyID P8Y337A8RC`
+   `-authenticationKeyIssuerID 141a8ead-b829-4e58-b9ff-b8c95f8c4ed9 -allowProvisioningUpdates`
+4. **Upload** with `xcrun altool --upload-app`.
+5. **If certificate creation fails with "PLA Update available"**, only the account holder
+   can clear it: accept the updated Program License Agreement at
+   developer.apple.com/account, then wait about a minute for the account state to settle.
+
+`ITSAppUsesNonExemptEncryption = false` is already in both plists, so no export-compliance
+prompt appears on upload.
 
 ---
 
-## External assets needed
+## Screenshots
 
-Stuff that lives outside the repo but blocks submission:
+**Sizes.** iPhone 6.9" is 1320×2868 (simulator "SS 6.9"); Apple Watch 46mm is 416×496
+(simulator "SS Watch", paired with the phone simulator). Confirm the currently required
+set in App Store Connect at upload time — Apple changes it. Uploads must carry no alpha
+channel, so convert PNG to JPEG before uploading.
 
-- [x] **Apple Developer Program enrollment** — enrolled.
-- [ ] **App Store Connect app record** — create the listing entry.
-- [ ] **Certificates + provisioning profiles** — Xcode can auto-manage, but verify before archive.
-- [ ] **Privacy policy page** (live HTTPS URL).
-- [ ] **Support page** (live HTTPS URL, can be same host as privacy policy).
-- [ ] **Marketing assets** — icon renders, screenshots, promotional text.
+**How the shots are staged.** Tooling lives in [`tools/screenshots/`](../tools/screenshots)
+with its own README. The app draws everything itself: strokes and targets are written into
+the round in Supabase, and the simulator's GPS is walked along the route
+(`xcrun simctl location`) so the trail is recorded the way a real round records it.
+`scenarios.json` holds the holes and the scenarios (tee, green, centerline, the strokes
+and where they were hit from, the walk, where the player ends up, the target).
+
+**Traps, each of which cost an afternoon:**
+
+- **The watch simulator gets its map tiles through the paired phone simulator.** When that
+  link dies (it dies under memory pressure), the watch draws MapKit's grey placeholder for
+  any area not already cached and shows a red "iPhone disconnected" status icon, while
+  `xcrun simctl list pairs` still reports "connected". The watch's log
+  (`log show --predicate 'subsystem BEGINSWITH "com.apple.GeoServices"'`) says
+  `Paired device finished request without sending information for tile`. Rebooting the two
+  simulators clears the icon but not the tiles. What fixes both: `xcrun simctl shutdown all`,
+  `killall -9 com.apple.CoreSimulator.CoreSimulatorService`, then boot both again.
+  `stage_watch.py` checks the map before walking and does this by itself.
+- **Only the device that starts a round records its trail**, and relaunching mid-round
+  doesn't resume recording. Start the round on the device being shot.
+- **A course with no elevation cells shows a dash beside every yardage** (the elevation
+  readout has no solution). Disney's Palm has none; Hyde Park has about 5,900.
+- **The watch fades its + button on a hole marked finished**, which reads as disabled in a
+  screenshot. The staging scripts clear the round's finished holes.
+- **Near-green positions put the watch into its on-green readout**, which doesn't show the
+  app off. Shoot drives, layups and tee shots instead.
+- **The phone's in-round map frames tee → pin**, so the shots already hit, their distances
+  and the trail stay on screen.
+- **Set the status bar** before shooting: `xcrun simctl status_bar <phone> override --time
+  "9:41" --batteryState charged --batteryLevel 100 --cellularBars 4 --wifiBars 3`.
+  Restarting the simulator service clears the override.
+
+**Current set (2026-09-16):** 18 iPhone and 18 Apple Watch in-round shots staged on
+Disney's Palm (drives, layups and carry-the-water tee shots across holes 1, 6, 9, 10, 13,
+14, 16, 18), plus the approved stats screens. Not yet chosen, converted or uploaded, and
+the staged rounds are still in the database until the set is approved — then
+`unstage_rounds.py` deletes them.
+
+---
+
+## Listing
+
+Copy, keywords and promotional text: [LISTING.md](./LISTING.md).
+
+- **Category:** Sports (primary), Health & Fitness (secondary).
+- **Age rating:** 4+.
+- **Review notes:** optional, and they speed review. Explain how to see swing detection
+  without a golf course.
+- **Marketing URL:** optional; the support URL works.
+- **Demo account:** Sign in with Apple only, so there is no password to hand over. Say so
+  in the review notes.
+
+---
+
+## Apple's requirements
+
+### In place
+
+- **Privacy manifests** — `PrivacyInfo.xcprivacy` in both targets, registered in the
+  pbxproj and verified inside both `.app` bundles. Declares precise and coarse location,
+  round content, device id (iOS), plus HealthKit workouts and motion diagnostics (watch),
+  none used for tracking; `UserDefaults` declared with reason `CA92.1`.
+- **Export compliance** — `ITSAppUsesNonExemptEncryption = false` in both plists.
+- **Privacy policy** — https://jjgantt.github.io/golftracker-site/privacy.html
+- **Support page** — https://jjgantt.github.io/golftracker-site/support.html
+  (contact `jared.gantt+golftracker@gmail.com`).
+- **Bundle metadata** — version and build literals, `CFBundleIconName`, full icon sets on
+  both targets, blank launch screen, iOS locked to portrait.
+- **Usage strings** — location when-in-use and always (iOS), motion and HealthKit (watch).
+- **Account deletion** — Settings → Delete My Data removes the account's rows and signs
+  out. Required because the app has Sign in with Apple.
+- **Round data in Supabase** — rounds, holes, strokes and targets all sync; the server is
+  the source of truth for both devices.
+- **Permission-denied guidance** — location banner on the Play tab, HealthKit banner on
+  the watch home screen, motion denial view on the watch.
+- **First-run permission primers** — one per platform.
+- **Deployment targets** — iOS 17.0 / watchOS 10.0, with `#available(watchOS 11.0, *)`
+  gates where newer APIs are used.
+
+### Outstanding
+
+- [ ] **Screenshots** uploaded (see above).
+- [~] **Listing copy** read through before pasting into App Store Connect.
+- [ ] **Category** and **review notes** set in App Store Connect.
+- [~] **Release-configuration smoke test** — both targets build clean in Release; still
+  owed: install on a device and play a round.
+- [ ] **Staged screenshot data deleted** once the set is approved.
+
+### Deferred past v1
+
+- **Accessibility pass** — VoiceOver labels on icon-only buttons, Dynamic Type at the
+  largest sizes, a check for hardcoded light/dark colours. Not a review blocker.
+- **Crash reporting** — Xcode Organizer covers it for now.
+- **TestFlight external beta**, complications, widgets, Siri shortcuts, richer haptics.
 
 ---
 
 ## References
 
 - [App Review Guidelines](https://developer.apple.com/app-store/review/guidelines/)
-- [Privacy Manifest documentation](https://developer.apple.com/documentation/bundleresources/privacy_manifest_files)
+- [Privacy manifest files](https://developer.apple.com/documentation/bundleresources/privacy_manifest_files)
 - [Required Reason API list](https://developer.apple.com/documentation/bundleresources/privacy_manifest_files/describing_use_of_required_reason_api)
 - [App Store Connect Help](https://developer.apple.com/help/app-store-connect/)
-
----
-
-## Plans
-
-Per-item execution plans. As items complete, replace the plan body with a **Done:** summary of what actually shipped.
-
-### PrivacyInfo.xcprivacy manifests
-**Done (2026-04-23):** Created `GolfTracker/PrivacyInfo.xcprivacy` and `GolfWatch Watch App/PrivacyInfo.xcprivacy` and registered them in `GolfTracker.xcodeproj/project.pbxproj` (PBXFileReference + PBXBuildFile + PBXGroup + PBXResourcesBuildPhase for each target).
-
-Declared collected data types (all linked to user via anonymous per-install UUID, **not** used for tracking):
-- iOS: precise location, coarse location, other user content (rounds/strokes/courses), device ID
-- Watch: + fitness (HealthKit workouts), other diagnostic data (motion slices)
-
-Declared accessed-API reasons: `UserDefaults` → `CA92.1` on both targets. Audit confirmed no other required-reason APIs are hit (no file timestamps, no systemUptime, no disk-space reads).
-
-Verified against `xcodebuild build` output — both manifests land inside their `.app` bundles.
-
-### ITSAppUsesNonExemptEncryption
-**Done (2026-04-23):** Added `ITSAppUsesNonExemptEncryption=false` to `GolfTracker/Info.plist` and `GolfWatch Watch App/Info.plist`. App Store Connect will no longer prompt for export compliance on upload.
-
-### Privacy Policy + Support URLs
-**Done (2026-04-23):** Repo `JJGantt/golftracker-site` created and deployed via GitHub Pages.
-- Privacy: https://jjgantt.github.io/golftracker-site/privacy.html
-- Support: https://jjgantt.github.io/golftracker-site/support.html
-- Contact email: `jared.gantt+golftracker@gmail.com` (Gmail plus-tag; can swap to a dedicated alias later).
-- Deletion handled in-app via `Settings → Delete my data` (see the in-app delete button v1 blocker).
-- Content scope: location (precise + coarse), motion, HealthKit permission (called out as required for 800 Hz raw accel), round content, anonymous device UUID. Backend referenced generically — no vendor name published.
-
-### Version / build bump
-**Done (2026-04-23):** Both Info.plists set to `0.9.0 (1)`. Pre-release for TestFlight. `CFBundleVersion` must increment every App Store Connect upload; promote version string to `1.0.0` at public launch.
-
-### Deployment target alignment
-**Done (2026-04-23):** Kept iOS 17.0 / watchOS 10.0 (Info.plist values). Updated CLAUDE.md's stale "watchOS 26.0" claim. Confirmed `#available(watchOS 11.0, *)` gates in `WatchOS10Compatibility.swift` and `ActiveRoundView.swift` keep the app genuinely compatible with watchOS 10 — nothing to rip out.
-
-### Release build smoke test
-**Submission-time step.** When ready to upload: `Product > Archive` from Xcode for both targets, fix any warnings, install on device, play through a round. Debug builds passed throughout development.
-
-### Permission-denied UX
-**Done (2026-04-23):**
-- iOS: added `GolfTracker/Views/Shared/PermissionBanner.swift` with a reusable `PermissionBanner` and a `LocationPermissionBanner` wrapper that observes `LocationManager.authorizationStatus`. Mounted on `HomeView`. On `.denied`/`.restricted` shows a banner with an "Open Settings" button that deep-links via `UIApplication.openSettingsURLString`.
-- Watch: added `GolfWatch Watch App/Views/Components/HealthKitBanner.swift`. Extended `WorkoutManager` with `@Published healthKitAuthorizationStatus` and `refreshAuthorizationStatus()` (called on init + after `requestAuthorization`). Banner mounted on `WatchHomeView`; on `.sharingDenied` tells the user to re-enable HealthKit via the iPhone Watch app (no watchOS Settings deep-link exists).
-- Motion denial (`MotionAuthDeniedView`) was already in place.
-- Both new files registered in `project.pbxproj` (PBXFileReference + PBXBuildFile + PBXGroup + Sources build phase for their target). iOS build verified.
-
-### First-run onboarding
-**Done (2026-04-23):** Scope scoped down to a single permissions primer per platform — no welcome or "first course" screens.
-- iOS: `GolfTracker/Views/OnboardingView.swift`, gated by `@AppStorage("hasSeenOnboarding")` on `ContentView`, shown as `.fullScreenCover`. Primes Location with rationale; first tap fires `LocationManager.requestPermission()`, subsequent taps (after denial) deep-link to `UIApplication.openSettingsURLString`.
-- Watch: `GolfWatch Watch App/Views/WatchOnboardingView.swift`, gated by `@AppStorage("hasSeenWatchOnboarding")` in `GolfWatchApp`. Primes Motion + HealthKit stacked. Motion calls `SwingDetectionManager.checkAndRequestMotionAuthorization()`; HealthKit calls `WorkoutManager.requestAuthorization`. Status reflects live from the managers' published auth state.
-- Empty state / "Create your first course" CTA and dev-reset toggle intentionally deferred.
-
-### Crash-mid-round recovery
-**Skipped for v1 (2026-04-23):** Audit found save coverage is already good — every mutation method in `DataStore` (iOS) and `WatchDataStore` (Watch) calls `saveRounds()`/`saveRound()`. Real server-side backup arrives with the Supabase round-data pipeline. Low risk, not a review blocker.
-
-### Data-model migration safety
-**Skipped (2026-04-23):** Nothing has shipped; no production data to migrate.
-
-### Accessibility pass
-**Deferred past v1 (2026-04-23).** Not a review blocker; revisit post-launch. Scope when picked back up: VoiceOver labels on icon-only buttons, Dynamic Type XXXL sweep, grep for hardcoded `Color.white`/`.black` + Dark Mode check.
-
-### TestFlight beta
-After must-haves land: archive, upload to App Store Connect, internal testers first, then 5–10 external golfers. Short "what to test" note focusing on swing-detection accuracy across player styles. Feedback via Google Form linked from the TestFlight note.
-
-### Supabase round-data pipeline (v1 blocker)
-**Done (2026-04-23):**
-- **Auth:** Sign in with Apple entitlement added. `SupabaseClient` + `AuthManager` (Keychain-backed session) + `LoginView` (native SIWA button). `ContentView` gates the app on auth → onboarding → tabs.
-- **Schema:** `supabase/migrations/00007_round_data.sql` applied via `supabase db push`. 10 normalized tables (`club_types`, `clubs`, `club_sets`, `club_set_type_selections`, `courses`, `holes`, `rounds`, `round_holes`, `strokes`, `targets`), all with RLS policies enforcing `user_id = auth.uid()` (child tables verify via parent). Rounds survive course deletion via `ON DELETE SET NULL`. Strokes' `club_id` is a plain UUID, not FK, so deleting a club doesn't wipe historical strokes.
-- **Sync:** `SupabaseSync` manager mirrors every mutation as a REST upsert/delete with `Bearer <user access token>`. Failed requests queue on disk (`supabase_sync_queue.json`), drained on launch + via a 30-s timer. Wired into every `DataStore` save + delete method (courses, holes, clubs, club types, club sets, rounds, strokes, targets).
-- **Upload-only (no pull-on-launch) for v1.** Two-way sync revisits when there's a real multi-device/reinstall story post-launch.
-- **Motion data stays separate:** `swing_events` + storage CSVs keep device-id keying; never linked to auth user. Anonymous research data, not subject to deletion.
-- **Privacy policy updated** to disclose Apple Sign In and the two-tier deletion model; pushed to GitHub Pages.
-
-### External assets
-- Apple Developer Program enrollment ($99).
-- App Store Connect app record (bundle ID `com.Jared.GolfTracker`).
-- Xcode auto-managed signing; verify provisioning before archive.
-- Screenshots: iPhone 15 Pro Max sim (6.7"), iPhone 8 Plus sim (5.5"), Apple Watch Series 10 sim. 3–5 per size: home, active round map, scorecard, stats, watch play view.
-- 4000-char description + 100-char keyword list.
-
----
-
-**Last updated:** 2026-07-31. Update the date and any relevant rows when items land or change status.
