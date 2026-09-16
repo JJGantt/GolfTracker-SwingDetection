@@ -237,7 +237,13 @@ struct HoleMapView: View {
                 // anchored to the stroke's coordinate (HStack would shift
                 // the anchor as text widths varied). Mirrors watch.
                 if let round = currentRound {
-                    let strokesForHole = round.strokes.filter { $0.holeNumber == hole.number }
+                    // In stroke order: each marker's yardage and elevation label
+                    // read the next stroke by position, and a SwiftData
+                    // relationship has no order, so unsorted the drive could be
+                    // labelled with the layup's distance.
+                    let strokesForHole = round.strokes
+                        .filter { $0.holeNumber == hole.number }
+                        .sorted { $0.strokeNumber < $1.strokeNumber }
                     // Line through your own shots, matching the watch: each
                     // non-putt stroke in order, ending at the first putt (the
                     // putt count takes over on the green). The phone drew the
