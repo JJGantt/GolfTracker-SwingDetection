@@ -365,10 +365,11 @@ struct RoundTrail {
     /// Cap on the walked-path polyline. A round samples every ~3 m, several
     /// thousand points; a few hundred draw the same shape at watch scale.
     static let maxPathPoints = 300
-    /// Ray length when nothing after the shot says how far it went — the
-    /// latest swing on a hole whose green isn't placed yet. Roughly a drive,
-    /// so a tee shot's ray reaches toward the green it was aimed at.
-    static let openRayMeters: CLLocationDistance = 180
+    /// Every ray's length. A ray shows direction only — where the ball
+    /// finished is the next stroke's dot — so it stays short rather than
+    /// running as far as the shot, which a big miss would turn into a long
+    /// line across the wrong part of the course.
+    static let rayMeters: CLLocationDistance = 40
 
     init(round: Round?, pathSamples: [LocationManager.PathSample], isPutt: (Stroke) -> Bool) {
         let step = max(1, (pathSamples.count + Self.maxPathPoints - 1) / Self.maxPathPoints)
@@ -397,28 +398,17 @@ struct RoundTrail {
             }
             if line.count >= 2 { holeLines.append(HoleLine(id: number, coordinates: line)) }
             shots += full.map { Shot(id: $0.id, coordinate: $0.coordinate) }
-            rays += Self.launchRays(ordered: ordered, flag: flag, isPutt: isPutt)
+            rays += Self.launchRays(ordered: ordered, isPutt: isPutt)
         }
     }
 
-    /// Launch rays for one hole's strokes, in stroke order, penalties already
-    /// removed. Each ray is as long as the shot actually went — to the next
-    /// stroke, else the flag — so its end sits beside where the ball finished
-    /// and the gap between the two is the shot's curve.
-    static func launchRays(ordered: [Stroke], flag: CLLocationCoordinate2D?,
-                           isPutt: (Stroke) -> Bool) -> [LaunchRay] {
-        ordered.enumerated().compactMap { index, stroke in
+    /// Launch rays for one hole's strokes. Putts are skipped.
+    static func launchRays(ordered: [Stroke], isPutt: (Stroke) -> Bool) -> [LaunchRay] {
+        ordered.compactMap { stroke in
             guard let bearing = stroke.trajectoryHeading, !isPutt(stroke) else { return nil }
-            let next = index + 1 < ordered.count ? ordered[index + 1].coordinate : flag
-            let length = next.map { distanceMeters(stroke.coordinate, $0) } ?? openRayMeters
             return LaunchRay(id: stroke.id, from: stroke.coordinate,
-                             to: destination(from: stroke.coordinate, bearing: bearing, meters: length))
+                             to: destination(from: stroke.coordinate, bearing: bearing, meters: rayMeters))
         }
-    }
-
-    static func distanceMeters(_ a: CLLocationCoordinate2D, _ b: CLLocationCoordinate2D) -> CLLocationDistance {
-        CLLocation(latitude: a.latitude, longitude: a.longitude)
-            .distance(from: CLLocation(latitude: b.latitude, longitude: b.longitude))
     }
 
     static func destination(from start: CLLocationCoordinate2D, bearing: Double,

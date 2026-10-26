@@ -890,11 +890,8 @@ struct ActiveRoundView: View {
                     let strokesForHole = round.strokes
                         .filter { $0.holeNumber == nextHoleNumber && !$0.isPenalty }
                         .sorted { $0.strokeNumber < $1.strokeNumber }
-                    // No green yet, so the latest swing's ray runs a fixed
-                    // length — a tee shot's points toward the green it was
-                    // aimed at.
                     LaunchRaysContent(rays: RoundTrail.launchRays(
-                        ordered: strokesForHole, flag: nil, isPutt: isPuttStroke))
+                        ordered: strokesForHole, isPutt: isPuttStroke))
                     ForEach(Array(strokesForHole.enumerated()), id: \.element.id) { index, stroke in
                         Annotation("", coordinate: stroke.coordinate) {
                             ZStack {
@@ -1159,7 +1156,7 @@ struct ActiveRoundView: View {
                     // Each swing's derived launch bearing, beside the white
                     // line of where the ball actually went.
                     LaunchRaysContent(rays: RoundTrail.launchRays(
-                        ordered: allStrokesForHole, flag: holeCoord, isPutt: isPuttStroke))
+                        ordered: allStrokesForHole, isPutt: isPuttStroke))
                     ForEach(Array(strokesForHole.enumerated()), id: \.element.id) { index, stroke in
                         Annotation("", coordinate: stroke.coordinate) {
                             ZStack {
