@@ -286,8 +286,9 @@ records it. The detector's own pairing is the segmentation, so no phase detectio
 - Historical Supabase rows hold fabricated headings (589/593 non-null, effectively all
   bearing-to-hole). Any `trajectory_heading` analysis must exclude pre-2026-07-30 strokes,
   or those rows get nulled — **a data-deletion call, not made.**
-- The replacement stat (intended bearing vs where the ball actually went) needs rounds
-  played on this build before it has data. Tracked as S3-real.
+- The replacement stat (intended bearing vs where the ball actually went) is not built.
+  The data exists now: 162 shots over 60 yds through 2026-10-25, absolute median 10° from
+  the GPS line to the next stroke, no systematic offset. Tracked as S3-real.
 - **Putt directionality → over/under detection.** Wanted feature, not just a validation
   chore. Once putts have a bearing, consecutive putts on a hole classify themselves with
   no distance measurement: putt N+1 on the **same** bearing as putt N means the first came
@@ -295,25 +296,6 @@ records it. The detector's own pairing is the segmentation, so no phase detectio
   tendency stat ("you leave 70% of first putts short"), derived purely from direction.
   Blocked on validating the swing-direction algorithm for putts.
 - `magAccuracy` is captured but not yet used to reject bearings from an uncalibrated compass.
-
-`Stroke.trajectoryHeading` is **no longer captured from the swing**.
-`SwingDetectionManager.swift:1012-1015` states it outright, and every record path
-fills it with bearing-to-hole:
-
-- `ActiveRoundView+StrokeRecording.swift:149` — `calculateBearing(from: userLocation, to: holeCoord)`
-- same at lines 226, 271 (auto-add paths)
-
-Then `StatsEngine.swift:84-88` compares that heading against
-`calculateBearing(from: teeShot.coordinate, to: holeCoord)`. It's bearing-to-hole vs.
-bearing-to-hole. A tautology.
-
-**Measured across all 102 qualifying tee shots in the DB:**
-```
-avg deviation: 0.049°
-median:        0.000°
-p90:           0.000°
-101 of 102 shots measure under 0.5°
-```
 
 ---
 

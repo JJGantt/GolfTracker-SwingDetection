@@ -532,7 +532,8 @@ Both apps persist via SwiftData (`@Model` classes in `Models.swift`, shared `Mod
 - All coordinates use `CLLocationCoordinate2D` (latitude/longitude in degrees)
 - Distances are calculated in meters, displayed in yards (multiply by 1.09361)
 - Bearings are in degrees clockwise from true north (0-360)
-- Heading/trajectory is captured from device compass at moment of shot
+- `Stroke.trajectoryHeading` is the swing-derived launch bearing (`swing_direction/ALGORITHM.md`), or nil — never the compass
+- The compass runs only while a view holds `LocationManager.beginCompass()` (today: the watch green-placement screen); it publishes on `LocationManager.compass`, not `heading`, so a tick doesn't re-render `ActiveRoundView`
 
 ### Adding New Holes During Round
 

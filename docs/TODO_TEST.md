@@ -24,6 +24,14 @@
   motion CSVs in storage. This was broken at one point and fixed; not
   re-verified on-course since.
 
+- Green-placement screen round context (branch `placement-map-round-context`,
+  written on the Pi with no compiler — build it first). On a non-OSM course,
+  after a few holes: the compass wedge turns with the wrist and points the way
+  the watch's 12 o'clock faces; the whole walked path, prior holes' shot lines,
+  flags with hole numbers, and cyan launch rays all show; the map stays smooth
+  late in the round; the wedge is gone on the round-play map. Also check the
+  cyan rays on the round-play full view.
+
 - Breadcrumb trail UI after the refactor. The fading dot trail on the
   watch reads from the new `pathSamples` array — should look identical
   to before, both in `ActiveRoundView` and `AddHoleNavigationView`.

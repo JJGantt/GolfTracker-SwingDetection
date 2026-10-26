@@ -54,6 +54,20 @@ class LocationManager: NSObject, ObservableObject {
     @Published var location: CLLocation?
     @Published var heading: CLLocationDirection?
 
+    /// Live compass heading, published on its own object rather than as a
+    /// `@Published` here: every LocationManager publish re-evaluates the
+    /// whole of `ActiveRoundView`, and a compass ticks far more often than
+    /// GPS. Only the views that draw the heading observe this.
+    final class Compass: ObservableObject {
+        /// Degrees from true north (magnetic when true is unavailable);
+        /// nil while no client is running it or the reading is invalid.
+        @Published fileprivate(set) var degrees: CLLocationDirection?
+    }
+    let compass = Compass()
+    /// Views currently showing the heading. The compass runs only while
+    /// this is above zero, so its radio cost is confined to those screens.
+    private var compassClients = 0
+
     /// One sample per ~3m of GPS movement during a round, paired with the
     /// latest barometric relative altitude. Replaces the old in-memory
     /// `Breadcrumb` rolling buffer — same data, no upper bound, plus
@@ -250,10 +264,10 @@ class LocationManager: NSObject, ObservableObject {
         locationManager.delegate = self
         locationManager.desiredAccuracy = kCLLocationAccuracyBest
         locationManager.distanceFilter = 1 // Update every 1 meter
-        // Heading is no longer used by the round-play UI — the user marker
-        // renders as a non-rotating dot and aim direction will be driven
-        // by the OSM hole centerline when that lands. Skipping headingFilter
-        // setup and `startUpdatingHeading()` saves the compass radio cost.
+        // Heading runs only on demand — see `beginCompass()`. The round-play
+        // map's user marker is a direction-less dot, so leaving the compass
+        // on for the whole round would spend its radio cost on nothing.
+        locationManager.headingFilter = 5
 
         // Enable background location updates (necessary for watchOS when screen is off)
         #if os(iOS) || os(watchOS)
@@ -335,7 +349,23 @@ class LocationManager: NSObject, ObservableObject {
 
         dprint("[LocationManager] Starting location updates")
         locationManager.startUpdatingLocation()
-        // Heading updates intentionally NOT started — see init() note.
+    }
+
+    /// Start the compass for a view that draws the user's facing direction.
+    /// Pair every call with `endCompass()`; the compass stops when the last
+    /// client leaves.
+    func beginCompass() {
+        compassClients += 1
+        guard compassClients == 1, CLLocationManager.headingAvailable() else { return }
+        locationManager.startUpdatingHeading()
+    }
+
+    func endCompass() {
+        guard compassClients > 0 else { return }
+        compassClients -= 1
+        guard compassClients == 0 else { return }
+        locationManager.stopUpdatingHeading()
+        compass.degrees = nil
     }
 
     func stopTracking() {
@@ -719,17 +749,15 @@ extension LocationManager: CLLocationManagerDelegate {
     }
 
     func locationManager(_ manager: CLLocationManager, didUpdateHeading newHeading: CLHeading) {
-        if isTestModeEnabled {
-            heading = 0
+        // Written to `compass`, not `heading` — see `Compass` for why.
+        // Test mode keeps the real compass: the simulated position is fake,
+        // but which way the wrist faces is still real.
+        guard newHeading.headingAccuracy >= 0 else {
+            compass.degrees = nil
             return
         }
-
         // Use true heading if available, otherwise use magnetic heading
-        if newHeading.trueHeading >= 0 {
-            heading = newHeading.trueHeading
-        } else {
-            heading = newHeading.magneticHeading
-        }
+        compass.degrees = newHeading.trueHeading >= 0 ? newHeading.trueHeading : newHeading.magneticHeading
     }
 
     func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {

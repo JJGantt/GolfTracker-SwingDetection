@@ -617,6 +617,11 @@ struct ActiveRoundView: View {
         }
     }
 
+    func isPuttStroke(_ stroke: Stroke) -> Bool {
+        guard let club = store.availableClubs.first(where: { $0.id == stroke.clubId }) else { return false }
+        return store.getTypeName(for: club) == "Putt"
+    }
+
     /// Whether the current hole needs its flag location to be set
     var needsFlagPlacement: Bool {
         guard let hole = store.currentHole else { return false }
@@ -885,6 +890,11 @@ struct ActiveRoundView: View {
                     let strokesForHole = round.strokes
                         .filter { $0.holeNumber == nextHoleNumber && !$0.isPenalty }
                         .sorted { $0.strokeNumber < $1.strokeNumber }
+                    // No green yet, so the latest swing's ray runs a fixed
+                    // length — a tee shot's points toward the green it was
+                    // aimed at.
+                    LaunchRaysContent(rays: RoundTrail.launchRays(
+                        ordered: strokesForHole, flag: nil, isPutt: isPuttStroke))
                     ForEach(Array(strokesForHole.enumerated()), id: \.element.id) { index, stroke in
                         Annotation("", coordinate: stroke.coordinate) {
                             ZStack {
@@ -1146,6 +1156,10 @@ struct ActiveRoundView: View {
                         MapPolyline(coordinates: connectorCoords)
                             .stroke(.white.opacity(0.9), lineWidth: 1.0)
                     }
+                    // Each swing's derived launch bearing, beside the white
+                    // line of where the ball actually went.
+                    LaunchRaysContent(rays: RoundTrail.launchRays(
+                        ordered: allStrokesForHole, flag: holeCoord, isPutt: isPuttStroke))
                     ForEach(Array(strokesForHole.enumerated()), id: \.element.id) { index, stroke in
                         Annotation("", coordinate: stroke.coordinate) {
                             ZStack {

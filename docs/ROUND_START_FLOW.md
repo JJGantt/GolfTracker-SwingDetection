@@ -192,6 +192,13 @@ When it does appear:
 Show map + blob overlays from filteredGreenCandidates (OSM greens +
 blob detection results, filtered by holeFilterSettings).
 
+Under them, the round so far (`RoundTrail`): the whole walked path
+(pathSamples, decimated to ≤300 points), every hole's shot connector
+and shot dots, each placed flag with its hole number, and each swing's
+launch-bearing ray. Over them, the user dot with a compass wedge —
+the only screen that runs the compass (`LocationManager.beginCompass`
+on appear, `endCompass` on disappear).
+
 Tap behavior:
   isManualPlacement OR no candidates → drop pin at tap location
   ELSE → snap to nearest blob within 50m (selectedGreenBlobId set)
