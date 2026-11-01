@@ -701,6 +701,12 @@ struct ActiveRoundView: View {
             onDetectedSwingChange: handleDetectedSwingChange,
             onSelectedClubIndexChange: handleSelectedClubIndexChange
         )
+        // Without OSM hole data, full view anchors to the first stroke that still exists, so
+        // re-anchor when it is deleted or moved (or the last one goes, falling back to the user's
+        // position) rather than waiting for the next GPS fix.
+        .onChange(of: [firstStroke?.latitude, firstStroke?.longitude]) { _, _ in
+            restoreCalculatedMapPosition()
+        }
         .sheet(isPresented: $showingScorecard) {
             if let round = store.currentRound {
                 ScorecardSheet(round: round)
