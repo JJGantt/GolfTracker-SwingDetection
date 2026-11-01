@@ -26,6 +26,10 @@ The application consists of two main targets:
 
 Both apps communicate via **WatchConnectivity** framework for real-time data synchronization.
 
+## Algorithms
+
+Swing detection, swing direction and the elevation solver are kept in a private package. This repository contains the interfaces the app calls them through.
+
 ## Core Features
 
 ### 1. Course Management
@@ -203,12 +207,12 @@ Both apps communicate via **WatchConnectivity** framework for real-time data syn
 
 #### Swing Detection System (`unifDetect`)
 - CoreMotion device motion at **100Hz** (primary) + CMBatchedSensorManager raw accel at **800Hz** (putt-only fallback)
-- Single `UnifiedDetector` with tri-state classification (putt / swing / ambig) and type-aware pairing — direct port of the Python source of truth in `swing_detection/unified_visualize.py`
+- Single `UnifiedDetector` with tri-state classification (putt / swing / ambig) and type-aware pairing
 - Two-stage post-pairing contact gate: 100Hz device-motion `userAccel` primary, 800Hz raw-accel override when putter is selected
 - Dynamic 800Hz gating: only spins up at setup-start with putter selected, auto-stops 3s after setup-end if no pending shapes — preserves battery
 - Data Collection Mode for building labeled training corpus; false-positive logging when a detected stroke is undone
 
-**Location**: `GolfWatch Watch App/Services/SwingDetectionManager.swift`, `UnifiedDetector.swift`. Full algorithm spec in `docs/SWING_DETECTION.md`.
+**Location**: `GolfWatch Watch App/Services/SwingDetectionManager.swift` (orchestration); the detector itself is in the algorithms package (see Algorithms).
 
 #### Motion Data Recording
 - Record full motion data sessions
@@ -490,12 +494,8 @@ GolfWatch Watch App/                      # watchOS app target
 ├── Services/
 │   ├── WatchDataStore.swift              # Watch data persistence
 │   ├── SwingDetectionManager.swift       # Motion detection orchestrator
-│   ├── UnifiedDetector.swift             # Unified stroke detector
-│   ├── IncrementalPeakDetector.swift     # Streaming peak detection
-│   ├── RollingMotionBuffer.swift         # Motion data buffer
-│   ├── DetectionEvents.swift             # Event structs
-│   ├── WorkoutManager.swift              # HealthKit workout tracking
-│   └── SwingAlgorithmProtocol.swift
+│   ├── DetectorConfig.swift              # Detector thresholds from Supabase
+│   └── WorkoutManager.swift              # HealthKit workout tracking
 └── Helpers/WatchOS10Compatibility.swift
 ```
 

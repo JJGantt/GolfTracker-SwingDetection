@@ -1,4 +1,5 @@
 import Foundation
+import StrokeSaverAlgorithms
 import Supabase
 
 /// Uploads swing detection events to Supabase for ML analysis.

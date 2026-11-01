@@ -1,0 +1,3 @@
+[submodule "StrokeSaverAlgorithms"]
+	path = StrokeSaverAlgorithms
+	url = https://github.com/JJGantt/StrokeSaver-Algorithms.git

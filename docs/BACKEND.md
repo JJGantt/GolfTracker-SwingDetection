@@ -82,7 +82,7 @@ only "did the detector correctly identify a golf swing?" A practice swing is a
 its own correct answers. Pre-00047 `false_positive` rows are consequently a blend
 of genuine misfires and mislabeled practice swings; `swing_events` alone cannot
 split them (no flip timestamp), but joining `client_events` on
-`swing.update.falsePositive.ok` can. See `docs/SWING_DETECTION.md`.
+`swing.update.falsePositive.ok` can.
 
 ### Table: `swing_test_sessions` (00047)
 
@@ -188,40 +188,8 @@ curl -X DELETE "https://oumnicnvayqrbfbljgyl.supabase.co/rest/v1/swing_events?id
   -H "Authorization: Bearer sb_publishable_i0loB-AZw2qGokBJzHGSKA_VGgAgjBi"
 ```
 
-### From Python (ML analysis)
-```python
-from supabase import create_client
-import pandas as pd
-import os
-
-# Use service_role key for full access (bypasses RLS)
-sb = create_client(
-    "https://oumnicnvayqrbfbljgyl.supabase.co",
-    os.environ["SUPABASE_SERVICE_ROLE_KEY"]
-)
-
-# Query all swing events
-data = sb.table("swing_events").select("*").execute()
-df = pd.DataFrame(data.data)
-
-# Download a specific motion CSV from Storage (paths are keyed by USER, not device)
-res = sb.storage.from_("swing-motion").download(f"{user_id}/{event_id}.csv")
-
-# Round play only, CSV-backed and labeled:
-sb.table("swing_events").select("*") \
-  .is_("test_session_id", "null") \
-  .not_.is_("storage_path", "null") \
-  .not_.is_("label", "null").execute()
-
-# True positives, including practice swings (a correct detection either way):
-sb.table("swing_events").select("*").eq("label", "positive").execute()
-
-# Misses whose raw window was captured because nothing paired:
-sb.table("false_negative_groups").select("*") \
-  .eq("capture_reason", "lookback").eq("candidate_count", 0).execute()
-```
-
-Install: `pip install supabase pandas`
+### From Python (analysis)
+The analysis tooling and its queries are in the algorithms package repo (`StrokeSaverAlgorithms/`, see its `CLAUDE.md`).
 
 ### From iOS / Swift
 ```swift
@@ -234,25 +202,6 @@ request.setValue("application/json", forHTTPHeaderField: "Content-Type")
 request.httpBody = try JSONEncoder().encode(swingEventPayload)
 URLSession.shared.dataTask(with: request) { data, response, error in ... }.resume()
 ```
-
-### Python visualizer (direct from Supabase)
-```bash
-# All events — full multi-subplot breakdown (Rotation, Raw 800Hz, DM UserAccel, Orientation)
-python3 swing_detection/unified_visualize.py --supabase
-
-# Last N events
-python3 swing_detection/unified_visualize.py --supabase 10
-
-# Only false positives
-python3 swing_detection/unified_visualize.py --supabase --label-filter false_positive
-
-# Last 20 positives
-python3 swing_detection/unified_visualize.py --supabase 20 --label-filter positive
-
-# Custom output dir
-python3 swing_detection/unified_visualize.py --supabase -o /tmp
-```
-Downloads DM CSVs + 800Hz raw accel CSVs (when available) directly from Supabase storage, names them for the visualizer's `find_raw_accel_path` convention, and runs `plot_stitched`. Output is an interactive HTML file.
 
 ### Supabase CLI
 ```bash

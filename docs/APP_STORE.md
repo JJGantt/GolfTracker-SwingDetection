@@ -53,8 +53,9 @@ prompt appears on upload.
 set in App Store Connect at upload time — Apple changes it. Uploads must carry no alpha
 channel, so convert PNG to JPEG before uploading.
 
-**How the shots are staged.** Tooling lives in [`tools/screenshots/`](../tools/screenshots)
-with its own README. The app draws everything itself: strokes and targets are written into
+**How the shots are staged.** Tooling lives in the algorithms package repo, at
+`StrokeSaverAlgorithms/tools/screenshots/`, with its own README (it works against the
+account's own data through that repo's `swing_detection/sb.py`). The app draws everything itself: strokes and targets are written into
 the round in Supabase, and the simulator's GPS is walked along the route
 (`xcrun simctl location`) so the trail is recorded the way a real round records it.
 `scenarios.json` holds the holes and the scenarios (tee, green, centerline, the strokes
