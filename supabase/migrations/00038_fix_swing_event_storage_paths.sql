@@ -1,0 +1,6 @@
+-- Repair legacy swing_events rows that still pointed at pre-auth device folders
+-- after 00009 moved the underlying CSV objects into the sole user's folder.
+--
+-- A one-off data repair for that user's rows. It named the user and has been
+-- removed from this file; it matches no rows on any database created
+-- afterwards, so nothing is lost by its absence.
