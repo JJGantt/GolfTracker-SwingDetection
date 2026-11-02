@@ -501,7 +501,7 @@ GolfWatch Watch App/                      # watchOS app target
 │   ├── PredictGreenSettingsView.swift
 │   └── ViewSettingsView.swift
 ├── Services/
-│   ├── WatchDataStore.swift              # Watch data persistence
+│   ├── WatchDataStore.swift              # Watch data persistence (+ WatchDataStore+*.swift per concern)
 │   ├── SwingDetectionManager.swift       # Motion detection orchestrator
 │   ├── DetectorConfig.swift              # Detector thresholds from Supabase
 │   └── WorkoutManager.swift              # HealthKit workout tracking

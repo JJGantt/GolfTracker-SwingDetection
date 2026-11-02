@@ -126,9 +126,9 @@ The iPhone and Watch apps communicate bidirectionally via **WatchConnectivity**:
 
 **Critical Implementation Detail**: Both platforms maintain their own `DataStore` instances backed by SwiftData (`@Model` classes in `Models.swift`):
 - iOS: `DataStore` in `GolfTracker/Services/DataStore.swift` (state, setup, persistence), with one extension file per concern: `DataStore+Rounds`, `+Strokes`, `+Courses`, `+Clubs`, `+HoleDetection` (runs the green detector, `HoleDetectionAnalyzer.swift`, and answers the watch's requests) and `+DemoData`
-- watchOS: `WatchDataStore` in `GolfWatch Watch App/Services/WatchDataStore.swift`
+- watchOS: `WatchDataStore` in `GolfWatch Watch App/Services/WatchDataStore.swift` (state, setup, current round, club cache), with `WatchDataStore+Rounds`, `+Strokes`, `+Holes`, `+Clubs` and `+Greens` (blob results, cross-user hole placements, OSM data)
 
-Stored properties stay in the core file (an extension cannot hold one), so the core file is where to look for the store's state; a member written from more than one file is internal rather than `private`.
+Stored properties stay in the core file (an extension cannot hold one), so the core file is where to look for a store's state; a member written from more than one file is internal rather than `private`.
 
 What both do the same way is written once, in `RoundStoreShared.swift` (compiled into both targets): starting a round where the user stands (`startRoundAtCurrentLocation` → resolver → course / scorecard / course-name pickers), the green candidates (`filteredGreenCandidates`, via `GreenCandidates`), club lookups, and the round-lifecycle sweep. Each store conforms to `RoundStoreShared` and supplies its state and the few platform hooks (how it ends a round, how it records server activity, whether a start without a fix asks for location permission). Change that behaviour there, not in a store.
 
@@ -532,7 +532,13 @@ GolfWatch Watch App/                      # watchOS app target
 │   ├── ViewSettingsView.swift            # View preferences
 │   └── SwingTestView.swift               # Swing Test Mode UI — HIT/FP/MISS counters, False Positive + Missed It buttons
 ├── Services/
-│   ├── WatchDataStore.swift              # Watch data persistence + sync
+│   ├── WatchDataStore.swift              # Watch data persistence + sync (state, setup, current round, club cache)
+│   ├── WatchDataStore+Rounds.swift       # Round start (resolver, tee picker), end, hole completion
+│   ├── WatchDataStore+Strokes.swift      # Strokes, undo, target markers, stroke/putt counts
+│   ├── WatchDataStore+Holes.swift        # Add / move / navigate holes
+│   ├── WatchDataStore+Clubs.swift        # Club catalog hydration from Supabase, active-set clubs
+│   ├── WatchDataStore+Greens.swift       # Blob results (server cache, phone request), canonical hole placements, OSM data
+│   ├── ClubPrediction.swift              # ClubPredictionMode + ClubPredictionManager
 │   ├── SwingDetectionManager.swift                     # CoreMotion swing detection (core: state, init, monitoring, runUnifDetect, fireSmartDetection)
 │   ├── SwingDetectionManager+RawAccel.swift            # CMBatchedSensorManager lifecycle, dynamic 800Hz gating for putter
 │   ├── SwingDetectionManager+PostPairingGates.swift       # Runs the package's post-pairing gates on pending shapes (100Hz DM + 800Hz raw paths)

@@ -13,6 +13,7 @@
 		AA11BB22CC33DD44EE550143 /* SwingTestView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA11BB22CC33DD44EE550142 /* SwingTestView.swift */; };
 		AA11BB22CC33DD44EE550141 /* SwingTestSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA11BB22CC33DD44EE550140 /* SwingTestSession.swift */; };
 		AA11BB22CC33DD44EE550151 /* DetectorConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA11BB22CC33DD44EE550150 /* DetectorConfig.swift */; };
+		1FFC95E79D10456C80AF9B21 /* ActiveRoundView+ClubPrediction.swift in Sources */ = {isa = PBXBuildFile; fileRef = A027586C12704EBCAA1B1736 /* ActiveRoundView+ClubPrediction.swift */; };
 		213F987A236E419F88E9C4C2 /* HolePlayView+MoveStrokeMode.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0F575753710A466D92C391CB /* HolePlayView+MoveStrokeMode.swift */; };
 		25075A32729043CBA13B479B /* ActiveRoundView+StrokeRecording.swift in Sources */ = {isa = PBXBuildFile; fileRef = B395866142294534934CF914 /* ActiveRoundView+StrokeRecording.swift */; };
 		292FA1B1CDCE4D5D80F8A5D6 /* PlayerStats.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8713ACF846B0498E97AAC629 /* PlayerStats.swift */; };
@@ -150,6 +151,12 @@
 		E7D3905CA55409EAD6948B55 /* DataStore+Rounds.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1E353C72ADD7217015726042 /* DataStore+Rounds.swift */; };
 		70EECFEB5BF7519B2C41832D /* DataStore+Strokes.swift in Sources */ = {isa = PBXBuildFile; fileRef = 179E55749412E761F81D0C87 /* DataStore+Strokes.swift */; };
 		2AAF2DB012C5D0B0B0575F24 /* DataStore+DemoData.swift in Sources */ = {isa = PBXBuildFile; fileRef = F169D93E6B562C03D39C7F23 /* DataStore+DemoData.swift */; };
+		8219A7BC8299A4CE93D7675B /* WatchDataStore+Greens.swift in Sources */ = {isa = PBXBuildFile; fileRef = B31610D1E5F5AFEC620FE597 /* WatchDataStore+Greens.swift */; };
+		2F4AACCE3060879C746912BF /* WatchDataStore+Clubs.swift in Sources */ = {isa = PBXBuildFile; fileRef = B431642BF0F4A6C417FFE620 /* WatchDataStore+Clubs.swift */; };
+		2918BC20242CBC4CB09163B7 /* WatchDataStore+Strokes.swift in Sources */ = {isa = PBXBuildFile; fileRef = BA3D07EA6AF5B623EFF07FD4 /* WatchDataStore+Strokes.swift */; };
+		3096CECC50DF1C20079D7196 /* WatchDataStore+Rounds.swift in Sources */ = {isa = PBXBuildFile; fileRef = 025E4852430CA6A5BE2B201E /* WatchDataStore+Rounds.swift */; };
+		3F0D4362EBCE183DEBACEF9E /* WatchDataStore+Holes.swift in Sources */ = {isa = PBXBuildFile; fileRef = 57ED1C160423830EAA356B21 /* WatchDataStore+Holes.swift */; };
+		D40A622822A58730247B3704 /* ClubPrediction.swift in Sources */ = {isa = PBXBuildFile; fileRef = 67EA3CBFDD829933E4FEBBE4 /* ClubPrediction.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -270,6 +277,7 @@
 		870F6DC4F3184CDF81331B32 /* SwingDetectionManager+PostPairingGates.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "SwingDetectionManager+PostPairingGates.swift"; sourceTree = "<group>"; };
 		8713ACF846B0498E97AAC629 /* PlayerStats.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlayerStats.swift; sourceTree = "<group>"; };
 		93374566285C433CB8F2AD38 /* HolePlayView+MoveHoleMode.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "HolePlayView+MoveHoleMode.swift"; sourceTree = "<group>"; };
+		A027586C12704EBCAA1B1736 /* ActiveRoundView+ClubPrediction.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "ActiveRoundView+ClubPrediction.swift"; sourceTree = "<group>"; };
 		A6E32218380E4C3C93B38A12 /* ActiveRoundView+Scorecard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "ActiveRoundView+Scorecard.swift"; sourceTree = "<group>"; };
 		B06522DFDE374AFFB8DC4411 /* CourseDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CourseDetailView.swift; sourceTree = "<group>"; };
 		B395866142294534934CF914 /* ActiveRoundView+StrokeRecording.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "ActiveRoundView+StrokeRecording.swift"; sourceTree = "<group>"; };
@@ -295,6 +303,12 @@
 		1E353C72ADD7217015726042 /* DataStore+Rounds.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "DataStore+Rounds.swift"; sourceTree = "<group>"; };
 		179E55749412E761F81D0C87 /* DataStore+Strokes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "DataStore+Strokes.swift"; sourceTree = "<group>"; };
 		F169D93E6B562C03D39C7F23 /* DataStore+DemoData.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "DataStore+DemoData.swift"; sourceTree = "<group>"; };
+		B31610D1E5F5AFEC620FE597 /* WatchDataStore+Greens.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "WatchDataStore+Greens.swift"; sourceTree = "<group>"; };
+		B431642BF0F4A6C417FFE620 /* WatchDataStore+Clubs.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "WatchDataStore+Clubs.swift"; sourceTree = "<group>"; };
+		BA3D07EA6AF5B623EFF07FD4 /* WatchDataStore+Strokes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "WatchDataStore+Strokes.swift"; sourceTree = "<group>"; };
+		025E4852430CA6A5BE2B201E /* WatchDataStore+Rounds.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "WatchDataStore+Rounds.swift"; sourceTree = "<group>"; };
+		57ED1C160423830EAA356B21 /* WatchDataStore+Holes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "WatchDataStore+Holes.swift"; sourceTree = "<group>"; };
+		67EA3CBFDD829933E4FEBBE4 /* ClubPrediction.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClubPrediction.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -347,6 +361,7 @@
 				478676D9D6A7C82F54F29322 /* ActiveRoundView+Buttons.swift */,
 				875DA8525027B74EA632017C /* ActiveRoundView+ClubSelector.swift */,
 				16BCE78889CC4D2BA4EA325D /* ActiveRoundView+GPSIndicator.swift */,
+				A027586C12704EBCAA1B1736 /* ActiveRoundView+ClubPrediction.swift */,
 				6AHKBANNR000000000000001 /* HealthKitBanner.swift */,
 			);
 			path = Components;
@@ -593,6 +608,12 @@
 			isa = PBXGroup;
 			children = (
 				6AD5EAC82EE3B80700DDDCF0 /* WatchDataStore.swift */,
+				67EA3CBFDD829933E4FEBBE4 /* ClubPrediction.swift */,
+				57ED1C160423830EAA356B21 /* WatchDataStore+Holes.swift */,
+				025E4852430CA6A5BE2B201E /* WatchDataStore+Rounds.swift */,
+				BA3D07EA6AF5B623EFF07FD4 /* WatchDataStore+Strokes.swift */,
+				B431642BF0F4A6C417FFE620 /* WatchDataStore+Clubs.swift */,
+				B31610D1E5F5AFEC620FE597 /* WatchDataStore+Greens.swift */,
 				6AAUTO000000000000000D0 /* AutoAdvanceMonitor.swift */,
 				6A27A5762F0C000000000002 /* SwingDetectionManager.swift */,
 				6B3389ABF55B3A667CD3A6FA /* TimeWindowBuffer.swift */,
@@ -813,6 +834,12 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				D40A622822A58730247B3704 /* ClubPrediction.swift in Sources */,
+				3F0D4362EBCE183DEBACEF9E /* WatchDataStore+Holes.swift in Sources */,
+				3096CECC50DF1C20079D7196 /* WatchDataStore+Rounds.swift in Sources */,
+				2918BC20242CBC4CB09163B7 /* WatchDataStore+Strokes.swift in Sources */,
+				2F4AACCE3060879C746912BF /* WatchDataStore+Clubs.swift in Sources */,
+				8219A7BC8299A4CE93D7675B /* WatchDataStore+Greens.swift in Sources */,
 				C4598492A14C2AA6574348B9 /* ClubDistanceEditorView.swift in Sources */,
 				8A450824ACE14331B1994B04 /* ActiveRoundView+MapCamera.swift in Sources */,
 				F79C60472FF591621AB54D1C /* ActiveRoundView+Map.swift in Sources */,
@@ -872,6 +899,7 @@
 				25075A32729043CBA13B479B /* ActiveRoundView+StrokeRecording.swift in Sources */,
 				BF402ACBA5ED40FE92601108 /* ActiveRoundView+Scorecard.swift in Sources */,
 				BBA6A7885FDA496CBB0C574B /* ActiveRoundView+GPSIndicator.swift in Sources */,
+				1FFC95E79D10456C80AF9B21 /* ActiveRoundView+ClubPrediction.swift in Sources */,
 				6AHKBANNR000000000000002 /* HealthKitBanner.swift in Sources */,
 				6AONBOARD000000000000004 /* WatchOnboardingView.swift in Sources */,
 			);
