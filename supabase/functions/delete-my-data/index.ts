@@ -43,13 +43,19 @@ serve(async (req) => {
   try {
     let removed = 0
     for (const bucket of BUCKETS) {
-      for (const folder of new Set([userId.toLowerCase(), userId.toUpperCase()])) {
-        const paths = await listAll(bucket, folder)
-        for (let i = 0; i < paths.length; i += PAGE) {
-          const { error } = await admin.storage.from(bucket).remove(paths.slice(i, i + PAGE))
-          if (error) throw new Error(`remove ${bucket}: ${error.message}`)
-        }
-        removed += paths.length
+      // Listing matches the folder name case-insensitively, so each casing
+      // returns both folders' objects, named with the casing asked for.
+      // Removal needs the stored name, so every candidate path is tried and
+      // the count is of objects actually removed.
+      const paths = new Set<string>()
+      for (const folder of [userId.toLowerCase(), userId.toUpperCase()]) {
+        for (const p of await listAll(bucket, folder)) paths.add(p)
+      }
+      const all = [...paths]
+      for (let i = 0; i < all.length; i += PAGE) {
+        const { data, error } = await admin.storage.from(bucket).remove(all.slice(i, i + PAGE))
+        if (error) throw new Error(`remove ${bucket}: ${error.message}`)
+        removed += data?.length ?? 0
       }
     }
     const { error } = await admin.rpc("delete_user_data", { p_user_id: userId })

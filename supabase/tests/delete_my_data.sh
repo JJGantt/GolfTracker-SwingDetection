@@ -16,7 +16,7 @@ upload() { # upload <token> <path>
         -X POST "$U/storage/v1/object/swing-motion/$2" --data-binary 't,x'; }
 count() { # count <table> <owner column> <user id>
     admin "$U/rest/v1/$1?$2=eq.$3&select=$2" | jq length; }
-objects() { # objects <folder>: how many objects the folder holds, recursively
+objects() { # objects <folder>: entries listed under the folder (storage matches the name case-insensitively)
     admin -X POST "$U/storage/v1/object/list/swing-motion" -d "{\"prefix\":\"$1/\",\"limit\":1000}" | jq length; }
 
 UPPER=$(echo "$A_ID" | tr 'a-z' 'A-Z')
@@ -35,7 +35,7 @@ check "the user's motion files upload" \
 B_FILE="$B_ID/$(new_id)_raw.csv"; upload "$B_TOKEN" "$B_FILE" >/dev/null
 
 check "before: the user has rows and files" \
-    "$(count swing_events user_id "$A_ID") $(count rounds user_id "$A_ID") $(objects "$UPPER") $(objects "$A_ID")" "1 1 1 1"
+    "$(count swing_events user_id "$A_ID") $(count rounds user_id "$A_ID") $(objects "$A_ID")" "1 1 2"
 
 r=$(call "$A_TOKEN" -X POST "$U/functions/v1/delete-my-data")
 check "Delete My Data succeeds" "$(status "$r") $(body "$r" | jq .objectsRemoved)" "200 2"

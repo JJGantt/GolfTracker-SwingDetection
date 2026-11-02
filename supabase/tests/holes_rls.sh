@@ -60,11 +60,11 @@ check "the owner deletes their own; the shared row stays" \
 echo "-- deriving shared holes from OSM"
 POLY=$(admin "$U/rest/v1/courses?id=eq.$SHARED_COURSE&select=osm_polygons" | jq -c '.[0].osm_polygons')
 N=$(echo "$POLY" | jq '.holes | length')
-register() { # register <token> <id> <osm_id> <polygons json>
+register() { # register <token> <id> <osm_id> <polygons json>: as the edge function (service role) does
     jq -n --arg id "$2" --argjson osm "$3" --argjson p "$4" \
         '{p_id: $id, p_name: "rls test", p_center_lat: 30, p_center_lon: -81, p_osm_id: $osm,
           p_external_course_id: null, p_osm_polygons: $p}' \
-        | call "$1" -X POST "$U/rest/v1/rpc/register_osm_course" -d @-
+        | admin -X POST "$U/rest/v1/rpc/register_osm_course" -d @-
 }
 TEMP_COURSE=$(uuidgen | tr 'A-Z' 'a-z'); TEMP_COURSES+=("$TEMP_COURSE")
 register "$C_TOKEN" "$TEMP_COURSE" "$(fake_osm_id)" "$POLY" >/dev/null

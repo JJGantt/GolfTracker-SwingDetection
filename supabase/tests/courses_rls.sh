@@ -22,9 +22,12 @@ register() { register_args "$@" | admin -X POST "$U/rest/v1/rpc/register_osm_cou
 # The edge function, as the app calls it.
 register_fn() { call "$1" -X POST "$U/functions/v1/register-osm-course" -d "$2"; }
 store_blobs() { # store_blobs <token> <course id> <tag>: prints the tag of the set now in force
-    body "$(call "$1" -X POST "$U/rest/v1/rpc/store_course_blob_detection" \
-        -d "{\"p_course_id\":\"$2\",\"p_results\":{\"courseId\":\"$2\",\"generatedAt\":\"2026-11-01T00:00:00.000\",\"blobs\":[],\"tag\":$3}}")" \
-        | jq -c 'if . == null then null else .tag end'
+    # The JSON is built outside $(...): bash 3.2 brace-expands a {a,b} inside it.
+    local data r
+    data=$(jq -nc --arg id "$2" --argjson tag "$3" \
+        '{p_course_id: $id, p_results: {courseId: $id, generatedAt: "2026-11-01T00:00:00.000", blobs: [], tag: $tag}}')
+    r=$(call "$1" -X POST "$U/rest/v1/rpc/store_course_blob_detection" -d "$data")
+    body "$r" | jq -c 'if . == null then null else .tag end'
 }
 
 echo "-- shared courses"
