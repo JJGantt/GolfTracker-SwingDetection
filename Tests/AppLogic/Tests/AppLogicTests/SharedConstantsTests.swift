@@ -32,7 +32,7 @@ final class SharedConstantsTests: XCTestCase {
         XCTAssertEqual(try number(#"const CELL_STEP_DEG = ([0-9.eE-]+)"#, in: field, file: "course-height-field"), step)
 
         // The solver is in the private algorithms submodule, absent from a
-        // public checkout (and so from CI).
+        // checkout without access to it (and so from CI).
         guard let solver = try source("StrokeSaverAlgorithms/supabase/functions/resolve-hole-heights/solver.ts") else {
             throw XCTSkip("algorithms submodule not checked out")
         }
