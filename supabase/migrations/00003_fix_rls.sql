@@ -1,5 +1,5 @@
--- Fix RLS: publishable key maps to 'postgres' role, not 'anon'.
--- Drop the anon-specific policy and create one that works for all roles.
+-- Insert policies on swing_events and the swing-motion bucket with no role clause.
+-- Superseded by the owner-scoped policies in 00008 and 00009.
 
 drop policy if exists "anon_insert_only" on swing_events;
 create policy "allow_insert"

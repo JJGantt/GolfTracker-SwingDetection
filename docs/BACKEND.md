@@ -16,9 +16,9 @@ StrokeSaver uses [Supabase](https://supabase.com) as its cloud backend. Supabase
 | **Region** | Check dashboard → Project Settings → General |
 | **Supabase CLI** | `brew install supabase/tap/supabase`, linked via `supabase link --project-ref oumnicnvayqrbfbljgyl` |
 
-### Key Format (updated 2026)
+### Key Format
 
-Supabase now uses `sb_publishable_*` keys instead of the older JWT `eyJ...` format. The publishable key maps to the **`postgres`** Postgres role (not `anon` as in older Supabase documentation). This affects Row-Level Security policy authoring — policies targeting `to anon` will NOT match requests made with the publishable key. Policies must either omit the role clause (apply to all roles) or target `postgres` explicitly.
+The project uses `sb_publishable_*` / `sb_secret_*` keys rather than the JWT `eyJ...` format. A request carrying only the publishable key runs as the `anon` role; a signed-in user's JWT in `Authorization` runs as `authenticated`. Policies are written for `authenticated`; `supabase/tests/holes_rls.sh` asserts that the publishable key alone reads and writes nothing on `holes`.
 
 ### Authentication Headers
 
@@ -27,7 +27,7 @@ Every REST API request requires two headers:
 apikey: sb_publishable_i0loB-AZw2qGokBJzHGSKA_VGgAgjBi
 Authorization: Bearer sb_publishable_i0loB-AZw2qGokBJzHGSKA_VGgAgjBi
 ```
-Both use the same publishable key for unauthenticated requests. When user auth is added later, `Authorization` will carry the user's JWT instead.
+`apikey` is always the publishable key. `Authorization` carries the signed-in user's JWT (Sign in with Apple via Supabase Auth); with the publishable key there instead, the request is anonymous and RLS returns nothing.
 
 ---
 
@@ -142,10 +142,7 @@ until 00030.
 
 ## Row-Level Security (RLS)
 
-**Enabled and owner-scoped.** RLS was disabled during early development (00004),
-which is what the old key-format note below described; 00008 dropped `device_id`,
-added `user_id`, re-enabled RLS and installed per-user policies. Every swing table
-now follows the same shape:
+**Enabled and owner-scoped** (00008). Every swing table follows the same shape:
 
 ```sql
 alter table swing_events enable row level security;
@@ -173,9 +170,9 @@ curl -X POST "https://oumnicnvayqrbfbljgyl.supabase.co/rest/v1/swing_events" \
   -H "Content-Type: application/json" \
   -H "Prefer: return=representation" \
   -d '{"user_id": "...", "classification": "swing", "club_type": "Driver"}'
-# NOTE: inserts need a USER JWT in the Authorization header, not the publishable
-# key — RLS scopes every row to auth.uid(). Use the service_role key for analysis
-# reads instead; it bypasses RLS.
+# NOTE: every request here needs a USER JWT in the Authorization header in place
+# of the publishable key — RLS scopes every row to auth.uid(). Use the
+# service_role key for analysis reads instead; it bypasses RLS.
 
 # Query rows
 curl "https://oumnicnvayqrbfbljgyl.supabase.co/rest/v1/swing_events?select=*&classification=eq.putt" \
@@ -223,8 +220,8 @@ Schema changes are managed as sequential SQL files in `supabase/migrations/`:
 
 | File | Description |
 |---|---|
-| `00001_swing_events.sql` | Create `swing_events`, indexes, storage bucket. Original RLS policies (superseded). |
-| `00002`–`00004` | Early RLS debugging; 00004 disabled RLS for development. Superseded by 00008. |
+| `00001_swing_events.sql` | Create `swing_events`, indexes, storage bucket. RLS policies superseded by 00008. |
+| `00002`–`00004` | Policies superseded by 00008. |
 | `00005_add_confidence.sql` | `swing_events.confidence`. |
 | `00008_swing_events_user_id.sql` | **Dropped `device_id`**, added `user_id`, re-enabled RLS with owner-scoped policies. |
 | `00028_false_negative_groups.sql` | `false_negative_groups` + `false_negative_candidates`. |
