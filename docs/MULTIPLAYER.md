@@ -40,7 +40,7 @@ Sign In With Apple provides first/last name only on the very first sign-in, and 
 ## Join flow
 
 1. User A taps **Host Round** → playgroup row created with `status='open'`, host_id = User A → User A's round starts as normal.
-2. User B is at the same course, taps **Join Round** → server returns nearby playgroups in `status='open'` within proximity → list shows "Jared's round (1 player)".
+2. User B is at the same course, taps **Join Round** → server returns nearby playgroups in `status='open'` within proximity → list shows "Alex's round (1 player)".
 3. User B taps the entry → join request created (or sent via Realtime to host).
 4. User A's app shows the pending request in the multiplayer view (in-app only — no APNs / system notifications).
 5. User A taps **Accept** → User B added to `playgroup_members`, User B's app gets the confirmation and User B's round starts in the shared playgroup context.
@@ -433,7 +433,7 @@ landed as `ScorecardView`/`ScorecardSheet`, and step 9's cleanup is a `pg_cron` 
 - Push notifications (APNs)
 - Voice chat or chat
 - Stats segmentation between solo and shared rounds (multi-player rounds count in your stats normally)
-- Cross-device player notification when their stroke is recorded by another (e.g., haptic on Mike's watch when Jared tees off)
+- Cross-device player notification when their stroke is recorded by another (e.g., a haptic on one player's watch when another tees off)
 - Shared round-level features beyond live positions + stroke markers + scorecard
 - Visualizing per-hole tee changes on the scorecard
 

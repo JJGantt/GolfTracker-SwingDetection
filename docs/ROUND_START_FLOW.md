@@ -172,8 +172,8 @@ IF needsBlobDetection:
 
 The card exists because the phone is the only place the analyzer can run and
 it usually receives the request in the background, where the analyzer's MapKit
-snapshots do not complete (2026-09-07 Blue Sky: request received, run died, no
-error anywhere, course never got blobs). `sent`/`running` show a spinner;
+snapshots do not complete (the run dies with no error and the course gets no
+blobs). `sent`/`running` show a spinner;
 `unreachable` (the WC send failed or the phone was not reachable) and `queued`
 (the phone has it but its app is not open) show the unreachable message.
 Resuming a round whose blobs are still missing re-sends the request once per

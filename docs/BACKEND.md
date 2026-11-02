@@ -132,8 +132,7 @@ Private. Paths are keyed by **`user_id`**, not device:
 | `{userId}/lookback/{groupId}/window.csv` | Lookback raw window |
 | `{userId}/lookback/{groupId}/window_raw.csv` | Lookback 800 Hz, when running |
 
-Detection slices cover `bsTopT − 2.0s` to `fsPeakT + 1.0s`. The `sensor_capture/`
-prefix is gone — recorder removed and its 185 objects deleted 2026-08-27. Storage policies compare
+Detection slices cover `bsTopT − 2.0s` to `fsPeakT + 1.0s`. Storage policies compare
 folder to `auth.uid()` **case-insensitively** — Swift's `UUID.uuidString` is
 uppercase and `auth.uid()::text` is not, which silently 403'd every nested upload
 until 00030.
