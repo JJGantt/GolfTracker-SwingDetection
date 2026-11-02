@@ -22,10 +22,12 @@ the store screenshots are made, and what Apple requires before review. Store cop
 
 ## Build and upload
 
-1. **Bump the build number in BOTH Info.plists**, in lockstep, above the last uploaded
-   build. `CFBundleVersion` is a literal in `GolfTracker/Info.plist` and
-   `GolfWatch Watch App/Info.plist`, and `GENERATE_INFOPLIST_FILE = NO`, so
-   `CURRENT_PROJECT_VERSION` is ignored. Edit with PlistBuddy.
+1. **Bump the build number** above the last uploaded build: `CURRENT_PROJECT_VERSION`
+   in the project-level build settings (not a target's). Both Info.plists read it as
+   `$(CURRENT_PROJECT_VERSION)`, and `CFBundleShortVersionString` reads `$(MARKETING_VERSION)`
+   the same way, so the phone and the embedded watch app cannot carry different numbers.
+   A target-level value would override the project's for that target alone, so neither
+   target sets one.
 2. **Install the device platforms.** Xcode 26 ships without the iOS/watchOS *device*
    platforms, and archiving the embedded-watch scheme needs both. Get them from
    Xcode → Settings → Components. `xcodebuild -downloadPlatform iOS` also drags in the
