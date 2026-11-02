@@ -2,7 +2,7 @@
 
 A comprehensive golf tracking application for iOS and Apple Watch that provides real-time GPS-based distance tracking, stroke recording, and advanced motion detection for swing analysis.
 
-> **Naming:** the product is **StrokeSaver** (App Store / TestFlight, app id `6756589450`). The Xcode
+> **Naming:** the product is **StrokeSaver** (distributed through TestFlight; App Store Connect app id `6756589450`). The Xcode
 > project, targets, source directories, bundle identifiers (`com.Jared.GolfTracker`), this repo, and the
 > support site keep the original `GolfTracker` name — they are internal identifiers and must not be
 > renamed. Anything a user reads says StrokeSaver.
