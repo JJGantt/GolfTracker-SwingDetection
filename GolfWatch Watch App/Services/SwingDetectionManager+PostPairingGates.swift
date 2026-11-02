@@ -51,9 +51,9 @@ extension SwingDetectionManager {
             }
 
             rollingBufferLock.lock()
-            let contactSamples = rollingMotionBuffer.filter { $0.sensorTime >= bsTopT && $0.sensorTime <= windowEnd }
-            let blSamples = rollingMotionBuffer.filter { $0.sensorTime >= baselineStart && $0.sensorTime <= bsTopT }
-            let revSegment = rollingMotionBuffer.filter { $0.sensorTime >= bsTopT && $0.sensorTime <= PostPairingGates.reversalEnd(fsPeakT: fsPeakT) }
+            let contactSamples = rollingMotionBuffer.elements(from: bsTopT, to: windowEnd)
+            let blSamples = rollingMotionBuffer.elements(from: baselineStart, to: bsTopT)
+            let revSegment = rollingMotionBuffer.elements(from: bsTopT, to: PostPairingGates.reversalEnd(fsPeakT: fsPeakT))
             rollingBufferLock.unlock()
 
             guard contactSamples.count >= 3 else {
@@ -128,7 +128,7 @@ extension SwingDetectionManager {
             if revEnd > bsTopT {
                 rollingBufferLock.lock()
                 revRotMags = rollingMotionBuffer
-                    .filter { $0.sensorTime >= bsTopT && $0.sensorTime <= revEnd }
+                    .elements(from: bsTopT, to: revEnd)
                     .map { $0.rotationMag }
                 rollingBufferLock.unlock()
             }

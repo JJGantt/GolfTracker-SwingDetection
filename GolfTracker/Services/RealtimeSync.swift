@@ -545,6 +545,8 @@ final class RealtimeSync {
             if let existing = existing { context.delete(existing) }
             return
         }
+        if isStale(record, applied: existing?.serverVersion, table: "rounds") { return }
+        let version = Self.version(of: record)
         let courseId = record["course_id"]?.stringValue.flatMap(UUID.init(uuidString:)) ?? UUID()
         let courseName = record["course_name"]?.stringValue ?? ""
         let date = record["date"]?.stringValue.flatMap(Self.parseISODate) ?? Date()
@@ -568,6 +570,7 @@ final class RealtimeSync {
             existing.selectedTeeId = selectedTeeId
             existing.endedAt = endedAt
             existing.lastActivityAt = lastActivityAt
+            existing.serverVersion = version ?? existing.serverVersion
         } else {
             let r = Round(
                 id: id,
@@ -583,6 +586,7 @@ final class RealtimeSync {
             r.locationTestModeEnabled = record["location_test_mode_enabled"]?.boolValue
             r.endedAt = endedAt
             r.lastActivityAt = lastActivityAt
+            r.serverVersion = version
             context.insert(r)
             adoptOrphans(context: context, round: r)
         }
@@ -661,6 +665,8 @@ final class RealtimeSync {
             }
             return
         }
+        if isStale(record, applied: existing?.serverVersion, table: fromRoundHoles ? "round_holes" : "holes") { return }
+        let version = Self.version(of: record)
         let number = record["number"]?.intValue ?? 0
         let lat = record["latitude"]?.doubleValue
         let lon = record["longitude"]?.doubleValue
@@ -689,6 +695,7 @@ final class RealtimeSync {
         if let existing = existing {
             existing.number = number; existing.latitude = lat; existing.longitude = lon; existing.par = par
             existing.teeId = teeId
+            existing.serverVersion = version ?? existing.serverVersion
             if !fromRoundHoles { existing.ownerId = ownerId }
             if !fromRoundHoles, let course = existing.course {
                 dropOtherCourseHoles(in: course, number: number, keeping: existing.id, context: context)
@@ -708,6 +715,7 @@ final class RealtimeSync {
             h.latitude = lat; h.longitude = lon; h.par = par; h.teeId = teeId
             h.roundIdRef = roundId
             h.ownerId = ownerId
+            h.serverVersion = version
             context.insert(h)
             // Best-effort link to its round via round_id, if present.
             if let roundId = roundId {
@@ -725,6 +733,18 @@ final class RealtimeSync {
                 }
             }
         }
+    }
+
+    /// Whether `record` is older than the copy of its row already applied
+    /// (`RowVersion`), in which case it is dropped.
+    private func isStale(_ record: [String: AnyJSON], applied: Int64?, table: String) -> Bool {
+        guard RowVersion.isStale(incoming: Self.version(of: record), applied: applied) else { return false }
+        ClientEventLogger.log("realtime.apply.staleDropped", detail: ["table": .string(table)])
+        return true
+    }
+
+    private static func version(of record: [String: AnyJSON]) -> Int64? {
+        record["updated_at"]?.stringValue.flatMap(RowVersion.parse)
     }
 
     /// Whether the course already holds the user's own hole for `number`
@@ -784,6 +804,8 @@ final class RealtimeSync {
             if let existing = existing { context.delete(existing) }
             return
         }
+        if isStale(record, applied: existing?.serverVersion, table: "strokes") { return }
+        let version = Self.version(of: record)
         let holeNumber = record["hole_number"]?.intValue ?? 0
         let strokeNumber = record["stroke_number"]?.intValue ?? 0
         let lat = record["latitude"]?.doubleValue ?? 0
@@ -806,6 +828,7 @@ final class RealtimeSync {
             existing.isPenalty = isPenalty
             existing.trajectoryHeading = traj
             existing.relAltMeters = relAlt
+            existing.serverVersion = version ?? existing.serverVersion
             if let roundId = roundId {
                 existing.roundIdRef = roundId
                 if existing.round == nil {
@@ -820,6 +843,7 @@ final class RealtimeSync {
                            coordinate: coord, clubId: clubId, isPenalty: isPenalty,
                            trajectoryHeading: traj, relAltMeters: relAlt, timestamp: timestamp)
             s.roundIdRef = roundId
+            s.serverVersion = version
             context.insert(s)
             if let roundId = roundId {
                 let rd = FetchDescriptor<Round>(predicate: #Predicate { $0.id == roundId })
@@ -838,14 +862,18 @@ final class RealtimeSync {
             if let existing = existing { context.delete(existing) }
             return
         }
+        if isStale(record, applied: existing?.serverVersion, table: "targets") { return }
+        let version = Self.version(of: record)
         let holeNumber = record["hole_number"]?.intValue ?? 0
         let lat = record["latitude"]?.doubleValue ?? 0
         let lon = record["longitude"]?.doubleValue ?? 0
         let coord = CLLocationCoordinate2D(latitude: lat, longitude: lon)
         if let existing = existing {
             existing.holeNumber = holeNumber; existing.latitude = lat; existing.longitude = lon
+            existing.serverVersion = version ?? existing.serverVersion
         } else {
             let t = Target(id: id, holeNumber: holeNumber, coordinate: coord)
+            t.serverVersion = version
             context.insert(t)
             if let roundId = record["round_id"]?.stringValue.flatMap(UUID.init(uuidString:)) {
                 let rd = FetchDescriptor<Round>(predicate: #Predicate { $0.id == roundId })

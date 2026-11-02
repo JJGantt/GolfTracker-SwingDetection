@@ -25,14 +25,12 @@ import StrokeSaverAlgorithms
 final class DetectorConfig: ObservableObject {
     static let shared = DetectorConfig()
 
-    /// Values as last resolved. Empty until the first successful load, at which
-    /// point the compiled defaults are what is actually in force.
+    /// The set in force, as last installed. Empty until the first complete one.
     @Published private(set) var values: [String: Double] = [:]
 
-    /// Whether real thresholds are in force. Detection is gated on this: the
-    /// compiled literals exist only because Swift requires stored properties to
-    /// be initialised, and must never be what a stroke is judged against.
-    var isLoaded: Bool { !values.isEmpty }
+    /// Whether a complete set of thresholds is in force. Detection is gated on
+    /// this; there are no compiled thresholds to fall back on.
+    var isLoaded: Bool { DetectorParameters.isLoaded }
 
     @Published private(set) var loadedAt: Date?
     /// Where the live values came from, for the record on every uploaded row.
@@ -53,10 +51,8 @@ final class DetectorConfig: ObservableObject {
     private func adoptCachedIfAvailable() {
         guard let data = try? Data(contentsOf: cacheURL),
               let cached = try? JSONDecoder().decode([String: Double].self, from: data),
-              !cached.isEmpty else { return }
-        values = cached
-        DetectorParameters.install(cached)
-        source = "cache"
+              !cached.isEmpty,
+              apply(cached, source: "cache") else { return }
     }
 
     private struct Row: Decodable {
@@ -80,10 +76,8 @@ final class DetectorConfig: ObservableObject {
             for r in rows where r.user_id?.lowercased() == uid && uid != nil {
                 resolved[r.key] = r.value
             }
-            values = resolved
-            DetectorParameters.install(resolved)
+            guard apply(resolved, source: "remote") else { return }
             loadedAt = Date()
-            source = "remote"
             try? JSONEncoder().encode(resolved).write(to: cacheURL, options: .atomic)
             ClientEventLogger.log("detectorConfig.loaded", detail: [
                 "count": .integer(resolved.count),
@@ -98,6 +92,27 @@ final class DetectorConfig: ObservableObject {
     }
 
     // MARK: - Applying
+
+    /// Installs a resolved set if it is complete. An incomplete one (the
+    /// table lost a row the detector reads, or a value is not a number) is
+    /// refused and reported, and the set already in force keeps judging
+    /// strokes; it never reaches the cache.
+    private func apply(_ resolved: [String: Double], source newSource: String) -> Bool {
+        switch DetectorParameters.install(resolved) {
+        case .installed:
+            values = resolved
+            source = newSource
+            return true
+        case let .rejected(missing, invalid):
+            ClientEventLogger.log("detectorConfig.rejected", detail: [
+                "source": .string(newSource),
+                "missing": .string(missing.joined(separator: ",")),
+                "invalid": .string(invalid.joined(separator: ",")),
+                "inForce": .string(source)
+            ])
+            return false
+        }
+    }
 
     /// Thresholds are read through `DetectorParameters.d(_:)` / `i(_:)` at the
     /// point of use, so there is nothing to copy into and no window where the

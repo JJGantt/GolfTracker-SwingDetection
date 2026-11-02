@@ -26,6 +26,15 @@ The application consists of two main targets:
 
 Both apps communicate via **WatchConnectivity** framework for real-time data synchronization.
 
+## Tests
+
+    cd Tests/AppLogic && swift test
+
+The app's rule logic (statistics, which copy of a synced row wins, the watch's motion buffer),
+compiled from the app's own source files as a plain Swift package; CI runs it on every push to
+`main`. `supabase/tests/holes_rls.sh` checks the course-hole access rules against the live project
+and needs the service-role key. `CLAUDE.md` § Tests has the full list.
+
 ## Algorithms
 
 Swing detection, swing direction and the elevation solver are kept in a private package. This repository contains the interfaces the app calls them through.

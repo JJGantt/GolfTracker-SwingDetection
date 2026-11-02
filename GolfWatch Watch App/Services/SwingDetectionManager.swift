@@ -1,4 +1,5 @@
 import Foundation
+import os
 import CoreMotion
 import CoreLocation
 import Combine
@@ -33,7 +34,14 @@ class SwingDetectionManager: NSObject, ObservableObject {
     var extendedSession: WKExtendedRuntimeSession?
 
     @Published var lastDetectedSwing: DetectedSwing?
-    @Published var isMonitoring: Bool = false
+    /// For the UI. Code off the main thread reads `monitoringActive`: the
+    /// motion and raw-accel queues test it on every sample, and a `@Published`
+    /// property read there while main writes it is a data race.
+    @Published private(set) var isMonitoring: Bool = false {
+        didSet { monitoringFlag.withLock { $0 = isMonitoring } }
+    }
+    private let monitoringFlag = OSAllocatedUnfairLock(initialState: false)
+    var monitoringActive: Bool { monitoringFlag.withLock { $0 } }
 
     // User Acceleration (gravity removed)
     @Published var userAccelMag: Double = 0.0
@@ -248,9 +256,7 @@ class SwingDetectionManager: NSObject, ObservableObject {
         let motionWindowStart = shape.bsTopT - 2.0
         let motionWindowEnd = shape.fsPeakT + 1.0
         rollingBufferLock.lock()
-        let motionSlice = rollingMotionBuffer.filter {
-            $0.sensorTime >= motionWindowStart && $0.sensorTime <= motionWindowEnd
-        }
+        let motionSlice = rollingMotionBuffer.elements(from: motionWindowStart, to: motionWindowEnd)
         rollingBufferLock.unlock()
         eventBufferLock.lock()
         let rawAccelSlice = eventRawAccelBuffer.samples(in: motionWindowStart...motionWindowEnd)
@@ -350,9 +356,7 @@ class SwingDetectionManager: NSObject, ObservableObject {
         }
 
         rollingBufferLock.lock()
-        let motionSlice = rollingMotionBuffer.filter {
-            $0.sensorTime >= windowStart && $0.sensorTime <= windowEnd
-        }
+        let motionSlice = rollingMotionBuffer.elements(from: windowStart, to: windowEnd)
         rollingBufferLock.unlock()
 
         eventBufferLock.lock()
@@ -394,9 +398,10 @@ class SwingDetectionManager: NSObject, ObservableObject {
     var lastStaleCheckTime: TimeInterval = 0
     var rawAccelMissingWarned = false
 
-    /// Most recent raw accel sample timestamp. Written on rawAccelQueue, read on motionQueue.
-    /// arm64 Double reads/writes are atomic — safe without a lock.
-    var latestRawAccelTime: TimeInterval = 0
+    /// Most recent raw accel sample timestamp. Written on rawAccelQueue, read
+    /// on motionQueue, so it is behind a lock: an unsynchronised Double shared
+    /// across threads is a data race whatever the hardware does with it.
+    let latestRawAccelTime = OSAllocatedUnfairLock<TimeInterval>(initialState: 0)
 
     struct DetectionMetadata {
         var strokeId: UUID?
@@ -653,9 +658,10 @@ class SwingDetectionManager: NSObject, ObservableObject {
     var rawAccelRunningForCapture: Bool = false
     let eventBufferLock = NSLock()
 
-    // Rolling buffer — 3 min at 100Hz = 18,000 samples (~660KB)
-    var rollingMotionBuffer: [RecordedDataPoint] = []
-    let rollingBufferDuration: TimeInterval = 180.0
+    // Rolling buffer — 3 min at 100Hz = 18,000 samples (~660KB). Guarded by
+    // `rollingBufferLock`: written on the motion queue, read from upload paths.
+    static let rollingBufferDuration: TimeInterval = 180.0
+    var rollingMotionBuffer = TimeWindowBuffer<RecordedDataPoint>(duration: rollingBufferDuration) { $0.sensorTime }
     let rollingBufferLock = NSLock()
 
 
@@ -893,7 +899,7 @@ class SwingDetectionManager: NSObject, ObservableObject {
 
         // Rolling 3-min buffer — fed continuously while monitoring so the
         // detector can pull motion slices for swing_event uploads.
-        if isMonitoring {
+        if monitoringActive {
             let dp = RecordedDataPoint(
                 sensorTime: data.timestamp, userAccelX: uax, userAccelY: uay, userAccelZ: uaz, userAccelMag: uaMag,
                 rotationX: rx, rotationY: ry, rotationZ: rz, rotationMag: rMag,
@@ -902,19 +908,14 @@ class SwingDetectionManager: NSObject, ObservableObject {
             )
             rollingBufferLock.lock()
             rollingMotionBuffer.append(dp)
-            let cutoff = data.timestamp - rollingBufferDuration
-            while let first = rollingMotionBuffer.first, first.sensorTime < cutoff {
-                rollingMotionBuffer.removeFirst()
-            }
             rollingBufferLock.unlock()
         }
 
         checkRaw800Liveness(sensorTime: data.timestamp)
 
-        // Detection logic. Gated on a resolved config — see DetectorConfig:
-        // the compiled literals exist only to satisfy Swift's initialisation
-        // rules and must never be what judges a stroke.
-        guard DetectorParameters.isLoadedUnsafe else { return }
+        // Detection logic. Gated on a complete config being in force (see
+        // DetectorConfig); there are no compiled thresholds.
+        guard DetectorParameters.isLoaded else { return }
         switch detectionMode {
         case .off:
             break
@@ -954,7 +955,8 @@ class SwingDetectionManager: NSObject, ObservableObject {
         unifiedDetector.process(sample)
         if let shapeEvent = unifiedDetector.pendingShapeEvent {
             unifiedDetector.pendingShapeEvent = nil
-            let rawAge = latestRawAccelTime > 0 ? (shapeEvent.fsPeakT - latestRawAccelTime) * 1000 : -1.0
+            let lastRaw = latestRawAccelTime.withLock { $0 }
+            let rawAge = lastRaw > 0 ? (shapeEvent.fsPeakT - lastRaw) * 1000 : -1.0
             dprint("⌚ [UNIF_SHAPE type=\(shapeEvent.classification.rawValue) fsPeakT=\(f3(shapeEvent.fsPeakT)) fsPeakRotMag=\(f3(shapeEvent.fsPeakRotMag)) rawAge=\(f1(rawAge))ms]")
 
             if !requirePostPairingGates {
@@ -1131,7 +1133,7 @@ class SwingDetectionManager: NSObject, ObservableObject {
         let motionWindowEnd = shapeEvent.map { $0.fsPeakT + 1.0 } ?? (lastDeviceMotionSensorTime + 0.5)
         let motionWindowStart = shapeEvent.map { $0.bsTopT - 2.0 } ?? (motionWindowEnd - 5.0)
         rollingBufferLock.lock()
-        let motionSlice = rollingMotionBuffer.filter { $0.sensorTime >= motionWindowStart && $0.sensorTime <= motionWindowEnd }
+        let motionSlice = rollingMotionBuffer.elements(from: motionWindowStart, to: motionWindowEnd)
         rollingBufferLock.unlock()
         DispatchQueue.main.async { self.lastDetectionMotionSlice = motionSlice }
 

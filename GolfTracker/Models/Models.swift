@@ -273,6 +273,9 @@ final class Hole {
     var ownerId: UUID?
 
     var isShared: Bool { ownerId == nil }
+    /// The server `updated_at` of the copy last applied here, in microseconds
+    /// (`RowVersion`); an older copy arriving later is dropped.
+    var serverVersion: Int64?
 
     init(id: UUID = UUID(),
          number: Int,
@@ -397,6 +400,9 @@ final class Stroke {
     /// Set by `RealtimeSync.applyStroke` so orphan strokes can be re-adopted
     /// when the parent Round insert lands after them.
     var roundIdRef: UUID?
+    /// The server `updated_at` of the copy last applied here, in microseconds
+    /// (`RowVersion`); an older copy arriving later is dropped.
+    var serverVersion: Int64?
 
     init(id: UUID = UUID(),
          holeNumber: Int,
@@ -438,6 +444,9 @@ final class Target {
     var latitude: Double
     var longitude: Double
     var round: Round?
+    /// The server `updated_at` of the copy last applied here, in microseconds
+    /// (`RowVersion`); an older copy arriving later is dropped.
+    var serverVersion: Int64?
 
     init(id: UUID = UUID(),
          holeNumber: Int,
@@ -456,6 +465,9 @@ final class Target {
 @Model
 final class Round {
     @Attribute(.unique) var id: UUID
+    /// The server `updated_at` of the copy last applied here, in microseconds
+    /// (`RowVersion`); an older copy arriving later is dropped.
+    var serverVersion: Int64?
     var courseId: UUID
     var courseName: String
     var date: Date

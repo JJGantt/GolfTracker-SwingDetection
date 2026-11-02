@@ -48,7 +48,7 @@ extension SwingDetectionManager {
     /// stopped (2026-08-31, 35 minutes with no vibration data). A dead stream
     /// is now recovered by the watchdog in `checkRaw800Liveness`.
     var shouldRunRawAccelHardware: Bool {
-        guard isMonitoring, rawAccelRunningForCapture else { return false }
+        guard monitoringActive, rawAccelRunningForCapture else { return false }
         switch detectionMode {
         case .unifDetect:
             return true
@@ -65,7 +65,7 @@ extension SwingDetectionManager {
             guard canStartRawAccelNow else {
                 ClientEventLogger.log("rawAccel.sync.bail.canStartFalse", level: .diagnostic, detail: [
                     "workoutSessionState": .string("\(WorkoutManager.shared.session?.state.rawValue ?? -1)"),
-                    "isMonitoring": .bool(isMonitoring),
+                    "isMonitoring": .bool(monitoringActive),
                     "isAccelerometerSupported": .bool(CMBatchedSensorManager.isAccelerometerSupported)
                 ])
                 return
@@ -91,7 +91,7 @@ extension SwingDetectionManager {
     func stopBatchedAccelIfUnneeded() {
         rawAccelControlLock.lock()
         defer { rawAccelControlLock.unlock() }
-        guard !isMonitoring else { return }
+        guard !monitoringActive else { return }
         stopRawAccelLocked()
     }
 
@@ -186,7 +186,7 @@ extension SwingDetectionManager {
 
     /// Common sample handler — called from both the batched and fallback paths.
     func feedRawAccelSample(x: Double, y: Double, z: Double, t: TimeInterval) {
-        latestRawAccelTime = t
+        latestRawAccelTime.withLock { $0 = t }
         let mag = sqrt(x * x + y * y + z * z)
         let dp = RawAccelDataPoint(sensorTime: t, rawAccelX: x, rawAccelY: y, rawAccelZ: z, rawAccelMag: mag)
         if rawAccelRunningForCapture {
