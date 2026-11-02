@@ -18,9 +18,10 @@ import StrokeSaverAlgorithms
 /// covers a later launch offline, so refusing is honest rather than fragile —
 /// and far better than silently gating strokes with stale numbers.
 ///
-/// Precedence on read: a row for this user overrides the shared default
+/// The set comes from `detector_config_for_me` (migration 00058), which resolves
+/// it on the server: a row for this user overrides the shared default
 /// (`user_id IS NULL`), so a personal override never requires touching the
-/// baseline everyone else reads.
+/// baseline everyone else reads. The table itself is not readable by clients.
 @MainActor
 final class DetectorConfig: ObservableObject {
     static let shared = DetectorConfig()
@@ -56,7 +57,6 @@ final class DetectorConfig: ObservableObject {
     }
 
     private struct Row: Decodable {
-        let user_id: String?
         let key: String
         let value: Double
     }
@@ -66,16 +66,10 @@ final class DetectorConfig: ObservableObject {
     /// changes the detector's behaviour partway through.
     func refresh() async {
         do {
-            let rows: [Row] = try await SupabaseManager.shared
-                .from("detector_config").select().execute().value
+            let rows: [Row] = try await SupabaseManager.shared.client
+                .rpc("detector_config_for_me").execute().value
             guard !rows.isEmpty else { return }
-            let uid = WatchAuthSession.shared.currentUserId?.lowercased()
-            var resolved: [String: Double] = [:]
-            for r in rows where r.user_id == nil { resolved[r.key] = r.value }
-            // User rows land second so they win.
-            for r in rows where r.user_id?.lowercased() == uid && uid != nil {
-                resolved[r.key] = r.value
-            }
+            let resolved = Dictionary(rows.map { ($0.key, $0.value) }, uniquingKeysWith: { _, last in last })
             guard apply(resolved, source: "remote") else { return }
             loadedAt = Date()
             try? JSONEncoder().encode(resolved).write(to: cacheURL, options: .atomic)
