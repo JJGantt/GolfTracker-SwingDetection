@@ -153,6 +153,11 @@ data race the compiler can see is a build error. The patterns in use:
   analyzer callbacks, `ScorecardPlayer.fromLocalRound` is `@MainActor`).
 - `nonisolated(unsafe)` appears only on a value that is immutable once received and whose type cannot
   say so (the received WatchConnectivity plist dictionaries).
+- A closure written inside main-actor code is main-actor, and when an API whose callback type is not
+  `@Sendable` runs it on another queue the runtime traps; the compiler says nothing. CoreMotion's
+  handlers are the case here: `startDeviceMotionUpdates` is registered from a `nonisolated` method,
+  never from `startMonitoring` itself. Our own callbacks that run off main are declared `@Sendable`
+  (`sendHoleDetectionRequest`'s `onUndeliverable`, the analyzer's progress and completion).
 
 ### State Management Pattern
 
