@@ -479,12 +479,17 @@ GolfWatch Watch App/                      # watchOS app target
 ├── ContentView.swift                     # Main Watch view
 ├── Views/
 │   ├── WatchHomeView.swift               # Watch home screen
-│   ├── ActiveRoundView.swift             # Main Watch play interface (core: body, map overlays, map position, crown, view-lifecycle handlers). Defaults to full hole view (`isFullViewMode = true`) so multiplayer markers are visible at start. The user-location GPS arrow renders in `WatchDataStore.shared.myPlayerColor` (the user's own playgroup color).
+│   ├── ActiveRoundView.swift             # Main Watch play interface (core: state, body, main content, view-lifecycle handlers). Defaults to full hole view (`isFullViewMode = true`) so multiplayer markers are visible at start. The user-location GPS arrow renders in `WatchDataStore.shared.myPlayerColor` (the user's own playgroup color).
 │   ├── Components/                       # ActiveRoundView extensions (themed)
 │   │   ├── ActiveRoundView+StrokeRecording.swift   # detected-swing → stroke flow, penalty placement, finish-hole
 │   │   ├── ActiveRoundView+Scorecard.swift         # canUndo / firstStroke / lastRealStroke computed props
 │   │   ├── ActiveRoundView+GPSIndicator.swift      # distance readout + GPS power-mode driver + hole-info overlay
-│   │   └── ActiveRoundView+ClubPrediction.swift    # club prediction, overlay-club commit, swing-detector club sync
+│   │   ├── ActiveRoundView+ClubPrediction.swift    # club prediction, overlay-club commit, swing-detector club sync
+│   │   ├── ActiveRoundView+ClubSelector.swift      # crown club picker (watchOS 11+) and the inline one (watchOS 10)
+│   │   ├── ActiveRoundView+Buttons.swift           # side button column + swipe-up handle
+│   │   ├── ActiveRoundView+Map.swift               # the hole map's contents, and the map before a hole exists
+│   │   └── ActiveRoundView+MapCamera.swift         # tee-to-pin framing, target placement, crown offset
+│   ├── ClubDistanceEditorView.swift      # Per-club distance editor
 │   ├── OptionsView.swift                 # Settings menu
 │   ├── AddHoleNavigationView.swift       # Add hole flow
 │   ├── EditHoleView.swift                # Edit hole screen
