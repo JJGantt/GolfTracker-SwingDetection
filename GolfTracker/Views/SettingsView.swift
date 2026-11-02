@@ -301,7 +301,7 @@ struct SettingsView: View {
                 Button("Delete Everything", role: .destructive) { performDelete() }
                 Button("Cancel", role: .cancel) { }
             } message: {
-                Text("This permanently removes your rounds, courses, strokes, and clubs from the server. This cannot be undone.")
+                Text("Removes every record tied to your account on the server, including motion data.")
             }
         }
     }
