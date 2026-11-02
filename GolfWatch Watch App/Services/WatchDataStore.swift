@@ -398,13 +398,13 @@ class WatchDataStore: ObservableObject {
     /// Streamed during round start ("Locating…", "Pebble Beach — loading…").
     @Published var roundStartStatus: String?
     @Published var pendingCoursePicker: [RoundResolver.CourseCandidate]?
-    private var pendingCoursePickerCompletion: ((RoundResolver.CourseCandidate?) -> Void)?
+    var pendingCoursePickerCompletion: ((RoundResolver.CourseCandidate?) -> Void)?
 
     /// Set after the resolver runs the GCAPI search — the user picks one of
     /// the ranked candidates OR "Course not listed" (which completes with nil
     /// → round starts without scorecard data, manual par + GPS yardage).
     @Published var pendingScorecardPicker: PendingScorecardPicker?
-    fileprivate var pendingScorecardPickerCompletion: ((GCAPICourse?) -> Void)?
+    var pendingScorecardPickerCompletion: ((GCAPICourse?) -> Void)?
 
     /// Name-this-course prompt. Set when the resolver hits the `.manual`
     /// path — nothing identified where the user is, so they name it and the
@@ -412,13 +412,9 @@ class WatchDataStore: ObservableObject {
     /// completing with nil cancels the round rather than falling back to a
     /// throwaway placeholder course.
     @Published var pendingCourseNamePrompt: Bool = false
-    private var pendingCourseNameCompletion: ((String?) -> Void)?
+    var pendingCourseNameCompletion: ((String?) -> Void)?
 
 
-    struct PendingScorecardPicker {
-        let originalName: String
-        let candidates: [RoundResolver.ScorecardCandidate]
-    }
 
     /// Set after the resolver completes with GolfCourseAPI scorecard data —
     /// the user picks a tee from the cached tee list before the round opens.
@@ -459,7 +455,7 @@ class WatchDataStore: ObservableObject {
     // currentRoundId persistence; no longer used (the SwiftData store is
     // the source of truth, refreshCurrentRound queries it).
 
-    private var lifecycleTimer: Timer?
+    var lifecycleTimer: Timer?
 
     private init() {
         loadUserDefaults()
@@ -468,56 +464,6 @@ class WatchDataStore: ObservableObject {
         // immediately at app launch.
         _ = AutoAdvanceMonitor.shared
         startRoundLifecycleSweep()
-    }
-
-    /// 60s timer evaluating the current round against the inactivity (>1h)
-    /// and off-course (>2km) gates. Fires `endRound` on a positive result.
-    /// Idempotent — keeps running even when no current round exists, since
-    /// the next round picks up at the next tick.
-    private func startRoundLifecycleSweep() {
-        lifecycleTimer?.invalidate()
-        let timer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
-            self?.evaluateRoundLifecycle()
-        }
-        RunLoop.main.add(timer, forMode: .common)
-        lifecycleTimer = timer
-        // Fire once at startup so a stale round on launch ends immediately
-        // without waiting 60s.
-        evaluateRoundLifecycle()
-    }
-
-    private func evaluateRoundLifecycle() {
-        guard let round = currentRound else { return }
-        // Test mode: pass nil location so the off-course sweep is skipped.
-        // The simulated GPS pin won't be near the round's actual hole
-        // coordinates, which would otherwise auto-end every test round
-        // within a minute. Inactivity (>1h wall clock) still applies.
-        let location = LocationManager.shared.isTestModeEnabled
-            ? nil
-            : LocationManager.shared.location?.coordinate
-        let decision = RoundLifecycleEvaluator.evaluate(
-            round: round,
-            location: location
-        )
-        guard decision.shouldEnd else { return }
-        if RoundLifecycleEvaluator.isInactivityReason(decision.reason) {
-            // Local lastActivityAt may be stale (user scoring on the phone
-            // while the watch sat idle — solo rounds have no Realtime on
-            // watch) — verify against the server before ending. Offline →
-            // trust local, as before.
-            Task { @MainActor [weak self] in
-                guard let self else { return }
-                if let fresh = await RoundLifecycleEvaluator.serverLastActivityAt(roundId: round.id),
-                   Date().timeIntervalSince(fresh) <= RoundLifecycleEvaluator.inactivityThreshold {
-                    round.lastActivityAt = fresh
-                    try? self.context?.save()
-                    return
-                }
-                self.endRound(reason: decision.reason ?? "lifecycle")
-            }
-        } else {
-            endRound(reason: decision.reason ?? "lifecycle")
-        }
     }
 
     /// Called from GolfWatchApp at startup.
@@ -1141,116 +1087,11 @@ class WatchDataStore: ObservableObject {
 
     // MARK: - Start Round (resolver-backed)
 
-    func startRoundAtCurrentLocation() {
-        // Catch up with the server before creating anything. performStartRound
-        // auto-ends any prior in-progress round, so starting here while a
-        // phone-started round exists but hasn't synced yet produces TWO live
-        // rounds — both upsert, and `currentRound` on each device picks the
-        // most recent by date, so the two can disagree about which round is
-        // being played. One round at a time, reachable from either device.
-        Task { @MainActor in
-            await RealtimeSync.shared.reconcileRoundsWithSupabase()
-            refreshCurrentRound()
-            guard currentRound == nil else {
-                // Say so. Aborting silently makes Start Round look broken —
-                // the user taps it, nothing happens, and there's no hint that
-                // a round they can't see is the reason.
-                ClientEventLogger.log("round.start.abortedExistingRound")
-                roundStartStatus = "Round already in progress"
-                DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
-                    if self?.roundStartStatus == "Round already in progress" {
-                        self?.roundStartStatus = nil
-                    }
-                }
-                return
-            }
-            beginRoundResolution()
-        }
-    }
-
-    /// How long to wait for a GPS fix before giving up and asking the user to
-    /// name the place themselves.
-    private static let roundStartLocationWaitSeconds: TimeInterval = 12
-
-    private func beginRoundResolution() {
-        guard let loc = LocationManager.shared.location?.coordinate else {
-            // No fix YET is not no fix. Dropping straight to the manual path
-            // here means prompting for a course name, which reads as "which
-            // course are you at?" — the user types the right name and gets a
-            // brand-new course with no OSM data, no holes and no centroid, so
-            // no blob detection and manual green placement, while the real
-            // course sits in the table unused.
-            roundStartStatus = "Waiting for GPS…"
-            Task { @MainActor in
-                let deadline = Date().addingTimeInterval(Self.roundStartLocationWaitSeconds)
-                while Date() < deadline {
-                    if LocationManager.shared.location != nil { break }
-                    try? await Task.sleep(nanoseconds: 400_000_000)
-                }
-                guard let c = LocationManager.shared.location?.coordinate else {
-                    ClientEventLogger.log("round.start.noGPSAfterWait")
-                    roundStartStatus = nil
-                    startManualQuickRound()
-                    return
-                }
-                resolveRound(at: c)
-            }
-            return
-        }
-        resolveRound(at: loc)
-    }
-
-    private func resolveRound(at coordinate: CLLocationCoordinate2D) {
-        roundStartStatus = "Locating…"
-        RoundResolver.shared.resolve(
-            at: coordinate,
-            progress: { [weak self] step in
-                DispatchQueue.main.async {
-                    self?.roundStartStatus = WatchDataStore.statusString(for: step)
-                }
-            },
-            coursePicker: { [weak self] candidates, choose in
-                DispatchQueue.main.async {
-                    self?.pendingCoursePicker = candidates
-                    self?.pendingCoursePickerCompletion = choose
-                }
-            },
-            scorecardPicker: { [weak self] originalName, ranked, choose in
-                DispatchQueue.main.async {
-                    self?.pendingScorecardPicker = PendingScorecardPicker(
-                        originalName: originalName,
-                        candidates: ranked
-                    )
-                    self?.pendingScorecardPickerCompletion = choose
-                }
-            },
-            courseNamePrompt: { [weak self] complete in
-                DispatchQueue.main.async {
-                    self?.pendingCourseNameCompletion = complete
-                    self?.pendingCourseNamePrompt = true
-                }
-            },
-            completion: { [weak self] resolution in
-                DispatchQueue.main.async {
-                    guard let self = self else { return }
-                    self.roundStartStatus = nil
-                    if let resolution = resolution {
-                        self.handleResolved(resolution)
-                    }
-                    // A nil resolution means the user backed out — cancelled
-                    // the course picker, or cancelled the name prompt on the
-                    // manual path. Start nothing. This used to fall back to
-                    // startManualQuickRound, which now prompts for a name and
-                    // would re-open the prompt the user just dismissed.
-                }
-            }
-        )
-    }
 
     /// Bridge between resolver completion and round start. If GolfCourseAPI
     /// returned scorecard data, present the tee picker first; otherwise start
     /// the round immediately with no tee selection.
-    private func handleResolved(_ resolution: RoundResolver.Resolution) {
+    func handleResolved(_ resolution: RoundResolver.Resolution) {
         guard let scorecard = resolution.scorecardCourse else {
             startRound(from: resolution, selectedTeeId: nil)
             return
@@ -1298,22 +1139,6 @@ class WatchDataStore: ObservableObject {
         guard let resolution = resolution else { return }
         startRound(from: resolution, selectedTeeId: tee?.id)
         ClientEventLogger.log("pickTee.afterStartRound")
-    }
-
-    func pickCourseCandidate(_ candidate: RoundResolver.CourseCandidate?) {
-        let cb = pendingCoursePickerCompletion
-        pendingCoursePicker = nil
-        pendingCoursePickerCompletion = nil
-        cb?(candidate)
-    }
-
-    /// User picked a scorecard candidate from the picker (or "Course not
-    /// listed" → nil → round starts without a scorecard).
-    func pickScorecardCandidate(_ course: GCAPICourse?) {
-        let cb = pendingScorecardPickerCompletion
-        pendingScorecardPicker = nil
-        pendingScorecardPickerCompletion = nil
-        cb?(course)
     }
 
     private func startRound(from resolution: RoundResolver.Resolution, selectedTeeId: UUID?) {
@@ -1585,14 +1410,6 @@ class WatchDataStore: ObservableObject {
         }
     }
 
-    /// Answer the name-this-course prompt. Nil or blank cancels the round.
-    func submitCourseName(_ name: String?) {
-        let cb = pendingCourseNameCompletion
-        pendingCourseNamePrompt = false
-        pendingCourseNameCompletion = nil
-        cb?(name)
-    }
-
     /// Start a round with no GPS fix at all. The user still names the course,
     /// but with no coordinate there's nothing to anchor it to, so it can't be
     /// matched by proximity next time — it'll be re-named on the next visit.
@@ -1623,18 +1440,6 @@ class WatchDataStore: ObservableObject {
     }
 
     func startQuickRound() { startRoundAtCurrentLocation() }
-
-    private static func statusString(for step: RoundResolver.Step) -> String? {
-        switch step {
-        case .locating: return "Locating…"
-        case .searchingShared: return "Checking nearby courses…"
-        case .searchingPOIs: return "Searching nearby courses…"
-        case .picking: return "Pick a course"
-        case .loadingCourseData(let name): return "\(name) — loading…"
-        case .ready: return nil
-        case .failed(let msg): return msg
-        }
-    }
 
     // MARK: - Helpers
 
@@ -1691,46 +1496,6 @@ class WatchDataStore: ObservableObject {
         objectWillChange.send()
     }
 
-    /// Returns the list of green candidates the user can pick from when
-    /// labeling a hole. Two sources, in priority order:
-    ///   1. **OSM green polygons** (when round was resolved with OSM data) —
-    ///      cleaner: real polygons from mapper-curated data, no false positives
-    ///      from blob detection. Used for Tier-2 rounds (greens present but
-    ///      holes weren't cleanly numberable) AND as a supplement to Tier-3.
-    ///   2. **Blob detection results** (Tier-3 rounds without OSM coverage) —
-    ///      MapKit-pixel-derived polygons from the existing analyzer.
-    /// Both kinds are returned as `HoleDetectionBlob` so the existing picker
-    /// UI doesn't need to know the difference.
-    func filteredGreenCandidates(for courseId: UUID?) -> [HoleDetectionBlob] {
-        guard let courseId else { return [] }
-        var out: [HoleDetectionBlob] = []
-        if let osm = osmCourseDataByCourse[courseId] {
-            out.append(contentsOf: osm.greens.map(Self.blob(fromOSMGreen:)))
-        }
-        if let detectionData = holeDetectionDataByCourse[courseId] {
-            out.append(contentsOf: holeFilterSettings.apply(to: detectionData.blobs))
-        }
-        return out
-    }
-
-    /// Convert an OSM green polygon to the `HoleDetectionBlob` shape the
-    /// picker UI consumes. Filter fields are set so the OSM polygon always
-    /// passes (it's mapper-curated, not heuristic-detected).
-    private static func blob(fromOSMGreen polygon: OSMPolygon) -> HoleDetectionBlob {
-        let avgLat = polygon.points.map(\.latitude).reduce(0, +) / Double(max(polygon.points.count, 1))
-        let avgLon = polygon.points.map(\.longitude).reduce(0, +) / Double(max(polygon.points.count, 1))
-        return HoleDetectionBlob(
-            id: UUID(),  // synthetic — OSM way ids are Int64, doesn't fit UUID
-            area: 9_999,
-            minWidth: 999,
-            elongation: 1.0,
-            greennessScore: 9_999,
-            centroidLatitude: avgLat,
-            centroidLongitude: avgLon,
-            polygon: polygon.points
-        )
-    }
-
     func strokeCount(for hole: Hole) -> Int {
         currentRound?.strokes.filter { $0.holeNumber == hole.number }.count ?? 0
     }
@@ -1748,17 +1513,6 @@ class WatchDataStore: ObservableObject {
         }
     }
 
-    func getClub(byId id: UUID) -> ClubData? {
-        availableClubs.first { $0.id == id }
-    }
-
-    func getClubType(byId id: UUID) -> ClubTypeData? {
-        clubTypes.first { $0.id == id }
-    }
-
-    func getTypeName(for club: ClubData) -> String {
-        clubTypes.first { $0.id == club.clubTypeId }?.name ?? club.name
-    }
 }
 
 // MARK: - Club Prediction Manager
@@ -1824,3 +1578,20 @@ class ClubPredictionManager {
 
 // (ClubTypeDTO / ClubDTO / ClubSetDTO moved to Models.swift so both iOS
 // and watch targets share the same wire shape.)
+
+extension WatchDataStore: RoundStoreShared {
+    func endRoundForLifecycle(_ round: Round, reason: String) {
+        endRound(reason: reason)
+    }
+
+    func adoptServerActivity(_ date: Date, for round: Round) {
+        round.lastActivityAt = date
+        try? context?.save()
+    }
+
+    func refreshAfterReconcile() {
+        refreshCurrentRound()
+    }
+
+    var requestsLocationOnRoundStart: Bool { false }
+}

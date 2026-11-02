@@ -359,7 +359,7 @@ private struct CoursePickerView: View {
 }
 
 private struct ScorecardPickerWrapper: Identifiable {
-    let picker: WatchDataStore.PendingScorecardPicker
+    let picker: PendingScorecardPicker
     var id: String { picker.candidates.map { String($0.course.id) }.joined(separator: "|") + "|" + picker.originalName }
 }
 
