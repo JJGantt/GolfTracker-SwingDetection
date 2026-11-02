@@ -302,13 +302,18 @@ class DataStore: ObservableObject {
                 let latitude: Double?
                 let longitude: Double?
                 let par: Int?
+                let owner_id: UUID?
             }
-            let holeRows: [HoleRow] = try await SupabaseManager.shared
+            let fetched: [HoleRow] = try await SupabaseManager.shared
                 .from("holes")
-                .select("id,number,latitude,longitude,par")
+                .select("id,number,latitude,longitude,par,owner_id")
                 .eq("course_id", value: courseId.uuidString)
                 .execute()
                 .value
+            // One per number; the user's own hole beats the shared one.
+            let holeRows = Dictionary(grouping: fetched, by: \.number).values.compactMap { rows in
+                rows.first { $0.owner_id != nil } ?? rows.first
+            }
             course.holes = holeRows.map { r in
                 let id = r.id
                 let hole = (try? context.fetch(FetchDescriptor<Hole>(predicate: #Predicate { $0.id == id })))?.first
@@ -317,6 +322,7 @@ class DataStore: ObservableObject {
                 hole.latitude = r.latitude
                 hole.longitude = r.longitude
                 hole.par = r.par
+                hole.ownerId = r.owner_id
                 return hole
             }
             context.insert(course)
@@ -527,6 +533,11 @@ class DataStore: ObservableObject {
     }
 
     /// Called by GolfTrackerApp at startup to wire SwiftData persistence.
+    /// The signed-in user, as the owner of the course holes they place.
+    private var currentUserUUID: UUID? {
+        AuthManager.shared.currentUserId.flatMap(UUID.init(uuidString:))
+    }
+
     func configure(container: ModelContainer) {
         self.modelContainer = container
         let context = ModelContext(container)
@@ -537,7 +548,7 @@ class DataStore: ObservableObject {
         context.backfillCurrentHoleNumbers()
         Task { @MainActor in
             await SupabaseSync.shared.rewritePendingRoundHoles(context: context)
-            await RealtimeSync.shared.removeDuplicateCourseHoles()
+            await RealtimeSync.shared.reconcileCourseHoles()
         }
         loadCourses()
         loadRounds()
@@ -901,9 +912,10 @@ class DataStore: ObservableObject {
         guard let index = courses.firstIndex(where: { $0.id == course.id }) else { return }
         let holeNumber = courses[index].holes.count + 1
         let hole = Hole(number: holeNumber, coordinate: coordinate, par: par)
+        hole.ownerId = currentUserUUID
         courses[index].holes.append(hole)
         saveCourses()
-        SupabaseSync.shared.upsertHole(hole, courseId: course.id)
+        SupabaseSync.shared.upsertMyCourseHole(hole, courseId: course.id)
 
         dprint("📱 [DataStore] Added hole #\(holeNumber) to course \(course.name)")
 
@@ -952,8 +964,17 @@ class DataStore: ObservableObject {
         SupabaseSync.shared.upsertRoundHoles(round)
     }
 
+    /// Deleting and renumbering rewrite every hole's number, so they apply to
+    /// a course of the user's own holes only (`canRenumberHoles`): a shared
+    /// hole's number is OSM's, and no client changes it.
+    func canRenumberHoles(in course: Course) -> Bool {
+        !course.holes.contains { $0.isShared }
+    }
+
     func deleteHole(_ hole: Hole, from course: Course) {
-        guard let courseIndex = courses.firstIndex(where: { $0.id == course.id }) else { return }
+        guard let courseIndex = courses.firstIndex(where: { $0.id == course.id }),
+              canRenumberHoles(in: courses[courseIndex]) else { return }
+        let lastNumber = courses[courseIndex].holes.map(\.number).max() ?? hole.number
         courses[courseIndex].holes.removeAll { $0.id == hole.id }
         // Renumber remaining holes. SwiftData relationship arrays are
         // unordered — sort by current number before reassigning.
@@ -962,11 +983,12 @@ class DataStore: ObservableObject {
             h.number = i + 1
         }
         saveCourses()
-        SupabaseSync.shared.deleteHole(id: hole.id)
-        // The renumbered siblings changed too — push them to the holes table.
+        // The user's holes are keyed by number: every number below the last
+        // now holds what the next hole held, and the last number goes.
         for h in remaining {
-            SupabaseSync.shared.upsertHole(h, courseId: course.id)
+            SupabaseSync.shared.upsertMyCourseHole(h, courseId: course.id)
         }
+        SupabaseSync.shared.deleteMyCourseHole(courseId: course.id, number: lastNumber)
         updateActiveRoundHoles(for: course)
     }
 
@@ -978,13 +1000,16 @@ class DataStore: ObservableObject {
         if let par = par {
             courses[courseIndex].holes[holeIndex].par = par
         }
+        // Moving a hole makes it the user's own, shared or not.
+        courses[courseIndex].holes[holeIndex].ownerId = currentUserUUID
         saveCourses()
-        SupabaseSync.shared.upsertHole(courses[courseIndex].holes[holeIndex], courseId: course.id)
+        SupabaseSync.shared.upsertMyCourseHole(courses[courseIndex].holes[holeIndex], courseId: course.id)
         updateActiveRoundHoles(for: course)
     }
 
     func renumberHole(_ hole: Hole, in course: Course, newNumber: Int) {
-        guard let courseIndex = courses.firstIndex(where: { $0.id == course.id }) else { return }
+        guard let courseIndex = courses.firstIndex(where: { $0.id == course.id }),
+              canRenumberHoles(in: courses[courseIndex]) else { return }
 
         // SwiftData relationship arrays are unordered — work on a copy
         // sorted by current number, move the hole, then reassign.
@@ -1001,7 +1026,7 @@ class DataStore: ObservableObject {
 
         saveCourses()
         for h in sorted {
-            SupabaseSync.shared.upsertHole(h, courseId: course.id)
+            SupabaseSync.shared.upsertMyCourseHole(h, courseId: course.id)
         }
         updateActiveRoundHoles(for: course)
     }
@@ -1270,8 +1295,11 @@ class DataStore: ObservableObject {
                     )
                 }
                 .sorted { $0.number < $1.number }
+            // These are OSM's holes, so the server builds the shared rows
+            // itself. For a new course the resolver asks it once the course
+            // row exists.
             if !isNew {
-                for hole in course.holes { SupabaseSync.shared.upsertHole(hole, courseId: course.id) }
+                SupabaseSync.shared.deriveOSMCourseHoles(courseId: course.id)
             }
         }
         if isNew {
@@ -1645,6 +1673,10 @@ class DataStore: ObservableObject {
         saveRounds()
         for course in generated.courses {
             SupabaseSync.shared.upsertCourse(course)
+            for hole in course.holes {
+                hole.ownerId = currentUserUUID
+                SupabaseSync.shared.upsertMyCourseHole(hole, courseId: course.id)
+            }
         }
         for round in generated.rounds {
             SupabaseSync.shared.upsertRound(round)

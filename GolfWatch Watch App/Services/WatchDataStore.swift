@@ -532,7 +532,7 @@ class WatchDataStore: ObservableObject {
         context.backfillCurrentHoleNumbers()
         Task { @MainActor in
             await SupabaseSync.shared.rewritePendingRoundHoles(context: context)
-            await RealtimeSync.shared.removeDuplicateCourseHoles()
+            await RealtimeSync.shared.reconcileCourseHoles()
         }
         // Prime the clubs cache from whatever SwiftData has on disk; the
         // hydrate path will refresh it again once Supabase responds.

@@ -266,6 +266,13 @@ final class Hole {
     /// before parents). When `round` is nil but `roundIdRef` matches a Round
     /// that later lands, `applyRound` re-attaches via this id.
     var roundIdRef: UUID?
+    /// Course holes only, mirroring `holes.owner_id`: nil for a shared hole
+    /// (derived from OSM, which nobody edits), else the user who placed it.
+    /// A course shows one hole per number, and the user's own beats the
+    /// shared one (`RealtimeSync.applyHole`).
+    var ownerId: UUID?
+
+    var isShared: Bool { ownerId == nil }
 
     init(id: UUID = UUID(),
          number: Int,
@@ -313,7 +320,7 @@ final class Hole {
 
 extension Array where Element == Hole {
     /// One hole per number (the first seen), in number order. A course can
-    /// hold two holes for a number until `removeDuplicateCourseHoles` runs,
+    /// hold two holes for a number until `RealtimeSync.reconcileCourseHoles` runs,
     /// and two round copies of one number would share an id.
     var oneByNumber: [Hole] {
         var seen = Set<Int>()

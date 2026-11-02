@@ -290,15 +290,16 @@ enum ElevationFoldIn {
         // Green centroids for this course, used to gate seeding. Pulled from
         // the shared `holes` table rather than the round, so it works on the
         // retry path where the round may no longer be loaded locally.
-        struct GreenRow: Decodable { let number: Int; let latitude: Double?; let longitude: Double? }
+        // A number can have a shared row and the user's own; theirs wins.
+        struct GreenRow: Decodable { let number: Int; let latitude: Double?; let longitude: Double?; let owner_id: UUID? }
         var greensByHole: [Int: CLLocationCoordinate2D] = [:]
         if let rows: [GreenRow] = try? await supabase
             .from("holes")
-            .select("number,latitude,longitude")
+            .select("number,latitude,longitude,owner_id")
             .eq("course_id", value: marker.courseId.uuidString)
             .execute()
             .value {
-            for r in rows {
+            for r in rows.sorted(by: { ($0.owner_id == nil ? 0 : 1) < ($1.owner_id == nil ? 0 : 1) }) {
                 guard let la = r.latitude, let lo = r.longitude else { continue }
                 greensByHole[r.number] = CLLocationCoordinate2D(latitude: la, longitude: lo)
             }

@@ -662,64 +662,16 @@ final class RoundResolver {
                     "osmId": .integer(Int(osmId)),
                     "externalCourseId": externalCourseId.map(AnyJSON.string) ?? .null
                 ])
-                if let osmData = osmData {
-                    await self.insertHolesIfMissing(courseId: id, osmData: osmData)
+                // The course's shared holes are built by the server from
+                // the OSM data just stored, and only when it fixes the order.
+                if osmData != nil {
+                    SupabaseSync.shared.deriveOSMCourseHoles(courseId: id)
                 }
             } catch {
                 ClientEventLogger.log("resolver.sharedCourseInsertFailed", detail: [
                     "error": .string("\(error)")
                 ])
             }
-        }
-    }
-
-    /// Insert per-hole rows into the shared `holes` table, but only when none
-    /// exist yet for this course — avoids duplicating rows on re-resolution
-    /// (osm_id uniqueness collapses the parent INSERT, but holes have no
-    /// natural cross-resolution key, so we gate on emptiness instead).
-    /// Skips holes whose `ref` doesn't parse cleanly — Tier `partial`
-    /// courses (Bethpage umbrellas, Pinehurst overlaps) yield zero rows
-    /// rather than messy half-mapped data.
-    private func insertHolesIfMissing(courseId: UUID, osmData: OSMCourseData) async {
-        struct ExistingRow: Decodable { let id: UUID }
-        struct HoleRow: Encodable {
-            let id: String
-            let course_id: String
-            let number: Int
-            let latitude: Double
-            let longitude: Double
-            let par: Int?
-        }
-        do {
-            let existing: [ExistingRow] = try await supabase.from("holes")
-                .select("id")
-                .eq("course_id", value: courseId.uuidString)
-                .limit(1)
-                .execute()
-                .value
-            if !existing.isEmpty { return }
-
-            let rows: [HoleRow] = osmData.holes.compactMap { h in
-                guard let ref = h.ref, let n = Int(ref) else { return nil }
-                return HoleRow(
-                    id: UUID().uuidString,
-                    course_id: courseId.uuidString,
-                    number: n,
-                    latitude: h.greenPoint.latitude,
-                    longitude: h.greenPoint.longitude,
-                    par: h.par
-                )
-            }
-            guard !rows.isEmpty else { return }
-            try await supabase.from("holes").insert(rows).execute()
-            ClientEventLogger.log("resolver.sharedHolesInserted", detail: [
-                "courseId": .string(courseId.uuidString),
-                "count": .integer(rows.count)
-            ])
-        } catch {
-            ClientEventLogger.log("resolver.sharedHolesInsertFailed", detail: [
-                "error": .string("\(error)")
-            ])
         }
     }
 

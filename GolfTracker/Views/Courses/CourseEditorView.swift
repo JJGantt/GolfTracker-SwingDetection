@@ -74,16 +74,19 @@ struct CourseEditorView: View {
             }
         }
         .confirmationDialog("Hole \(selectedHole?.number ?? 0)", isPresented: $showingHoleActions) {
-            Button("Renumber") {
-                if let hole = selectedHole {
-                    newHoleNumber = "\(hole.number)"
-                    showingRenumberAlert = true
+            // A course with shared (OSM) holes keeps OSM's numbering.
+            if store.canRenumberHoles(in: currentCourse) {
+                Button("Renumber") {
+                    if let hole = selectedHole {
+                        newHoleNumber = "\(hole.number)"
+                        showingRenumberAlert = true
+                    }
                 }
-            }
 
-            Button("Delete Hole", role: .destructive) {
-                if let hole = selectedHole {
-                    store.deleteHole(hole, from: currentCourse)
+                Button("Delete Hole", role: .destructive) {
+                    if let hole = selectedHole {
+                        store.deleteHole(hole, from: currentCourse)
+                    }
                 }
             }
             Button("Cancel", role: .cancel) {}

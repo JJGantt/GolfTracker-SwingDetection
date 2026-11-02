@@ -674,9 +674,22 @@ final class RealtimeSync {
         if let existing, fromRoundHoles ? existing.course != nil : (existing.round != nil && existing.course == nil) {
             return
         }
+        // A course can have a shared row and the user's own row for one
+        // number; the course keeps one hole per number, and the user's wins.
+        let ownerId = fromRoundHoles ? nil : record["owner_id"]?.stringValue.flatMap(UUID.init(uuidString:))
+        if !fromRoundHoles, ownerId == nil,
+           let courseId = existing?.course?.id ?? record["course_id"]?.stringValue.flatMap(UUID.init(uuidString:)),
+           ownHoleExists(courseId: courseId, number: number, excluding: id, context: context) {
+            if let existing {
+                existing.course?.holes.removeAll { $0.id == existing.id }
+                context.delete(existing)
+            }
+            return
+        }
         if let existing = existing {
             existing.number = number; existing.latitude = lat; existing.longitude = lon; existing.par = par
             existing.teeId = teeId
+            if !fromRoundHoles { existing.ownerId = ownerId }
             if !fromRoundHoles, let course = existing.course {
                 dropOtherCourseHoles(in: course, number: number, keeping: existing.id, context: context)
             }
@@ -694,6 +707,7 @@ final class RealtimeSync {
             let h = Hole(id: id, number: number)
             h.latitude = lat; h.longitude = lon; h.par = par; h.teeId = teeId
             h.roundIdRef = roundId
+            h.ownerId = ownerId
             context.insert(h)
             // Best-effort link to its round via round_id, if present.
             if let roundId = roundId {
@@ -713,8 +727,17 @@ final class RealtimeSync {
         }
     }
 
-    /// `holes` is unique on (course_id, number), so the server's row for a
-    /// number replaces any other local course hole with that number. Course
+    /// Whether the course already holds the user's own hole for `number`
+    /// (other than `id`), which a shared row for that number must not replace.
+    private func ownHoleExists(courseId: UUID, number: Int, excluding id: UUID, context: ModelContext) -> Bool {
+        let cd = FetchDescriptor<Course>(predicate: #Predicate { $0.id == courseId })
+        guard let course = (try? context.fetch(cd))?.first else { return false }
+        return course.holes.contains { $0.number == number && $0.id != id && $0.ownerId != nil }
+    }
+
+    /// The course keeps one hole per number, so the row applied for a number
+    /// replaces any other local course hole with that number (`applyHole` has
+    /// already refused a shared row where the user has their own). Course
     /// holes never belong to a round, so nothing else references it.
     private func dropOtherCourseHoles(in course: Course, number: Int, keeping id: UUID, context: ModelContext) {
         for other in course.holes.filter({ $0.number == number && $0.id != id }) {
@@ -723,30 +746,35 @@ final class RealtimeSync {
         }
     }
 
-    /// Repairs a course left with two local holes for one number (the phone
-    /// built its own copy of a course the server already had): keeps the
-    /// server's. Runs at launch; only courses with a repeated number are
-    /// fetched.
-    func removeDuplicateCourseHoles() async {
+    /// Brings every local course's holes in line with the server's at launch:
+    /// ownership (`Hole.ownerId`, which holes stored before it existed lack),
+    /// and one hole per number — a course the phone once doubled by building
+    /// its own copy of a course the server already had keeps the server's.
+    /// Applies through `applyHole`, so the user's own hole beats a shared one.
+    func reconcileCourseHoles() async {
         guard let context = context else { return }
-        let courses = (try? context.fetch(FetchDescriptor<Course>())) ?? []
-        for course in courses where Set(course.holes.map(\.number)).count < course.holes.count {
-            let courseId = course.id.uuidString
-            guard let rows = try? await pagedSelect("holes", columns: "id", { $0.eq("course_id", value: courseId) }) else { continue }
-            let serverIds = Set(rows.compactMap { $0.objectValue?["id"]?.stringValue.flatMap(UUID.init(uuidString:)) })
-            let local = course.holes.filter { hole in
-                !serverIds.contains(hole.id)
-                    && course.holes.contains { $0.number == hole.number && serverIds.contains($0.id) }
+        let courseIds = ((try? context.fetch(FetchDescriptor<Course>())) ?? [])
+            .filter { !$0.holes.isEmpty }
+            .map(\.id.uuidString)
+        var applied = 0
+        for start in stride(from: 0, to: courseIds.count, by: 50) {
+            let batch = Array(courseIds[start..<min(start + 50, courseIds.count)])
+            guard let rows = try? await pagedSelect("holes", { $0.in("course_id", values: batch) }) else { continue }
+            for row in rows {
+                guard let dict = row.objectValue,
+                      let id = dict["id"]?.stringValue.flatMap(UUID.init(uuidString:)),
+                      !SupabaseSync.shared.hasPendingWrite(table: "holes", id: id) else { continue }
+                applyHole(context: context, kind: .update, id: id, record: dict, fromRoundHoles: false)
+                applied += 1
             }
-            for hole in local {
-                course.holes.removeAll { $0.id == hole.id }
-                context.delete(hole)
-            }
-            ClientEventLogger.log("courseHoles.deduplicated", detail: [
-                "courseId": .string(courseId), "removed": .integer(local.count)
-            ])
         }
         try? context.save()
+        ClientEventLogger.log("courseHoles.reconciled", detail: [
+            "courses": .integer(courseIds.count), "rows": .integer(applied)
+        ])
+        #if os(iOS)
+        DataStore.shared.loadCourses()
+        #endif
     }
 
     private func applyStroke(context: ModelContext, kind: ChangeKind, id: UUID, record: [String: AnyJSON]) {

@@ -305,10 +305,10 @@ struct HolePlacementView: View {
                 longitude: coordinate.longitude,
                 par: par
             )
-            // And promote it to the course's shared hole record. The user
-            // pointing at a green is the most authoritative source there is;
-            // it must not depend on OSM knowing the course.
-            SupabaseSync.shared.upsertCourseHoleLocation(
+            // And record it as the user's own hole for the course — theirs
+            // alone (migration 00053), and independent of whether OSM knows
+            // the course.
+            SupabaseSync.shared.upsertMyCourseHole(
                 courseId: courseId,
                 number: hole.number,
                 latitude: coordinate.latitude,

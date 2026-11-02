@@ -120,58 +120,54 @@ final class SupabaseSync {
         if let lon = course.centerLon { body["center_lon"] = .double(lon) }
         if let osmId = course.osmId { body["osm_id"] = .int(Int(osmId)) }
         upsert(table: "courses", values: body, onConflict: "id")
-
-        for hole in course.holes {
-            upsertHole(hole, courseId: course.id)
-        }
     }
 
-    func upsertHole(_ hole: Hole, courseId: UUID) {
-        let body: [String: AnyCodableValue] = [
-            "id": .string(hole.id.uuidString),
-            "course_id": .string(courseId.uuidString),
-            "number": .int(hole.number),
-            "latitude": hole.latitude.map(AnyCodableValue.double) ?? .null,
-            "longitude": hole.longitude.map(AnyCodableValue.double) ?? .null,
-            "par": hole.par.map(AnyCodableValue.int) ?? .null,
-            "updated_at": .string(iso(Date()))
-        ]
-        upsert(table: "holes", values: body, onConflict: "id")
+    // MARK: - Course holes
+    //
+    // A `holes` row is shared (owner_id null: derived on the server from the
+    // course's OSM data, which no client may change) or the user's own
+    // (migration 00053). Clients write only their own, through RPCs keyed on
+    // (course, user, number): the hole being edited may be the shared one, so
+    // its id is only a suggestion for the user's new row.
+
+    /// The user's own hole `hole.number` at the course, with this hole's
+    /// location and par. Editing a shared hole lands here too, as the user's
+    /// own hole for that number.
+    func upsertMyCourseHole(_ hole: Hole, courseId: UUID) {
+        guard let lat = hole.latitude, let lon = hole.longitude else { return }
+        upsertMyCourseHole(id: hole.id, courseId: courseId, number: hole.number,
+                           latitude: lat, longitude: lon, par: hole.par)
     }
 
-    func deleteHole(id: UUID) {
-        delete(table: "holes", filterColumn: "id", filterValue: id.uuidString)
+    /// A green the user placed, as their own hole for that number. The watch
+    /// places greens on the round's copy of a hole, whose id means nothing to
+    /// `holes`, so it passes no id. A nil par keeps the row's par.
+    func upsertMyCourseHole(id: UUID? = nil, courseId: UUID, number: Int,
+                            latitude: Double, longitude: Double, par: Int?) {
+        rpc("upsert_my_course_hole", table: "holes", params: [
+            "p_id": id.map { .string($0.uuidString) } ?? .null,
+            "p_course_id": .string(courseId.uuidString),
+            "p_number": .int(number),
+            "p_latitude": .double(latitude),
+            "p_longitude": .double(longitude),
+            "p_par": par.map(AnyCodableValue.int) ?? .null
+        ])
     }
 
-    /// Write a green the user placed into the COURSE's shared hole record.
-    ///
-    /// Keyed on `(course_id, number)` rather than on a row id, because the
-    /// caller placing the green is usually the watch, whose `round.holes` are
-    /// per-round copies with their own ids and no knowledge of the course-level
-    /// row. The unique constraint on `(course_id, number)` makes that upsert
-    /// exact.
-    ///
-    /// This exists because `holes` had precisely one writer — `RoundResolver`,
-    /// building rows from OSM and requiring an OSM `ref` and green point. A
-    /// course OSM has never heard of therefore ended up with zero hole rows no
-    /// matter how many greens were placed by hand: Wolf Hollow had 15 greens
-    /// placed across 10 rounds and 0 rows here. A green the user selected is
-    /// authoritative; OSM is a convenience for courses it happens to know.
-    func upsertCourseHoleLocation(courseId: UUID,
-                                  number: Int,
-                                  latitude: Double,
-                                  longitude: Double,
-                                  par: Int?) {
-        var body: [String: AnyCodableValue] = [
-            "id": .string(UUID().uuidString),   // only used when inserting
-            "course_id": .string(courseId.uuidString),
-            "number": .int(number),
-            "latitude": .double(latitude),
-            "longitude": .double(longitude),
-            "updated_at": .string(iso(Date()))
-        ]
-        if let par { body["par"] = .int(par) }
-        upsert(table: "holes", values: body, onConflict: "course_id,number")
+    /// Removes the user's own hole for that number; a shared one stays.
+    func deleteMyCourseHole(courseId: UUID, number: Int) {
+        rpc("delete_my_course_hole", table: "holes", params: [
+            "p_course_id": .string(courseId.uuidString),
+            "p_number": .int(number)
+        ])
+    }
+
+    /// Has the server add the course's shared holes from its stored OSM data,
+    /// when that data determines the hole order. Idempotent.
+    func deriveOSMCourseHoles(courseId: UUID) {
+        rpc("derive_osm_course_holes", table: "holes", params: [
+            "p_course_id": .string(courseId.uuidString)
+        ])
     }
 
     /// User's pick of which blob (or manual coord) is hole N at course X.
@@ -441,9 +437,12 @@ final class SupabaseSync {
     /// Queueable representation of a Postgrest mutation. Every write goes
     /// through the on-disk queue and is sent one at a time in order (`pump`).
     private struct QueuedOperation: Codable {
-        enum Kind: String, Codable { case upsert, delete, update }
+        enum Kind: String, Codable { case upsert, delete, update, rpc }
         let kind: Kind
+        /// The table written; for an rpc, the table the function writes.
         let table: String
+        /// For rpc: the function's name. Its params are `payloadJSON`.
+        var function: String? = nil
         // For upsert/update: JSON-encoded payload; upsert's onConflict column list
         let payloadJSON: Data?
         let onConflict: String?
@@ -459,6 +458,10 @@ final class SupabaseSync {
                 guard let body = payloadJSON,
                       let object = (try? JSONSerialization.jsonObject(with: body)) as? [String: Any] else { return nil }
                 return object["id"] as? String
+            case .rpc:
+                guard let body = payloadJSON,
+                      let object = (try? JSONSerialization.jsonObject(with: body)) as? [String: Any] else { return nil }
+                return object["p_id"] as? String
             case .update, .delete:
                 return filterColumn == "id" ? filterValue : nil
             }
@@ -473,6 +476,12 @@ final class SupabaseSync {
     private func update(table: String, values: [String: AnyCodableValue], filterColumn: String, filterValue: String) {
         enqueue(QueuedOperation(kind: .update, table: table, payloadJSON: encodeValues(values),
                                 onConflict: nil, filterColumn: filterColumn, filterValue: filterValue))
+    }
+
+    private func rpc(_ function: String, table: String, params: [String: AnyCodableValue]) {
+        enqueue(QueuedOperation(kind: .rpc, table: table, function: function,
+                                payloadJSON: encodeValues(params, includeNulls: true),
+                                onConflict: nil, filterColumn: nil, filterValue: nil))
     }
 
     private func delete(table: String, filterColumn: String, filterValue: String) {
@@ -500,6 +509,8 @@ final class SupabaseSync {
         guard earlier.table == later.table, earlier.kind == later.kind,
               let id = earlier.rowId, id == later.rowId else { return nil }
         switch earlier.kind {
+        case .rpc:
+            return nil
         case .upsert:
             return earlier.onConflict == later.onConflict ? later : nil
         case .delete:
@@ -565,6 +576,10 @@ final class SupabaseSync {
             case .delete:
                 guard let col = op.filterColumn, let val = op.filterValue else { return .rejected }
                 try await supabase.from(op.table).delete().eq(col, value: val).execute()
+            case .rpc:
+                guard let function = op.function, let body = op.payloadJSON,
+                      let json = try? JSONDecoder().decode(AnyJSON.self, from: body) else { return .rejected }
+                try await supabase.client.rpc(function, params: json).execute()
             case .update:
                 guard let body = op.payloadJSON,
                       let json = try? JSONDecoder().decode(AnyJSON.self, from: body),
