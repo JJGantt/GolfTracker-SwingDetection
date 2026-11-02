@@ -87,7 +87,7 @@ struct SettingsView: View {
                         Text(err).font(.caption).foregroundColor(.red)
                     }
 
-                    Text("Removes every record tied to your account on the server (rounds, courses, strokes, clubs). Anonymized motion data is not deleted. See Privacy Policy for details.")
+                    Text("Removes every record tied to your account on the server, including motion data. See Privacy Policy for details.")
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }

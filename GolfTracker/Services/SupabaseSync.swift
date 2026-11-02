@@ -153,21 +153,6 @@ final class SupabaseSync {
         ])
     }
 
-    /// Fills in what a shared course's row lacks (today: its scorecard id),
-    /// through the server, which never overwrites a value already there.
-    func fillOSMCourse(id: UUID, name: String, center: CLLocationCoordinate2D,
-                       osmId: Int64, externalCourseId: String?) {
-        rpc("register_osm_course", table: "courses", params: [
-            "p_id": .string(id.uuidString),
-            "p_name": .string(name),
-            "p_center_lat": .double(center.latitude),
-            "p_center_lon": .double(center.longitude),
-            "p_osm_id": .int(Int(osmId)),
-            "p_external_course_id": externalCourseId.map(AnyCodableValue.string) ?? .null,
-            "p_osm_polygons": .null
-        ])
-    }
-
     /// Removes the user's own hole for that number; a shared one stays.
     func deleteMyCourseHole(courseId: UUID, number: Int) {
         rpc("delete_my_course_hole", table: "holes", params: [
@@ -428,23 +413,24 @@ final class SupabaseSync {
         delete(table: "club_sets", filterColumn: "id", filterValue: id.uuidString)
     }
 
-    /// Wipe every user-keyed row for the current user. Server-side CASCADE
-    /// handles children once parents are deleted.
+    /// Deletes everything stored for the current user on the server — every
+    /// row keyed to them and their motion recordings in storage — through
+    /// the `delete-my-data` edge function. Shared (OSM) courses stay.
     func deleteAllUserData(completion: @escaping (Bool) -> Void) {
-        guard let uid = currentUserId else { completion(false); return }
         Task {
-            var allOK = true
-            // Courses are owned through `created_by`; the rest through `user_id`.
-            for (table, owner) in [("rounds", "user_id"), ("courses", "created_by"), ("club_sets", "user_id"),
-                                   ("clubs", "user_id"), ("club_types", "user_id")] {
-                do {
-                    try await supabase.from(table).delete().eq(owner, value: uid).execute()
-                } catch {
-                    dprint("[SupabaseSync] delete-all \(table) failed: \(error)")
-                    allOK = false
-                }
+            var ok = false
+            do {
+                let url = SupabaseManager.shared.projectURL.appendingPathComponent("functions/v1/delete-my-data")
+                var request = URLRequest(url: url)
+                request.httpMethod = "POST"
+                request.setValue("Bearer \(try await supabase.auth.session.accessToken)", forHTTPHeaderField: "Authorization")
+                let (_, response) = try await URLSession.shared.data(for: request)
+                ok = (200..<300).contains((response as? HTTPURLResponse)?.statusCode ?? 0)
+                if !ok { ClientEventLogger.log("deleteMyData.failed", detail: ["status": .integer((response as? HTTPURLResponse)?.statusCode ?? 0)]) }
+            } catch {
+                ClientEventLogger.log("deleteMyData.failed", detail: ["error": .string("\(error)")])
             }
-            await MainActor.run { completion(allOK) }
+            await MainActor.run { completion(ok) }
         }
     }
 

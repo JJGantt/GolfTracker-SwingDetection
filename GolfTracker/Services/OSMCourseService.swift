@@ -63,6 +63,16 @@ struct OSMCourseCandidate: Hashable {
     /// picker entry but keep all polygons here so the second-pass query
     /// can union them when looking for sub-features.
     var siblingPolygons: [[MapPoint]] = []
+    /// The OSM elements those sibling polygons came from, so the server can
+    /// fetch them itself when it registers the course.
+    var siblings: [OSMElementRef] = []
+}
+
+/// One OpenStreetMap element: a way or a relation, by id. The type is left
+/// out only when naming a course already registered under that id.
+struct OSMElementRef: Hashable, Encodable {
+    var type: String? = nil
+    let id: Int64
 }
 
 /// Bundled OSM data for a single course (after the user has picked which
@@ -244,9 +254,10 @@ final class OSMCourseService {
                 if l.polygon.count != r.polygon.count { return l.polygon.count < r.polygon.count }
                 return l.name.count < r.name.count
             } ?? group[0]
-            let siblings = group.filter { $0.osmId != canonical.osmId }.map { $0.polygon }
+            let others = group.filter { $0.osmId != canonical.osmId }
             var out = canonical
-            out.siblingPolygons = siblings
+            out.siblingPolygons = others.map { $0.polygon }
+            out.siblings = others.map { OSMElementRef(type: $0.osmType, id: $0.osmId) }
             return out
         }
     }

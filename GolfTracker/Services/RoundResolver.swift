@@ -488,9 +488,9 @@ final class RoundResolver {
         }
     }
 
-    /// INSERT a course the user named themselves. No `osm_id`, so this upserts
-    /// on the primary key rather than `insertSharedCourse`'s `osm_id` conflict
-    /// target. `center_lat`/`center_lon` are what `fetchSharedCoursesNear`
+    /// INSERT a course the user named themselves: a personal course (no
+    /// `osm_id`), which the client writes directly, upserting on the primary
+    /// key. `center_lat`/`center_lon` are what `fetchSharedCoursesNear`
     /// matches on, so storing them is what makes the course re-findable on the
     /// next visit — that's the entire point of naming it.
     /// `created_by` is what keeps this name private. A user-typed course name
@@ -557,8 +557,11 @@ final class RoundResolver {
                 // A shared course registered before its scorecard was known
                 // gets it now. The server only fills what the row lacks.
                 if let osmId, externalCourseId == nil, let scorecard {
-                    SupabaseSync.shared.fillOSMCourse(id: courseId, name: courseName, center: coordinate,
-                                                      osmId: osmId, externalCourseId: String(scorecard.id))
+                    Task {
+                        _ = try? await self.registerSharedCourse(
+                            courseId: courseId, osm: OSMElementRef(id: osmId),
+                            externalCourseId: String(scorecard.id))
+                    }
                 }
                 let resolution = Resolution(
                     courseId: courseId,
@@ -583,105 +586,121 @@ final class RoundResolver {
                                        userPickedCoord: CLLocationCoordinate2D,
                                        progress: @escaping (Step) -> Void,
                                        completion: @escaping (Resolution?) -> Void) {
-        osm.fetchCourseGeometry(for: osmCandidate) { [weak self] result in
-            guard let self = self else { completion(nil); return }
-            let osmData: OSMCourseData?
-            let tier: OSMCourseData.Tier
-            switch result {
-            case .success(let d): osmData = d; tier = d.tier
-            case .failure(let e):
-                dprint("[RoundResolver] OSM geometry fetch failed: \(e)")
-                osmData = nil; tier = .none
-            }
-            // courseId is nil here — this path REGISTERS a new shared course
-            // row. By definition no skip votes exist yet (no prior user has
-            // played this OSM course), so the skip-vote gate doesn't apply.
-            self.resolveScorecard(courseName: userPickedName, near: userPickedCoord, knownExternalCourseId: nil, courseId: nil) { scorecard in
-                // Compute centroid: prefer OSM-derived holes, fall back to
-                // the candidate's polygon centroid.
-                let centroid: CLLocationCoordinate2D = {
-                    if let osm = osmData, !osm.holes.isEmpty {
-                        let lats = osm.holes.map { $0.greenPoint.latitude }
-                        let lons = osm.holes.map { $0.greenPoint.longitude }
-                        return CLLocationCoordinate2D(
-                            latitude: lats.reduce(0, +) / Double(lats.count),
-                            longitude: lons.reduce(0, +) / Double(lons.count)
-                        )
-                    }
-                    return osmCandidate.centroid.coordinate
-                }()
-                let newCourseId = UUID()
-                self.insertSharedCourse(
-                    id: newCourseId,
-                    name: userPickedName,
-                    centroid: centroid,
-                    osmId: osmCandidate.osmId,
-                    externalCourseId: scorecard.map { String($0.id) },
-                    osmData: osmData
-                )
-                let resolution = Resolution(
-                    courseId: newCourseId,
-                    courseName: userPickedName,
-                    courseCoordinate: centroid,
-                    osmData: osmData,
-                    tier: tier,
-                    isExistingCourse: false,
-                    scorecardCourse: scorecard,
-                    osmId: osmCandidate.osmId
-                )
-                progress(.ready(resolution))
-                completion(resolution)
+        // courseId is nil here — this path REGISTERS a new shared course
+        // row. By definition no skip votes exist yet (no prior user has
+        // played this OSM course), so the skip-vote gate doesn't apply.
+        resolveScorecard(courseName: userPickedName, near: userPickedCoord, knownExternalCourseId: nil, courseId: nil) { [weak self] scorecard in
+            guard let self else { completion(nil); return }
+            Task {
+                do {
+                    // The server fetches the course from OSM and registers it;
+                    // the round uses the id it returns, which is an existing
+                    // course's when someone registered this osm_id first.
+                    let registered = try await self.registerSharedCourse(
+                        courseId: UUID(),
+                        osm: OSMElementRef(type: osmCandidate.osmType, id: osmCandidate.osmId),
+                        siblings: osmCandidate.siblings,
+                        externalCourseId: scorecard.map { String($0.id) }
+                    )
+                    let resolution = Resolution(
+                        courseId: registered.courseId,
+                        courseName: registered.name,
+                        courseCoordinate: registered.center ?? osmCandidate.centroid.coordinate,
+                        osmData: registered.osmData,
+                        tier: registered.osmData?.tier ?? .none,
+                        isExistingCourse: false,
+                        scorecardCourse: scorecard,
+                        osmId: osmCandidate.osmId
+                    )
+                    progress(.ready(resolution))
+                    completion(resolution)
+                } catch {
+                    ClientEventLogger.log("resolver.sharedCourseRegisterFailed", detail: [
+                        "osmId": .integer(Int(osmCandidate.osmId)),
+                        "error": .string("\(error)")
+                    ])
+                    self.resolveUnregisteredOSM(osmCandidate: osmCandidate, name: userPickedName,
+                                                scorecard: scorecard, progress: progress, completion: completion)
+                }
             }
         }
     }
 
-    /// Registers the shared course row for an OSM course, with its OSM data,
-    /// through the server (`register_osm_course`, migration 00055): clients
-    /// cannot write a shared course themselves. Idempotent on `osm_id`; if the
-    /// course already exists the server fills in only what it lacks, derives
-    /// the shared holes, and returns that course's id.
-    private func insertSharedCourse(id: UUID,
-                                    name: String,
-                                    centroid: CLLocationCoordinate2D,
-                                    osmId: Int64,
-                                    externalCourseId: String?,
-                                    osmData: OSMCourseData?) {
-        struct Params: Encodable {
-            let p_id: String
-            let p_name: String
-            let p_center_lat: Double
-            let p_center_lon: Double
-            let p_osm_id: Int64
-            let p_external_course_id: String?
-            let p_osm_polygons: OSMCourseData?
+    /// The registration call failed (offline, or Overpass down on the
+    /// server): play the round from this device's own OSM fetch. The course
+    /// is not registered, so the round's course id has no server row until a
+    /// later round at the course registers it.
+    private func resolveUnregisteredOSM(osmCandidate: OSMCourseCandidate,
+                                        name: String,
+                                        scorecard: GCAPICourse?,
+                                        progress: @escaping (Step) -> Void,
+                                        completion: @escaping (Resolution?) -> Void) {
+        osm.fetchCourseGeometry(for: osmCandidate) { result in
+            let osmData = try? result.get()
+            let resolution = Resolution(
+                courseId: UUID(),
+                courseName: name,
+                courseCoordinate: osmCandidate.centroid.coordinate,
+                osmData: osmData,
+                tier: osmData?.tier ?? .none,
+                isExistingCourse: false,
+                scorecardCourse: scorecard,
+                osmId: osmCandidate.osmId
+            )
+            progress(.ready(resolution))
+            completion(resolution)
         }
-        let params = Params(
-            p_id: id.uuidString,
-            p_name: name,
-            p_center_lat: centroid.latitude,
-            p_center_lon: centroid.longitude,
-            p_osm_id: osmId,
-            p_external_course_id: externalCourseId,
-            p_osm_polygons: osmData
-        )
-        Task {
-            do {
-                let registered: UUID = try await supabase.client
-                    .rpc("register_osm_course", params: params)
-                    .execute()
-                    .value
-                ClientEventLogger.log("resolver.sharedCourseInserted", detail: [
-                    "courseId": .string(id.uuidString),
-                    "registeredId": .string(registered.uuidString),
-                    "osmId": .integer(Int(osmId)),
-                    "externalCourseId": externalCourseId.map(AnyJSON.string) ?? .null
-                ])
-            } catch {
-                ClientEventLogger.log("resolver.sharedCourseInsertFailed", detail: [
-                    "error": .string("\(error)")
-                ])
-            }
+    }
+
+    struct RegisteredCourse: Decodable {
+        let courseId: UUID
+        let name: String
+        let centerLat: Double?
+        let centerLon: Double?
+        let osmData: OSMCourseData?
+
+        var center: CLLocationCoordinate2D? {
+            guard let centerLat, let centerLon else { return nil }
+            return CLLocationCoordinate2D(latitude: centerLat, longitude: centerLon)
         }
+    }
+
+    /// Registers (or finds) the shared course for an OSM element through the
+    /// `register-osm-course` edge function, which fetches the course from
+    /// OpenStreetMap itself: a client never supplies a shared course's data
+    /// (migration 00056). `osm.type` matters only for a course not yet
+    /// registered.
+    func registerSharedCourse(courseId: UUID,
+                              osm: OSMElementRef,
+                              siblings: [OSMElementRef] = [],
+                              externalCourseId: String?) async throws -> RegisteredCourse {
+        struct Body: Encodable {
+            let courseId: String
+            let osm: OSMElementRef
+            let siblings: [OSMElementRef]
+            let externalCourseId: String?
+        }
+        let url = SupabaseManager.shared.projectURL.appendingPathComponent("functions/v1/register-osm-course")
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("Bearer \(try await supabase.auth.session.accessToken)", forHTTPHeaderField: "Authorization")
+        request.httpBody = try JSONEncoder().encode(Body(courseId: courseId.uuidString, osm: osm,
+                                                         siblings: siblings, externalCourseId: externalCourseId))
+        let (data, response) = try await URLSession.shared.data(for: request)
+        let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+        guard (200..<300).contains(status) else {
+            throw GolfCourseAPIError.httpStatus(status, String(data: data, encoding: .utf8) ?? "")
+        }
+        // The Supabase decoder: `osmData.fetchedAt` is written the way the
+        // SDK writes dates.
+        let registered = try PostgrestClient.Configuration.jsonDecoder.decode(RegisteredCourse.self, from: data)
+        ClientEventLogger.log("resolver.sharedCourseRegistered", detail: [
+            "requestedId": .string(courseId.uuidString),
+            "courseId": .string(registered.courseId.uuidString),
+            "osmId": .integer(Int(osm.id))
+        ])
+        return registered
     }
 
     // MARK: - Scorecard (GolfCourseAPI)

@@ -319,10 +319,12 @@ class DataStore: ObservableObject {
     }
 
     /// Server-side blob-detection cache write, through
-    /// `store_course_blob_detection` (migration 00055): a shared course's row
-    /// is not the client's to update, and the function writes only the two
-    /// blob columns. Fire-and-forget; failures are non-fatal — the in-memory +
-    /// JSON cache still works.
+    /// `store_course_blob_detection` (migration 00056), which returns the
+    /// results in force. On a shared course the first stored set stands, since
+    /// every device and user picks greens from it (pick votes compare its blob
+    /// ids); when another device's run landed first, this device adopts that
+    /// set and sends it to the watch in place of its own. Fire-and-forget;
+    /// failures are non-fatal — the in-memory + JSON cache still works.
     private func uploadBlobDetectionResults(courseId: UUID, data: CourseHoleDetectionData) {
         struct Params: Encodable {
             let p_course_id: String
@@ -331,21 +333,31 @@ class DataStore: ObservableObject {
         let params = Params(p_course_id: courseId.uuidString, p_results: data)
         Task { @MainActor in
             do {
-                let stored: Bool = try await SupabaseManager.shared.client
+                let inForce: CourseHoleDetectionData? = try await SupabaseManager.shared.client
                     .rpc("store_course_blob_detection", params: params)
                     .execute()
                     .value
-                guard stored else {
+                if let inForce {
+                    if inForce.blobs.map(\.id) != data.blobs.map(\.id) {
+                        self.holeDetectionDataByCourse[courseId] = inForce
+                        self.saveHoleDetectionData()
+                        WatchConnectivityManager.shared.sendHoleDetectionData(inForce)
+                        ClientEventLogger.log("blob.serverCache.adoptedStored", detail: [
+                            "courseId": .string(courseId.uuidString),
+                            "blobCount": .integer(inForce.blobs.count)
+                        ])
+                    } else {
+                        ClientEventLogger.log("blob.serverCache.uploaded", detail: [
+                            "courseId": .string(courseId.uuidString),
+                            "blobCount": .integer(data.blobs.count)
+                        ])
+                    }
+                } else {
                     ClientEventLogger.log("blob.serverCache.uploadError", detail: [
                         "courseId": .string(courseId.uuidString),
                         "error": .string("course not visible to this user")
                     ])
-                    return
                 }
-                ClientEventLogger.log("blob.serverCache.uploaded", detail: [
-                    "courseId": .string(courseId.uuidString),
-                    "blobCount": .integer(data.blobs.count)
-                ])
             } catch {
                 ClientEventLogger.log("blob.serverCache.uploadError", detail: [
                     "courseId": .string(courseId.uuidString),
