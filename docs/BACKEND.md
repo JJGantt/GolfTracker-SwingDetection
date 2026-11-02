@@ -73,6 +73,7 @@ in the Storage bucket.
 | `club_type` | text | Club used |
 | `detection_mode` | text | Default `unifDetect` |
 | `storage_path` | text | Path to motion CSV in `swing-motion` |
+| `wrist` / `crown` | text | 00059. How the watch was worn: `left`/`right` each (`WKInterfaceDevice.wristLocation` / `crownOrientation`, the frame the motion CSV is in). NULL before build 76 |
 
 **`label` and `not_a_stroke_reason` are orthogonal on purpose.** `label` answers
 only "did the detector correctly identify a golf swing?" A practice swing is a
@@ -114,7 +115,7 @@ exist because they cover genuinely different failures:
 Group columns beyond the originals: `capture_reason`, `storage_path` (lookback's raw
 window), `test_session_id`, `window_seconds` (actual span — shorter than the 15s
 maximum whenever a detection or earlier capture already covered the ground behind
-it). `stroke_id` has **no FK** (dropped in 00030): the stroke is written locally and
+it), `wrist` / `crown` (00059, as on `swing_events`). `stroke_id` has **no FK** (dropped in 00030): the stroke is written locally and
 synced async, so a hard constraint lost the group to a race.
 
 Candidate `label` starts NULL and is filled during review with
@@ -227,6 +228,7 @@ Schema changes are managed as sequential SQL files in `supabase/migrations/`:
 | `00030_false_negative_fixes.sql` | Dropped the `stroke_id` FK (async write race); made storage folder comparison case-insensitive. |
 | `00038`–`00040` | Storage-path repairs; NULL labels for metadata-only rows. |
 | `00047_swing_test_sessions.sql` | `not_a_stroke_reason` + `test_session_id` on `swing_events`; `swing_test_sessions`; lookback columns on `false_negative_groups`. |
+| `00059_wear_columns.sql` | `wrist` + `crown` on `swing_events` and `false_negative_groups`. |
 
 The full list is `supabase/migrations/` — this table covers the swing pipeline only;
 the majority of migrations concern rounds, courses and the elevation field.

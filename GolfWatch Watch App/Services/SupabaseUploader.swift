@@ -32,6 +32,8 @@ final class SupabaseUploader: Sendable {
         var testSessionId: UUID?
         /// Per-gate value/limit/margin/passed — see PostPairingGateResult.report
         var gateReport: [String: [String: Double]]?
+        /// How the watch was worn when the motion was recorded.
+        let wear: WearFrame
     }
 
     private struct State {
@@ -62,6 +64,22 @@ final class SupabaseUploader: Sendable {
         "\(userId)/\(eventId.uuidString)_raw.csv"
     }
 
+    // MARK: - Wear
+
+    /// The wear the detector is normalising for, set from the watch's
+    /// orientation setting when monitoring starts. Uploaded motion stays in
+    /// the hardware frame, so every row carries this to say which frame that
+    /// was. Read when the motion is captured, never later: the setting can
+    /// change before an upload runs.
+    private var recordedWear: WearFrame {
+        SwingDetectionManager.shared.withDetector { $0.wear }
+    }
+
+    /// `swing_events` / `false_negative_groups` `wrist` and `crown` (migration 00059).
+    private static func column(_ side: WearFrame.Side) -> String {
+        side == .left ? "left" : "right"
+    }
+
     // MARK: - Event Lifecycle
 
     /// Called from `fireSmartDetection` on every detection.
@@ -79,6 +97,7 @@ final class SupabaseUploader: Sendable {
         autoAdd: Bool,
         gateReport: [String: [String: Double]]? = nil
     ) -> UUID? {
+        let wear = recordedWear
         // Decide under the lock, upload outside it.
         let (toUpload, returned): ([PendingEvent], UUID?) = state.withLock { s in
             let prev = s.pending
@@ -92,7 +111,8 @@ final class SupabaseUploader: Sendable {
                     id: UUID(), metadata: metadata, motionSlice: motionSlice,
                     rawAccelSlice: rawAccelSlice, clubType: clubType,
                     label: "positive", confidence: "low",
-                    testSessionId: s.currentTestSessionId, gateReport: gateReport)
+                    testSessionId: s.currentTestSessionId, gateReport: gateReport,
+                    wear: wear)
                 return ([prev, event].compactMap { $0 }, event.id)
             }
             // Manual mode: flush previous pending (implicit — user didn't act),
@@ -101,7 +121,8 @@ final class SupabaseUploader: Sendable {
                 id: UUID(), metadata: metadata, motionSlice: motionSlice,
                 rawAccelSlice: rawAccelSlice, clubType: clubType,
                 label: "false_positive", confidence: "low",
-                testSessionId: s.currentTestSessionId, gateReport: gateReport)
+                testSessionId: s.currentTestSessionId, gateReport: gateReport,
+                    wear: wear)
             return ([prev].compactMap { $0 }, nil)
         }
         toUpload.forEach { upload(event: $0) }
@@ -238,6 +259,7 @@ final class SupabaseUploader: Sendable {
             return
         }
         let groupId = UUID()
+        let wear = recordedWear
         ClientEventLogger.log("falseNeg.upload.start", detail: [
             "groupId": .string(groupId.uuidString),
             "candidateCount": .integer(rejections.count),
@@ -250,7 +272,8 @@ final class SupabaseUploader: Sendable {
             guard await self.insertFalseNegativeGroup(
                 groupId: groupId, userId: userId,
                 roundId: roundId, strokeId: strokeId,
-                holeNumber: holeNumber, candidateCount: rejections.count
+                holeNumber: holeNumber, candidateCount: rejections.count,
+                wear: wear
             ) else { return }
             for (index, rejected) in rejections.enumerated() {
                 // Skip the CSV when its DB row didn't land — orphaned
@@ -279,12 +302,15 @@ final class SupabaseUploader: Sendable {
         let storage_path: String?
         let test_session_id: String?
         let window_seconds: Double?
+        let wrist: String
+        let crown: String
     }
 
     private func insertFalseNegativeGroup(
         groupId: UUID, userId: String,
         roundId: UUID?, strokeId: UUID?,
         holeNumber: Int?, candidateCount: Int,
+        wear: WearFrame,
         captureReason: String = "rejected_shapes",
         storagePath: String? = nil,
         testSessionId: UUID? = nil,
@@ -300,7 +326,9 @@ final class SupabaseUploader: Sendable {
             capture_reason: captureReason,
             storage_path: storagePath,
             test_session_id: testSessionId?.uuidString,
-            window_seconds: windowSeconds
+            window_seconds: windowSeconds,
+            wrist: Self.column(wear.wrist),
+            crown: Self.column(wear.crown)
         )
         do {
             try await supabase.from("false_negative_groups").insert(row).execute()
@@ -357,6 +385,7 @@ final class SupabaseUploader: Sendable {
             return
         }
         let storagePath = "\(userId)/lookback/\(groupId.uuidString)/window.csv"
+        let wear = recordedWear
         ClientEventLogger.log("lookback.upload.start", detail: [
             "groupId": .string(groupId.uuidString),
             "sampleCount": .integer(motionSlice.count),
@@ -370,7 +399,7 @@ final class SupabaseUploader: Sendable {
                 groupId: groupId, userId: userId,
                 roundId: roundId, strokeId: nil,
                 holeNumber: holeNumber, candidateCount: rejections.count,
-                captureReason: "lookback", storagePath: storagePath,
+                wear: wear, captureReason: "lookback", storagePath: storagePath,
                 testSessionId: testSessionId, windowSeconds: windowSeconds
             ) else { return }
 
@@ -747,6 +776,8 @@ final class SupabaseUploader: Sendable {
         let detector_config: [String: Double]?
         /// Per-gate verdict with limit and margin, on passes as well as fails.
         let gate_report: [String: [String: Double]]?
+        let wrist: String
+        let crown: String
     }
 
     @discardableResult
@@ -779,7 +810,9 @@ final class SupabaseUploader: Sendable {
             storage_path: storagePath,
             test_session_id: event.testSessionId?.uuidString,
             detector_config: await DetectorConfig.shared.snapshot,
-            gate_report: event.gateReport
+            gate_report: event.gateReport,
+            wrist: Self.column(event.wear.wrist),
+            crown: Self.column(event.wear.crown)
         )
         do {
             try await supabase.from("swing_events").insert(row).execute()
