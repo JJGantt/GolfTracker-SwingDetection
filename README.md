@@ -306,7 +306,7 @@ Swing detection, swing direction and the elevation solver are kept in a private 
 - Automatic save on changes
 - File-based storage in documents directory
 
-**Location**: `GolfTracker/Services/DataStore.swift`
+**Location**: `GolfTracker/Services/DataStore.swift` and its `DataStore+*.swift` extensions
 
 #### Data Models
 Comprehensive data structures for:
@@ -480,7 +480,7 @@ GolfTracker/                              # iOS app target
 │   ├── Shared/MapAnnotations.swift
 │   └── Test/TestFilesView.swift
 ├── Services/
-│   ├── DataStore.swift                   # Data persistence
+│   ├── DataStore.swift                   # Data persistence (+ DataStore+*.swift per concern)
 │   ├── LocationManager.swift             # GPS services
 │   ├── StatsEngine.swift                 # Statistics calculations
 │   └── WatchConnectivityManager.swift    # iPhone-Watch sync

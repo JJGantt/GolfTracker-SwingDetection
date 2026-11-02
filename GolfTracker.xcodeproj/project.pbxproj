@@ -13,7 +13,6 @@
 		AA11BB22CC33DD44EE550143 /* SwingTestView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA11BB22CC33DD44EE550142 /* SwingTestView.swift */; };
 		AA11BB22CC33DD44EE550141 /* SwingTestSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA11BB22CC33DD44EE550140 /* SwingTestSession.swift */; };
 		AA11BB22CC33DD44EE550151 /* DetectorConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA11BB22CC33DD44EE550150 /* DetectorConfig.swift */; };
-		1FFC95E79D10456C80AF9B21 /* ActiveRoundView+ClubPrediction.swift in Sources */ = {isa = PBXBuildFile; fileRef = A027586C12704EBCAA1B1736 /* ActiveRoundView+ClubPrediction.swift */; };
 		213F987A236E419F88E9C4C2 /* HolePlayView+MoveStrokeMode.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0F575753710A466D92C391CB /* HolePlayView+MoveStrokeMode.swift */; };
 		25075A32729043CBA13B479B /* ActiveRoundView+StrokeRecording.swift in Sources */ = {isa = PBXBuildFile; fileRef = B395866142294534934CF914 /* ActiveRoundView+StrokeRecording.swift */; };
 		292FA1B1CDCE4D5D80F8A5D6 /* PlayerStats.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8713ACF846B0498E97AAC629 /* PlayerStats.swift */; };
@@ -146,6 +145,11 @@
 		F79C60472FF591621AB54D1C /* ActiveRoundView+Map.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0E364688BCC50AD5CBC523ED /* ActiveRoundView+Map.swift */; };
 		8A450824ACE14331B1994B04 /* ActiveRoundView+MapCamera.swift in Sources */ = {isa = PBXBuildFile; fileRef = DC80AF5E132CF92D02F9EF4E /* ActiveRoundView+MapCamera.swift */; };
 		C4598492A14C2AA6574348B9 /* ClubDistanceEditorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 65A6C8C0A10EB3D904B571DF /* ClubDistanceEditorView.swift */; };
+		0087E6737CD6F45D53C6E3B4 /* DataStore+HoleDetection.swift in Sources */ = {isa = PBXBuildFile; fileRef = F7712C3C08226D572911C89C /* DataStore+HoleDetection.swift */; };
+		7D145C88AA100200384A27BB /* DataStore+Courses.swift in Sources */ = {isa = PBXBuildFile; fileRef = E2A0086D36D6BD4B4CE8AD71 /* DataStore+Courses.swift */; };
+		E7D3905CA55409EAD6948B55 /* DataStore+Rounds.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1E353C72ADD7217015726042 /* DataStore+Rounds.swift */; };
+		70EECFEB5BF7519B2C41832D /* DataStore+Strokes.swift in Sources */ = {isa = PBXBuildFile; fileRef = 179E55749412E761F81D0C87 /* DataStore+Strokes.swift */; };
+		2AAF2DB012C5D0B0B0575F24 /* DataStore+DemoData.swift in Sources */ = {isa = PBXBuildFile; fileRef = F169D93E6B562C03D39C7F23 /* DataStore+DemoData.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -266,7 +270,6 @@
 		870F6DC4F3184CDF81331B32 /* SwingDetectionManager+PostPairingGates.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "SwingDetectionManager+PostPairingGates.swift"; sourceTree = "<group>"; };
 		8713ACF846B0498E97AAC629 /* PlayerStats.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlayerStats.swift; sourceTree = "<group>"; };
 		93374566285C433CB8F2AD38 /* HolePlayView+MoveHoleMode.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "HolePlayView+MoveHoleMode.swift"; sourceTree = "<group>"; };
-		A027586C12704EBCAA1B1736 /* ActiveRoundView+ClubPrediction.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "ActiveRoundView+ClubPrediction.swift"; sourceTree = "<group>"; };
 		A6E32218380E4C3C93B38A12 /* ActiveRoundView+Scorecard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "ActiveRoundView+Scorecard.swift"; sourceTree = "<group>"; };
 		B06522DFDE374AFFB8DC4411 /* CourseDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CourseDetailView.swift; sourceTree = "<group>"; };
 		B395866142294534934CF914 /* ActiveRoundView+StrokeRecording.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "ActiveRoundView+StrokeRecording.swift"; sourceTree = "<group>"; };
@@ -287,6 +290,11 @@
 		0E364688BCC50AD5CBC523ED /* ActiveRoundView+Map.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "ActiveRoundView+Map.swift"; sourceTree = "<group>"; };
 		DC80AF5E132CF92D02F9EF4E /* ActiveRoundView+MapCamera.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "ActiveRoundView+MapCamera.swift"; sourceTree = "<group>"; };
 		65A6C8C0A10EB3D904B571DF /* ClubDistanceEditorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClubDistanceEditorView.swift; sourceTree = "<group>"; };
+		F7712C3C08226D572911C89C /* DataStore+HoleDetection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "DataStore+HoleDetection.swift"; sourceTree = "<group>"; };
+		E2A0086D36D6BD4B4CE8AD71 /* DataStore+Courses.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "DataStore+Courses.swift"; sourceTree = "<group>"; };
+		1E353C72ADD7217015726042 /* DataStore+Rounds.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "DataStore+Rounds.swift"; sourceTree = "<group>"; };
+		179E55749412E761F81D0C87 /* DataStore+Strokes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "DataStore+Strokes.swift"; sourceTree = "<group>"; };
+		F169D93E6B562C03D39C7F23 /* DataStore+DemoData.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "DataStore+DemoData.swift"; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -339,7 +347,6 @@
 				478676D9D6A7C82F54F29322 /* ActiveRoundView+Buttons.swift */,
 				875DA8525027B74EA632017C /* ActiveRoundView+ClubSelector.swift */,
 				16BCE78889CC4D2BA4EA325D /* ActiveRoundView+GPSIndicator.swift */,
-				A027586C12704EBCAA1B1736 /* ActiveRoundView+ClubPrediction.swift */,
 				6AHKBANNR000000000000001 /* HealthKitBanner.swift */,
 			);
 			path = Components;
@@ -469,6 +476,11 @@
 				6AB83CEF2EDFB78400CE341C /* LocationManager.swift */,
 				6AB83CE62EDFB19E00CE341C /* DataStore.swift */,
 				CABA947F884AEC8693217047 /* DataStore+Clubs.swift */,
+				F169D93E6B562C03D39C7F23 /* DataStore+DemoData.swift */,
+				179E55749412E761F81D0C87 /* DataStore+Strokes.swift */,
+				1E353C72ADD7217015726042 /* DataStore+Rounds.swift */,
+				E2A0086D36D6BD4B4CE8AD71 /* DataStore+Courses.swift */,
+				F7712C3C08226D572911C89C /* DataStore+HoleDetection.swift */,
 				5F0B30A56CB109C0CFCE4905 /* HoleDetectionAnalyzer.swift */,
 				01635C6BB56440EA8CF2FA63 /* StatsEngine.swift */,
 				6A7A65102026042200000002 /* DemoDataSeeder.swift */,
@@ -722,6 +734,11 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				2AAF2DB012C5D0B0B0575F24 /* DataStore+DemoData.swift in Sources */,
+				70EECFEB5BF7519B2C41832D /* DataStore+Strokes.swift in Sources */,
+				E7D3905CA55409EAD6948B55 /* DataStore+Rounds.swift in Sources */,
+				7D145C88AA100200384A27BB /* DataStore+Courses.swift in Sources */,
+				0087E6737CD6F45D53C6E3B4 /* DataStore+HoleDetection.swift in Sources */,
 				DE692441D16935A97AF9B768 /* DataStore+Clubs.swift in Sources */,
 				3924EC4E5221E6CAC2D30E4B /* HoleDetectionAnalyzer.swift in Sources */,
 				6A534BA5125081FC86016945 /* GreenCandidates.swift in Sources */,
@@ -855,7 +872,6 @@
 				25075A32729043CBA13B479B /* ActiveRoundView+StrokeRecording.swift in Sources */,
 				BF402ACBA5ED40FE92601108 /* ActiveRoundView+Scorecard.swift in Sources */,
 				BBA6A7885FDA496CBB0C574B /* ActiveRoundView+GPSIndicator.swift in Sources */,
-				1FFC95E79D10456C80AF9B21 /* ActiveRoundView+ClubPrediction.swift in Sources */,
 				6AHKBANNR000000000000002 /* HealthKitBanner.swift in Sources */,
 				6AONBOARD000000000000004 /* WatchOnboardingView.swift in Sources */,
 			);

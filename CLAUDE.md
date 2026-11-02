@@ -125,8 +125,10 @@ The iPhone and Watch apps communicate bidirectionally via **WatchConnectivity**:
 - **Bidirectional**: Hole navigation sync, target marker sync, hole creation/editing
 
 **Critical Implementation Detail**: Both platforms maintain their own `DataStore` instances backed by SwiftData (`@Model` classes in `Models.swift`):
-- iOS: `DataStore` in `GolfTracker/Services/DataStore.swift` (club management in `DataStore+Clubs.swift`, the green detector in `HoleDetectionAnalyzer.swift`)
+- iOS: `DataStore` in `GolfTracker/Services/DataStore.swift` (state, setup, persistence), with one extension file per concern: `DataStore+Rounds`, `+Strokes`, `+Courses`, `+Clubs`, `+HoleDetection` (runs the green detector, `HoleDetectionAnalyzer.swift`, and answers the watch's requests) and `+DemoData`
 - watchOS: `WatchDataStore` in `GolfWatch Watch App/Services/WatchDataStore.swift`
+
+Stored properties stay in the core file (an extension cannot hold one), so the core file is where to look for the store's state; a member written from more than one file is internal rather than `private`.
 
 What both do the same way is written once, in `RoundStoreShared.swift` (compiled into both targets): starting a round where the user stands (`startRoundAtCurrentLocation` → resolver → course / scorecard / course-name pickers), the green candidates (`filteredGreenCandidates`, via `GreenCandidates`), club lookups, and the round-lifecycle sweep. Each store conforms to `RoundStoreShared` and supplies its state and the few platform hooks (how it ends a round, how it records server activity, whether a start without a fix asks for location permission). Change that behaviour there, not in a store.
 
@@ -490,7 +492,12 @@ GolfTracker/                              # iOS app target
 ├── Services/
 │   ├── RoundStoreShared.swift            # Behaviour both stores share (round start, green candidates, clubs, lifecycle sweep) — shared
 │   ├── GreenCandidates.swift             # OSM greens + filtered detector blobs, in display order — shared
-│   ├── DataStore+Clubs.swift             # Phone club types / clubs / sets
+│   ├── DataStore+Clubs.swift             # Phone club types / clubs / sets, and the launch reconcile of the catalog
+│   ├── DataStore+Rounds.swift            # Start (incl. the resolver's tee picker), end, delete; current/completed holes
+│   ├── DataStore+Strokes.swift           # Strokes and target markers
+│   ├── DataStore+Courses.swift           # Course + hole edits, fetchAndInsertCourse, updateActiveRoundHoles
+│   ├── DataStore+HoleDetection.swift     # Green detector runs, server cache, the watch-request queue
+│   ├── DataStore+DemoData.swift          # Seed / clear demo data
 │   ├── HoleDetectionAnalyzer.swift       # Satellite-tile green detector (iOS)
 │   ├── DataStore.swift                   # iOS data persistence + sync callbacks. Holds the round-start state (pendingCoursePicker / pendingScorecardPicker / pendingTeePicker) that drives PlayTabView's picker sheets; the flow itself is RoundStoreShared's.
 │   ├── DemoDataSeeder.swift              # Generates fake courses + rounds for empty Stats/History/Round Detail screens; tagged with `[Demo] ` prefix so they can be wiped

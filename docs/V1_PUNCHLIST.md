@@ -75,7 +75,7 @@ Completely separate source: **GolfCourseAPI**, proxied through the
 needsBlobDetection = (osmData == nil) OR (tier != .full) OR (greens < holes)
 ```
 Only then. And when both exist, **OSM wins outright** — `filteredGreenCandidates`
-(`WatchDataStore.swift:1547`) appends OSM greens converted to `HoleDetectionBlob`
+(`RoundStoreShared.swift`, via `GreenCandidates`) appends OSM greens converted to `HoleDetectionBlob`
 with a synthetic `greennessScore: 9_999` so they always sort above scan results.
 
 **Delivery is server-first**: watch checks `courses.blob_detection_results`, and on a
@@ -773,7 +773,7 @@ and the launch split left no course hole attached to a round on either device.
 
 `DataStore.startRound(for:)` builds `Round(holes: course.holes)`. `Hole.round` is
 to-one, so once one phone round at a course holds those holes, the next one's insert
-in `saveRounds()` (DataStore.swift:498, from :982) dies on
+in `saveRounds()` (DataStore.swift) dies on
 `SwiftData/ModelContext.swift:935: Fatal error: This relationship already has a value
 but it's not the target`. Reproduced twice from Start Round → Palm → Course not listed;
 the local store showed all 18 in-use Palm holes pointing at the 18:58 round.
