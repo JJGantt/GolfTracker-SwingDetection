@@ -11,7 +11,7 @@ the store screenshots are made, and what Apple requires before review. Store cop
 - **App record:** `GolfTrackerJP`, bundle `com.Jared.GolfTracker` (watch companion
   `com.Jared.GolfTracker.watchkitapp`), team `XMH4AVFC78`. It already exists on App Store
   Connect — never "create new app".
-- **Version:** both Info.plists read `1.0.0 (72)` (checked 2026-09-16).
+- **Version:** both Info.plists read `1.0.0 (76)` (checked 2026-11-02).
 - **Uploads:** archive → export → `altool` is proven from this Mac; builds have reached
   TestFlight this way.
 - **Left before submitting:** pick and upload screenshots, read the listing copy through,
