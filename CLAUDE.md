@@ -91,7 +91,7 @@ The suite is small on purpose (`~/CLAUDE.md`, "Tests: few"). Run before pushing:
 | What | Run | Covers |
 |---|---|---|
 | `Tests/AppLogic` | `cd Tests/AppLogic && swift test` | `GreenCandidates` (which greens a course offers, in what order), `StatsEngine` (what counts as a played hole and a scored round, score, putts, GIR, club distances), `RowVersion` (which copy of a synced row wins), `TimeWindowBuffer` (the watch's motion buffer) |
-| algorithms package | `cd StrokeSaverAlgorithms && swift test` | detector config install rules; the seed carries every `DetectorKey`; the labelled motion corpus replayed under the live thresholds keeps its precision and recall (figures in the package's `docs/SWING_DETECTION.md`) |
+| algorithms package | `cd StrokeSaverAlgorithms && swift test` | detector config install rules; the seed carries every `DetectorKey`; the labelled motion corpus replayed under the live thresholds keeps its precision and recall (protocol in the package's `docs/EVALUATION.md`, figures in its `docs/SWING_DETECTION.md`), and classifies the same when re-expressed as every other wrist/crown wear |
 | holes access | `supabase/tests/holes_rls.sh` | what each kind of user may do with `holes` (migrations 00053, 00055) |
 | detector config access | `supabase/tests/detector_config_rls.sh` | that a signed-in user gets the resolved thresholds through `detector_config_for_me`, their own row winning, and cannot read or write the table (migration 00058) |
 | courses access | `supabase/tests/courses_rls.sh` | what each kind of user may do with `courses`, and what `register-osm-course` registers (migrations 00055, 00056) |
