@@ -203,3 +203,100 @@ extension SwingDetectionManager {
         }
     }
 }
+
+// 800Hz stream liveness: the watchdog that notices a stream armed but silent.
+extension SwingDetectionManager {
+
+    /// Called from the batch-delivery loop (~2Hz). Marks the stream live and
+    /// closes out a logged outage.
+    func noteRawBatchArrived() {
+        let now = Date()
+        let recoveredAfter: TimeInterval? = raw800Liveness.withLock { l in
+            l.lastBatchWall = now
+            l.restartAttempts = 0
+            l.nextRestartAt = nil
+            l.state = .live
+            defer { l.downLogged = false; l.downSince = nil }
+            return l.downLogged ? (l.downSince.map { now.timeIntervalSince($0) } ?? 0) : nil
+        }
+        if let downFor = recoveredAfter {
+            ClientEventLogger.log("rawAccel.stream.up", detail: [
+                "downSeconds": .double(downFor)
+            ])
+        }
+        DispatchQueue.main.async {
+            if self.raw800State != .live { self.raw800State = .live }
+            self.raw800DownSince = nil
+        }
+    }
+
+    /// The stream was just (re)started. Silence is measured from here. It was
+    /// measured from the last batch of whatever ran before, so every restart
+    /// logged a phantom outage spanning the whole gap — 41 of the 42
+    /// `stream.down` rows on 2026-09-07 were that, not real dropouts.
+    func noteRawStreamArmed() {
+        raw800Liveness.withLock { $0.lastBatchWall = Date() }
+    }
+
+    /// Called from the 100Hz motion tick, throttled to ~1Hz. Detects
+    /// running-but-silent, logs the DOWN transition once, and restarts the
+    /// stream with backoff until batches flow again.
+    func checkRaw800Liveness(sensorTime: TimeInterval) {
+        enum Verdict { case none, off, silent(Double, wentDown: Date?, restart: (attempt: Int, backoff: Double)?) }
+        let running = isBatchedAccelRunning
+        let now = Date()
+        let verdict: Verdict = raw800Liveness.withLock { l in
+            guard sensorTime - l.lastCheckSensorTime >= 1.0 else { return .none }
+            l.lastCheckSensorTime = sensorTime
+            guard running else {
+                guard l.state != .off else { return .none }
+                l.state = .off
+                return .off
+            }
+            guard let last = l.lastBatchWall else { return .none }
+            let silent = now.timeIntervalSince(last)
+            guard silent > 2.0 else { return .none }
+            var wentDown: Date?
+            if !l.downLogged {
+                l.downLogged = true
+                l.state = .down
+                l.downSince = last
+                wentDown = last
+            }
+            // Watchdog. Nothing else ever restarts a stream that dies while it
+            // is meant to be running — the 2026-08-31 outage sat dead for 35
+            // minutes.
+            if let next = l.nextRestartAt, now < next {
+                return .silent(silent, wentDown: wentDown, restart: nil)
+            }
+            l.restartAttempts += 1
+            let backoff = min(60.0, 2.0 * pow(2.0, Double(l.restartAttempts - 1)))
+            l.nextRestartAt = now.addingTimeInterval(backoff)
+            return .silent(silent, wentDown: wentDown, restart: (l.restartAttempts, backoff))
+        }
+        switch verdict {
+        case .none:
+            return
+        case .off:
+            DispatchQueue.main.async { self.raw800State = .off }
+        case let .silent(silent, wentDown, restart):
+            if let last = wentDown {
+                ClientEventLogger.log("rawAccel.stream.down", detail: [
+                    "silentSeconds": .double(silent)
+                ])
+                DispatchQueue.main.async {
+                    self.raw800State = .down
+                    self.raw800DownSince = last
+                }
+            }
+            guard let restart else { return }
+            ClientEventLogger.log("rawAccel.stream.restart", detail: [
+                "attempt": .integer(restart.attempt),
+                "silentSeconds": .double(silent),
+                "nextRetrySeconds": .double(restart.backoff),
+                "canStart": .bool(canStartRawAccelNow)
+            ])
+            restartRawAccel()
+        }
+    }
+}

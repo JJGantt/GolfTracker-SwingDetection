@@ -14,13 +14,6 @@ enum DetectionMode: String, CaseIterable {
     case unifDetect = "Unif"
 }
 
-// Preset for unifDetect params
-enum UnifDetectPreset: String, CaseIterable {
-    case permissive = "Permissive"
-    case restrictive = "Restrictive"
-    case custom = "Custom"
-}
-
 /// Shared across main, `motionQueue` and `rawAccelQueue`; see "Threads" in
 /// CLAUDE.md for which lock covers which state. Its `@Published` properties
 /// are written on main only.
@@ -39,7 +32,7 @@ final class SwingDetectionManager: NSObject, ObservableObject, @unchecked Sendab
     /// For the UI. Code off the main thread reads `monitoringActive`: the
     /// motion and raw-accel queues test it on every sample, and a `@Published`
     /// property read there while main writes it is a data race.
-    @Published private(set) var isMonitoring: Bool = false {
+    @Published var isMonitoring: Bool = false {
         didSet { monitoringFlag.withLock { $0 = isMonitoring } }
     }
     private let monitoringFlag = OSAllocatedUnfairLock(initialState: false)
@@ -104,7 +97,7 @@ final class SwingDetectionManager: NSObject, ObservableObject, @unchecked Sendab
     /// Never call `withDetector` from inside another `withDetector`, and never
     /// fire a detection while holding it: `fireSmartDetection` takes it again
     /// for the bearing.
-    private let unifiedDetector: UnifiedDetector
+    let unifiedDetector: UnifiedDetector
     private let detectorLock = NSLock()
 
     func withDetector<R>(_ body: (UnifiedDetector) -> R) -> R {
@@ -177,7 +170,7 @@ final class SwingDetectionManager: NSObject, ObservableObject, @unchecked Sendab
     /// Stream liveness. Written by the batch-delivery task and by the 1Hz
     /// check on `motionQueue`, so it lives behind its own lock; the published
     /// properties above are main's copy for the UI and are never read here.
-    private struct Raw800Liveness {
+    struct Raw800Liveness {
         var lastBatchWall: Date?
         var lastCheckSensorTime: TimeInterval = 0
         var state: Raw800State = .off
@@ -190,100 +183,7 @@ final class SwingDetectionManager: NSObject, ObservableObject, @unchecked Sendab
         var restartAttempts = 0
         var nextRestartAt: Date?
     }
-    private let raw800Liveness = OSAllocatedUnfairLock(initialState: Raw800Liveness())
-
-    /// Called from the batch-delivery loop (~2Hz). Marks the stream live and
-    /// closes out a logged outage.
-    func noteRawBatchArrived() {
-        let now = Date()
-        let recoveredAfter: TimeInterval? = raw800Liveness.withLock { l in
-            l.lastBatchWall = now
-            l.restartAttempts = 0
-            l.nextRestartAt = nil
-            l.state = .live
-            defer { l.downLogged = false; l.downSince = nil }
-            return l.downLogged ? (l.downSince.map { now.timeIntervalSince($0) } ?? 0) : nil
-        }
-        if let downFor = recoveredAfter {
-            ClientEventLogger.log("rawAccel.stream.up", detail: [
-                "downSeconds": .double(downFor)
-            ])
-        }
-        DispatchQueue.main.async {
-            if self.raw800State != .live { self.raw800State = .live }
-            self.raw800DownSince = nil
-        }
-    }
-
-    /// The stream was just (re)started. Silence is measured from here. It was
-    /// measured from the last batch of whatever ran before, so every restart
-    /// logged a phantom outage spanning the whole gap — 41 of the 42
-    /// `stream.down` rows on 2026-09-07 were that, not real dropouts.
-    func noteRawStreamArmed() {
-        raw800Liveness.withLock { $0.lastBatchWall = Date() }
-    }
-
-    /// Called from the 100Hz motion tick, throttled to ~1Hz. Detects
-    /// running-but-silent, logs the DOWN transition once, and restarts the
-    /// stream with backoff until batches flow again.
-    func checkRaw800Liveness(sensorTime: TimeInterval) {
-        enum Verdict { case none, off, silent(Double, wentDown: Date?, restart: (attempt: Int, backoff: Double)?) }
-        let running = isBatchedAccelRunning
-        let now = Date()
-        let verdict: Verdict = raw800Liveness.withLock { l in
-            guard sensorTime - l.lastCheckSensorTime >= 1.0 else { return .none }
-            l.lastCheckSensorTime = sensorTime
-            guard running else {
-                guard l.state != .off else { return .none }
-                l.state = .off
-                return .off
-            }
-            guard let last = l.lastBatchWall else { return .none }
-            let silent = now.timeIntervalSince(last)
-            guard silent > 2.0 else { return .none }
-            var wentDown: Date?
-            if !l.downLogged {
-                l.downLogged = true
-                l.state = .down
-                l.downSince = last
-                wentDown = last
-            }
-            // Watchdog. Nothing else ever restarts a stream that dies while it
-            // is meant to be running — the 2026-08-31 outage sat dead for 35
-            // minutes.
-            if let next = l.nextRestartAt, now < next {
-                return .silent(silent, wentDown: wentDown, restart: nil)
-            }
-            l.restartAttempts += 1
-            let backoff = min(60.0, 2.0 * pow(2.0, Double(l.restartAttempts - 1)))
-            l.nextRestartAt = now.addingTimeInterval(backoff)
-            return .silent(silent, wentDown: wentDown, restart: (l.restartAttempts, backoff))
-        }
-        switch verdict {
-        case .none:
-            return
-        case .off:
-            DispatchQueue.main.async { self.raw800State = .off }
-        case let .silent(silent, wentDown, restart):
-            if let last = wentDown {
-                ClientEventLogger.log("rawAccel.stream.down", detail: [
-                    "silentSeconds": .double(silent)
-                ])
-                DispatchQueue.main.async {
-                    self.raw800State = .down
-                    self.raw800DownSince = last
-                }
-            }
-            guard let restart else { return }
-            ClientEventLogger.log("rawAccel.stream.restart", detail: [
-                "attempt": .integer(restart.attempt),
-                "silentSeconds": .double(silent),
-                "nextRetrySeconds": .double(restart.backoff),
-                "canStart": .bool(canStartRawAccelNow)
-            ])
-            restartRawAccel()
-        }
-    }
+    let raw800Liveness = OSAllocatedUnfairLock(initialState: Raw800Liveness())
 
     // Published: true briefly when 800Hz raw accel confirms ball contact after a shape detection
     @Published var contactConfirmedRecently: Bool = false
@@ -315,59 +215,8 @@ final class SwingDetectionManager: NSObject, ObservableObject, @unchecked Sendab
     /// Appended on `motionQueue` and `rawAccelQueue` (each gate stage
     /// rejects on its own queue), claimed and counted on main. Only touched
     /// with `rejectionsLock` held.
-    private var rejectedShapesSinceLastStroke: [RejectedShape] = []
-    private let rejectionsLock = NSLock()
-
-    /// How many rejections are waiting to be claimed, for the debug readouts.
-    var pendingRejectionCount: Int {
-        rejectionsLock.lock()
-        defer { rejectionsLock.unlock() }
-        return rejectedShapesSinceLastStroke.count
-    }
-
-    /// Called by PostPairingGates when a shape is rejected outright (DM
-    /// gate failed and 800Hz isn't running, or 800Hz override also failed).
-    /// Captures the same motion + raw accel slices we'd ship for a real
-    /// detection, plus the gate result with `fails` populated.
-    func recordRejection(shape: UnifiedShapeEvent, gate: PostPairingGateResult, stage: String) {
-        let motionWindowStart = shape.bsTopT - 2.0
-        let motionWindowEnd = shape.fsPeakT + 1.0
-        rollingBufferLock.lock()
-        let motionSlice = rollingMotionBuffer.elements(from: motionWindowStart, to: motionWindowEnd)
-        rollingBufferLock.unlock()
-        eventBufferLock.lock()
-        let rawAccelSlice = eventRawAccelBuffer.samples(in: motionWindowStart...motionWindowEnd)
-        eventBufferLock.unlock()
-
-        let rejection = RejectedShape(
-            shape: shape, gate: gate,
-            motionSlice: motionSlice, rawAccelSlice: rawAccelSlice,
-            rejectedAt: Date(), stage: stage
-        )
-        rejectionsLock.lock()
-        rejectedShapesSinceLastStroke.append(rejection)
-        rejectionsLock.unlock()
-    }
-
-    /// Pops and returns ALL rejected shapes accumulated since the last
-    /// stroke. Clears the buffer. Used by the manual-stroke-add path to
-    /// upload every recent rejection as a false-negative.
-    func claimAllRejectionsSinceLastStroke() -> [RejectedShape] {
-        rejectionsLock.lock()
-        defer { rejectionsLock.unlock() }
-        let claimed = rejectedShapesSinceLastStroke
-        rejectedShapesSinceLastStroke.removeAll()
-        return claimed
-    }
-
-    /// Discards the buffer without uploading. Used by the auto-detect
-    /// success path — when the system DID catch a swing, intermediate
-    /// rejections are noise, not missed swings.
-    func clearRejectionsSinceLastStroke() {
-        rejectionsLock.lock()
-        defer { rejectionsLock.unlock() }
-        rejectedShapesSinceLastStroke.removeAll()
-    }
+    var rejectedShapesSinceLastStroke: [RejectedShape] = []
+    let rejectionsLock = NSLock()
 
     // MARK: - Lookback Capture
 
@@ -386,11 +235,11 @@ final class SwingDetectionManager: NSObject, ObservableObject, @unchecked Sendab
     ///
     /// Held with the latest sample time in one lock: the motion queue writes
     /// both, a lookback on main reads and moves both.
-    private struct SensorClock {
+    struct SensorClock {
         var latestSample: TimeInterval = 0
         var captureBoundary: TimeInterval = 0
     }
-    private let sensorClock = OSAllocatedUnfairLock(initialState: SensorClock())
+    let sensorClock = OSAllocatedUnfairLock(initialState: SensorClock())
 
     /// Sensor time of the latest device-motion sample.
     var lastDeviceMotionSensorTime: TimeInterval { sensorClock.withLock { $0.latestSample } }
@@ -414,84 +263,6 @@ final class SwingDetectionManager: NSObject, ObservableObject, @unchecked Sendab
         let windowEnd: TimeInterval
     }
 
-    /// Re-read the 800Hz ring for an already-decided window. Used after
-    /// `rawAccelSettleDelay` so a capture is not stored missing the batch that
-    /// carried the impact.
-    func rawAccelSlice(from: TimeInterval, to: TimeInterval) -> [RawAccelDataPoint] {
-        eventBufferLock.lock()
-        defer { eventBufferLock.unlock() }
-        return eventRawAccelBuffer.samples(in: from...to)
-    }
-
-    /// Called on every fired detection to advance the boundary. Motion up to
-    /// here has an event of its own and must not be re-captured.
-    func markCaptureBoundary() {
-        sensorClock.withLock { $0.captureBoundary = $0.latestSample }
-    }
-
-    /// Grab the raw motion window for a swing the detector said nothing about.
-    ///
-    /// The window ends now and starts at the later of (now − `lookbackMaxSeconds`)
-    /// and the last boundary, so it shrinks automatically to cover only ground
-    /// nothing has claimed yet — often well under the maximum. Any rejections
-    /// inside it come along, and an empty rejection list is the informative
-    /// case: the swing never even paired.
-    ///
-    /// Returns nil when the window is empty, which means the boundary is
-    /// already at "now" — a detection just fired, or the button was already
-    /// pressed and there is nothing new to send.
-    func captureLookbackWindow() -> LookbackCapture? {
-        // Read the window and claim it in one step, so a detection firing
-        // meanwhile cannot move the boundary between the two.
-        let (windowEnd, windowStart, boundary) = sensorClock.withLock { clock in
-            let end = clock.latestSample
-            let start = max(end - Self.lookbackMaxSeconds, clock.captureBoundary)
-            let was = clock.captureBoundary
-            if end > start { clock.captureBoundary = end }
-            return (end, start, was)
-        }
-        guard windowEnd > windowStart else {
-            ClientEventLogger.log("lookback.capture.empty", detail: [
-                "windowEnd": .double(windowEnd),
-                "boundary": .double(boundary)
-            ])
-            return nil
-        }
-
-        rollingBufferLock.lock()
-        let motionSlice = rollingMotionBuffer.elements(from: windowStart, to: windowEnd)
-        rollingBufferLock.unlock()
-
-        eventBufferLock.lock()
-        let rawAccelSlice = eventRawAccelBuffer.samples(in: windowStart...windowEnd)
-        eventBufferLock.unlock()
-
-        // Consume them — they're attached to this capture now, and in test
-        // mode there is no stroke to otherwise drain the buffer.
-        let inCapture: (RejectedShape) -> Bool = {
-            $0.shape.fsPeakT >= windowStart && $0.shape.fsPeakT <= windowEnd
-        }
-        rejectionsLock.lock()
-        let inWindow = rejectedShapesSinceLastStroke.filter(inCapture)
-        rejectedShapesSinceLastStroke.removeAll(where: inCapture)
-        rejectionsLock.unlock()
-
-        ClientEventLogger.log("lookback.capture", detail: [
-            "windowSeconds": .double(windowEnd - windowStart),
-            "motionSamples": .integer(motionSlice.count),
-            "rawAccelSamples": .integer(rawAccelSlice.count),
-            "rejections": .integer(inWindow.count)
-        ])
-
-        return LookbackCapture(
-            motionSlice: motionSlice,
-            rawAccelSlice: rawAccelSlice,
-            rejections: inWindow,
-            windowSeconds: windowEnd - windowStart,
-            windowStart: windowStart,
-            windowEnd: windowEnd
-        )
-    }
     // Shapes that failed the 100Hz DM check but may be overridden by 800Hz raw accel (putter mode)
     var pendingUnifShapesDMFailed: [UnifiedShapeEvent] = []
     let eventsLock = NSLock()
@@ -508,57 +279,9 @@ final class SwingDetectionManager: NSObject, ObservableObject, @unchecked Sendab
     /// across threads is a data race whatever the hardware does with it.
     let latestRawAccelTime = OSAllocatedUnfairLock<TimeInterval>(initialState: 0)
 
-    struct DetectionMetadata {
-        var strokeId: UUID?
-        let timestamp: Date
-        let swingType: SwingType
-        let classification: StrokeClassification
-
-        // Setup
-        let setupStartT: TimeInterval
-        let setupEndT: TimeInterval
-        let setupDuration: TimeInterval
-
-        // BS Top
-        let bsTopT: TimeInterval
-        let bsClassification: StrokeClassification
-        let bsRotMag: Double
-        let bsProminence: Double
-        let bsPeakRotX, bsPeakRotY, bsPeakRotZ: Double
-        let bsTopPitch, bsTopRoll: Double
-        let bsAreaBeforeX, bsAreaBeforeY, bsAreaBeforeZ: Double
-        let bsAreaAfterX, bsAreaAfterY, bsAreaAfterZ: Double
-
-        // FS Peak
-        let fsPeakT: TimeInterval
-        let fsClassification: StrokeClassification
-        let fsPeakRotMag: Double
-        let fsProminence: Double
-        let fsPeakRotX, fsPeakRotY, fsPeakRotZ: Double
-        let fsAreaBeforeX, fsAreaBeforeY, fsAreaBeforeZ: Double
-        let fsAreaAfterX, fsAreaAfterY, fsAreaAfterZ: Double
-
-        // Derived
-        let fsBsRatio: Double
-        let peakAcceleration: Double
-        let preStrokePitch, preStrokeRoll: Double
-
-        // Post-pairing gate values (nil if requirePostPairingGates was off)
-        let contactTV: Double?
-        let contactN: Int?
-        let contactTVX, contactTVY, contactTVZ: Double?
-        let extremaSpread: Double?
-        let baselineTV: Double?
-        let baselineN: Int?
-
-        // Location
-        let latitude, longitude: Double
-        let trajectoryHeading: Double?
-    }
-
     var detectionMetadataCache: [UUID: DetectionMetadata] = [:]
     var detectionMotionCache: [UUID: [RecordedDataPoint]] = [:]
-    private(set) var lastDetectionMetadata: DetectionMetadata?
+    var lastDetectionMetadata: DetectionMetadata?
     var lastDetectionMotionSlice: [RecordedDataPoint] = []
     /// The swing_events row id of the most recent auto-add upload. Set by
     /// `fireSmartDetection` after the synchronous-returned id from
@@ -567,104 +290,6 @@ final class SwingDetectionManager: NSObject, ObservableObject, @unchecked Sendab
     /// undo). Nil when the most recent detection was manual (no immediate
     /// upload — pending lifecycle handles labeling there).
     var lastSwingEventId: UUID?
-
-    struct RecordedDataPoint: Codable {
-        let sensorTime: TimeInterval
-        let userAccelX: Double
-        let userAccelY: Double
-        let userAccelZ: Double
-        let userAccelMag: Double
-        let rotationX: Double
-        let rotationY: Double
-        let rotationZ: Double
-        let rotationMag: Double
-        let gravityX: Double
-        let gravityY: Double
-        let gravityZ: Double
-        let pitch: Double
-        let roll: Double
-        let yaw: Double
-        // CMMagneticField.accuracy at this sample. Used downstream to filter
-        // swings whose magnetometer-anchored attitude can't be trusted (e.g.
-        // metallic interference, uncalibrated cold start). Values:
-        //   -1 = uncalibrated (sensor not yet usable)
-        //    0 = low      (large error possible)
-        //    1 = medium
-        //    2 = high     (best quality)
-        let magAccuracy: Int
-    }
-
-    // Raw accelerometer data point (high frequency, only during recording)
-    struct RawAccelDataPoint: Codable {
-        let sensorTime: TimeInterval
-        let rawAccelX: Double
-        let rawAccelY: Double
-        let rawAccelZ: Double
-        let rawAccelMag: Double
-    }
-
-    /// Fixed-capacity time-ordered ring buffer for high-rate raw accel samples.
-    struct RawAccelRingBuffer {
-        private var storage: [RawAccelDataPoint?]
-        private var head: Int = 0
-        private(set) var count: Int = 0
-
-        init(capacity: Int) {
-            let cap = max(1, capacity)
-            storage = Array(repeating: nil, count: cap)
-        }
-
-        mutating func clear() {
-            head = 0
-            count = 0
-        }
-
-        mutating func append(_ sample: RawAccelDataPoint) {
-            storage[head] = sample
-            head = (head + 1) % storage.count
-            if count < storage.count {
-                count += 1
-            }
-        }
-
-        mutating func trim(olderThan cutoff: TimeInterval) {
-            while count > 0 {
-                let oldestIndex = (head - count + storage.count) % storage.count
-                guard let oldest = storage[oldestIndex] else {
-                    count -= 1
-                    continue
-                }
-                if oldest.sensorTime < cutoff {
-                    storage[oldestIndex] = nil
-                    count -= 1
-                } else {
-                    break
-                }
-            }
-            if count == 0 {
-                head = 0
-            }
-        }
-
-        func samples(in range: ClosedRange<TimeInterval>) -> [RawAccelDataPoint] {
-            guard count > 0 else { return [] }
-            var out: [RawAccelDataPoint] = []
-            out.reserveCapacity(min(count, 512))
-            for offset in 0..<count {
-                let idx = (head - count + offset + storage.count) % storage.count
-                guard let sample = storage[idx] else { continue }
-                let t = sample.sensorTime
-                if t < range.lowerBound {
-                    continue
-                }
-                if t > range.upperBound {
-                    break
-                }
-                out.append(sample)
-            }
-            return out
-        }
-    }
 
     let rawAccelQueue: OperationQueue = {
         let q = OperationQueue()
@@ -689,64 +314,21 @@ final class SwingDetectionManager: NSObject, ObservableObject, @unchecked Sendab
     // Core Motion authorization
     @Published var motionAuthStatus: CMAuthorizationStatus = .notDetermined
     @Published var rawAccelAuthOK: Bool = true
-    private let activityManager = CMMotionActivityManager()
+    let activityManager = CMMotionActivityManager()
 
     // Pedometer — counts steps since the last detected swing. Published
     // so the watch can render a small live debug readout. Reset to 0
     // every time `fireSmartDetection` runs (a real detection fires).
-    private let pedometer = CMPedometer()
+    let pedometer = CMPedometer()
     @Published var stepsSinceLastDetectedSwing: Int = 0
-    private var pedometerStartDate: Date = Date()
-    private var pedometerStartedMonitoring = false
-
-    /// Step-count gate threshold used by the practice-shot dedup logic.
-    /// Read live from UserDefaults so the iOS dev settings slider can tune
-    /// it. Default 10. Set arbitrarily high to disable the gate.
-    static let stepGateThresholdKey = "practiceStepGateThreshold"
-    var stepGateThreshold: Int {
-        let v = UserDefaults.standard.integer(forKey: Self.stepGateThresholdKey)
-        return v > 0 ? v : 10
-    }
-
-    func startPedometerMonitoring() {
-        guard !pedometerStartedMonitoring else { return }
-        guard CMPedometer.isStepCountingAvailable() else { return }
-        pedometerStartedMonitoring = true
-        pedometerStartDate = Date()
-        pedometer.startUpdates(from: pedometerStartDate) { [weak self] data, _ in
-            guard let self = self, let data = data else { return }
-            let steps = data.numberOfSteps.intValue
-            DispatchQueue.main.async { self.stepsSinceLastDetectedSwing = steps }
-        }
-    }
-
-    func stopPedometerMonitoring() {
-        guard pedometerStartedMonitoring else { return }
-        pedometerStartedMonitoring = false
-        pedometer.stopUpdates()
-        DispatchQueue.main.async { self.stepsSinceLastDetectedSwing = 0 }
-    }
-
-    /// Reset the step counter — called from `fireSmartDetection` so each
-    /// detected swing starts a fresh inter-swing step-tally window.
-    func resetStepsSinceLastDetectedSwing() {
-        guard pedometerStartedMonitoring else { return }
-        pedometer.stopUpdates()
-        pedometerStartDate = Date()
-        DispatchQueue.main.async { self.stepsSinceLastDetectedSwing = 0 }
-        pedometer.startUpdates(from: pedometerStartDate) { [weak self] data, _ in
-            guard let self = self, let data = data else { return }
-            let steps = data.numberOfSteps.intValue
-            DispatchQueue.main.async { self.stepsSinceLastDetectedSwing = steps }
-        }
-    }
+    var pedometerStartDate: Date = Date()
+    var pedometerStartedMonitoring = false
 
     // HKWorkoutSession ownership
-    private var monitoringStartedWorkout = false
-
+    var monitoringStartedWorkout = false
 
     // Swing detection parameters
-    private let updateInterval: TimeInterval = 0.01 // 100 Hz device motion
+    let updateInterval: TimeInterval = 0.01 // 100 Hz device motion
 
     // Event capture — circular buffer for 800Hz raw accel around detected swings.
     //
@@ -775,28 +357,6 @@ final class SwingDetectionManager: NSObject, ObservableObject, @unchecked Sendab
     static let rollingBufferDuration: TimeInterval = 180.0
     var rollingMotionBuffer = TimeWindowBuffer<RecordedDataPoint>(duration: rollingBufferDuration) { $0.sensorTime }
     let rollingBufferLock = NSLock()
-
-
-    struct DetectedSwing {
-        let location: CLLocationCoordinate2D
-        let timestamp: Date
-        let peakAcceleration: Double
-        let trajectoryHeading: Double?
-        let swingType: SwingType
-        let fsPeakRotMag: Double
-        let fsBsRatio: Double
-        let bsTopPitch: Double
-        let bsTopRoll: Double
-        let preStrokePitch: Double
-        let preStrokeRoll: Double
-        let bsPeakRotX: Double
-        let bsPeakRotY: Double
-        let bsPeakRotZ: Double
-        let bsPeakRotMag: Double
-        let fsPeakRotX: Double
-        let fsPeakRotY: Double
-        let fsPeakRotZ: Double
-    }
 
     private override init() {
         // The detector reports its diagnostic-tier events through this sink;
@@ -842,179 +402,7 @@ final class SwingDetectionManager: NSObject, ObservableObject, @unchecked Sendab
         checkAndRequestMotionAuthorization()
     }
 
-    // MARK: - Unif Detect Presets
-
-    // The preset system is gone. `applyUnifPreset` assigned a literal to every
-    // gate, which made it a competing source of truth the moment `detector_config`
-    // became authoritative — a preset applied after a load would have silently
-    // overwritten the tuned values with numbers compiled into the build. Presets
-    // also solved a problem that no longer exists: switching several thresholds
-    // at once without a build. The algorithms repo's `swing_detection/tune.py` does that against the
-    // table, for any subset, without shipping anything.
-
-    private func setupMotionManager() {
-        guard motionManager.isDeviceMotionAvailable else {
-            dprint("⌚ [SwingDetection] Device Motion not available")
-            return
-        }
-        motionManager.deviceMotionUpdateInterval = updateInterval
-    }
-
-    func checkAndRequestMotionAuthorization() {
-        let status = CMMotionActivityManager.authorizationStatus()
-        DispatchQueue.main.async { self.motionAuthStatus = status }
-
-        switch status {
-        case .authorized:
-            dprint("⌚ [SwingDetection] Core Motion authorized")
-        case .notDetermined:
-            dprint("⌚ [SwingDetection] Core Motion not determined — triggering system prompt")
-            activityManager.startActivityUpdates(to: .main) { _ in }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                self.activityManager.stopActivityUpdates()
-            }
-        case .denied, .restricted:
-            dprint("⌚ [SwingDetection] Core Motion denied/restricted — show blocking UI")
-        @unknown default:
-            dprint("⌚ [SwingDetection] Core Motion unknown auth status: \(status.rawValue)")
-        }
-    }
-
-    /// The wrist and crown side from the watch's orientation setting. The
-    /// detector normalises motion to the wear its thresholds were measured on
-    /// (`WearFrame`), so this has to be what the user actually wears.
-    @MainActor
-    static var currentWear: WearFrame {
-        let device = WKInterfaceDevice.current()
-        return WearFrame(wrist: device.wristLocation == .right ? .right : .left,
-                         crown: device.crownOrientation == .left ? .left : .right)
-    }
-
-    @MainActor
-    func startMonitoring() {
-        guard motionManager.isDeviceMotionAvailable else {
-            dprint("⌚ [SwingDetection] Cannot start monitoring - device motion not available")
-            return
-        }
-
-        // Start step counting alongside motion. The published
-        // `stepsSinceLastDetectedSwing` powers the live debug readout
-        // and the practice-shot gate.
-        startPedometerMonitoring()
-
-        guard !isMonitoring else {
-            dprint("⌚ [SwingDetection] Already monitoring")
-            return
-        }
-
-        dprint("⌚ [SwingDetection] Starting swing detection on background queue")
-        isMonitoring = true
-        let wear = Self.currentWear
-        withDetector { $0.wear = wear }
-        rawAccelMissingWarned = false
-
-        // Pull the latest thresholds before the first sample is judged. A failed
-        // fetch leaves whatever is already in force (the disk cache), so a
-        // dropped connection never moves a gate mid-round.
-        Task { @MainActor in
-            await DetectorConfig.shared.refresh()
-            if !DetectorConfig.shared.isLoaded {
-                // Nothing has ever resolved: no network now and nothing cached.
-                // Detecting here would judge strokes against the literals the
-                // stored properties happen to be declared with, which is not a
-                // configuration anyone chose. Say so loudly instead.
-                ClientEventLogger.log("detectorConfig.unavailable.detectionDisabled")
-                dprint("⌚ [SwingDetection] No detector config — detection disabled")
-            }
-        }
-
-        // Arm the raw-accel event buffer explicitly.
-        //
-        // `rawAccelRunningForCapture` gates BOTH starting the 800Hz hardware and
-        // whether delivered samples are written to `eventRawAccelBuffer`, yet it
-        // was only ever set from two didSets: `detectionMode` (which fires at
-        // init only when its UserDefaults key already exists) and
-        // `selectedClubTypeName`. Rounds worked by side effect — picking a club
-        // set it — so nothing whose club never changed captured a single 800Hz
-        // sample. Swing Test Mode selects no club, and its first session
-        // uploaded 11 events with rawAccelSampleCount=0: the contact evidence
-        // that soft putts most depend on, absent, with no error anywhere.
-        // Monitoring starting is the real precondition, so say so here.
-        updateRawAccelForCapture()
-
-        if !WorkoutManager.shared.isWorkoutActive {
-            monitoringStartedWorkout = true
-            WorkoutManager.shared.onSessionRunning = { [weak self] in
-                self?.syncRawAccelHardwareState()
-            }
-            WorkoutManager.shared.requestAuthorization { [weak self] success, error in
-                guard let self = self else { return }
-                if !success {
-                    // Denied share access means the session can never keep the app
-                    // alive screen-off. Record it so the capture UI can say so
-                    // instead of recording into a stream that will be suspended.
-                    WorkoutManager.shared.lastFailure =
-                        "HealthKit workout access denied\(error.map { ": \($0.localizedDescription)" } ?? "")"
-                }
-                WorkoutManager.shared.startWorkout()
-                self.phoneLog("[SwingDetection] requestAuthorization done (success=\(success)) — starting HKWorkoutSession")
-            }
-        } else {
-            phoneLog("[SwingDetection] startMonitoring: HKWorkoutSession already active")
-            syncRawAccelHardwareState()
-        }
-
-        startExtendedSession()
-
-        // Use magnetic-north-anchored attitude so per-sample yaw is a real
-        // compass bearing (in radians from magnetic north, Z = vertical).
-        // Default `xArbitraryZVertical` produces yaw relative to whatever
-        // direction the watch happened to be facing at app start, which
-        // makes the recorded attitude unusable for any world-frame analysis
-        // (e.g. swing aim direction). With `xMagneticNorthZVertical`, iOS's
-        // sensor-fusion pipeline keeps the gyro-integrated attitude anchored
-        // to magnetometer north over time. Falls back gracefully when the
-        // magnetometer is uncalibrated — `attitude` is still produced; the
-        // calibration accuracy can be inspected via the workout's heading
-        // service if we need it.
-        startDeviceMotionUpdates()
-    }
-
-    /// Not main-actor on purpose. A closure written inside a main-actor
-    /// method is itself main-actor, and CoreMotion's handler type is not
-    /// `@Sendable`, so the compiler would let it through and the runtime would
-    /// trap on the first sample delivered to `motionQueue`.
-    private nonisolated func startDeviceMotionUpdates() {
-        motionManager.startDeviceMotionUpdates(using: .xMagneticNorthZVertical, to: motionQueue) { [weak self] data, error in
-            guard let self = self, let data = data else { return }
-            self.processDeviceMotion(data)
-        }
-    }
-
-    @MainActor
-    func stopMonitoring() {
-        guard isMonitoring else { return }
-
-        dprint("⌚ [SwingDetection] Stopping swing detection")
-        isMonitoring = false
-        stopPedometerMonitoring()
-        motionManager.stopDeviceMotionUpdates()
-        extendedSession?.invalidate()
-        extendedSession = nil
-        stopBatchedAccelIfUnneeded()
-        if monitoringStartedWorkout {
-            WorkoutManager.shared.endWorkout()
-            monitoringStartedWorkout = false
-            phoneLog("[SwingDetection] stopMonitoring: ended background HKWorkoutSession")
-        }
-        SupabaseUploader.shared.flushPending()
-        rollingBufferLock.lock()
-        rollingMotionBuffer.removeAll()
-        rollingBufferLock.unlock()
-        resetToIdle()
-    }
-
-    private func processDeviceMotion(_ data: CMDeviceMotion) {
+    func processDeviceMotion(_ data: CMDeviceMotion) {
         sensorClock.withLock { $0.latestSample = data.timestamp }
 
         // User Acceleration (gravity removed)
@@ -1142,238 +530,7 @@ final class SwingDetectionManager: NSObject, ObservableObject, @unchecked Sendab
         }
     }
 
-    func fireSmartDetection(
-        result: SwingDetectionResult,
-        shapeEvent: UnifiedShapeEvent? = nil,
-        contactTV: Double? = nil,
-        contactN: Int? = nil,
-        contactTVX: Double? = nil,
-        contactTVY: Double? = nil,
-        contactTVZ: Double? = nil,
-        extremaSpread: Double? = nil,
-        baselineTV: Double? = nil,
-        baselineN: Int? = nil,
-        /// Per-gate value/limit/margin/passed. Recorded on passes too, so a
-        /// detection that only just cleared a gate says so on its own row.
-        gateReport: [String: [String: Double]]? = nil
-    ) {
-        // Pedometer counter restarts here so the next inter-swing window
-        // measures from this detection forward. Practice-shot dedup later
-        // reads stepsSinceLastDetectedSwing at the moment of the next
-        // detection.
-        DispatchQueue.main.async { self.resetStepsSinceLastDetectedSwing() }
-
-        // Runs on the motion or raw-accel queue: settings come from the
-        // lock-backed mirror, read once so the whole detection sees one state.
-        let settings = engine
-        let location = LocationManager.latestDeviceLocation
-        ClientEventLogger.log("swing.fire.enter", detail: [
-            "hasLocation": .bool(location != nil),
-            "hasShapeEvent": .bool(shapeEvent != nil),
-            "selectedClubType": settings.selectedClubTypeName.map { .string($0) } ?? .null,
-            "isPutterSelected": .bool(settings.selectedClubTypeName == "Putt"),
-            "raw800Running": .bool(settings.isBatchedAccelRunning),
-            "workoutSessionState": .string("\(WorkoutManager.currentSessionState.rawValue)")
-        ])
-        // Position is context for a stroke, not a precondition for detecting a
-        // swing — but this used to bail unconditionally without one, which
-        // silently discarded the detection AND its motion slice. Swing Test
-        // Mode runs with no round and usually indoors, exactly where a fix is
-        // least likely, so under the old guard every test detection would have
-        // vanished at this line. A test detection has no stroke to place, so it
-        // carries an explicitly invalid coordinate rather than a plausible-
-        // looking zero.
-        let coordinate: CLLocationCoordinate2D
-        if let location {
-            coordinate = location.coordinate
-        } else if settings.testModeActive {
-            coordinate = kCLLocationCoordinate2DInvalid
-            ClientEventLogger.log("swing.fire.noLocation.testMode")
-        } else {
-            ClientEventLogger.log("swing.fire.bail.noLocation")
-            dprint("⌚ [SwingDetection] Swing detected but no location available")
-            return
-        }
-
-        // Ball launch bearing from the detector's swing direction. The paired
-        // shape's BS-top and FS-peak times ARE the segmentation it needs.
-        // Nil for a shape with no buffered window; the stroke-recording paths
-        // then record a nil heading. There is deliberately no bearing-to-hole
-        // fallback — it produced a number indistinguishable from a real
-        // measurement while carrying none of the information.
-        let swingHeading = shapeEvent.flatMap { shape in
-            withDetector { $0.swingBearing(bsTopT: shape.bsTopT, fsPeakT: shape.fsPeakT) }
-        }
-        if let h = swingHeading {
-            ClientEventLogger.log("swing.direction", detail: [
-                "bearing": .double(h),
-                "type": .string(result.type.rawValue)
-            ])
-        }
-
-        let swing = DetectedSwing(
-            location: coordinate,
-            timestamp: Date(),
-            peakAcceleration: result.peakAcceleration,
-            trajectoryHeading: swingHeading,
-            swingType: result.type,
-            fsPeakRotMag: result.fsPeakRotMag,
-            fsBsRatio: result.fsBsRatio,
-            bsTopPitch: result.bsTopPitch,
-            bsTopRoll: result.bsTopRoll,
-            preStrokePitch: result.preStrokePitch,
-            preStrokeRoll: result.preStrokeRoll,
-            bsPeakRotX: result.bsPeakRotX,
-            bsPeakRotY: result.bsPeakRotY,
-            bsPeakRotZ: result.bsPeakRotZ,
-            bsPeakRotMag: result.bsPeakRotMag,
-            fsPeakRotX: result.fsPeakRotX,
-            fsPeakRotY: result.fsPeakRotY,
-            fsPeakRotZ: result.fsPeakRotZ
-        )
-
-        // Build detection metadata if shape event is available
-        var detectionMeta: DetectionMetadata?
-        if let shape = shapeEvent {
-            let classification = shape.classification
-            let metadata = DetectionMetadata(
-                strokeId: nil,
-                timestamp: Date(),
-                swingType: result.type,
-                classification: classification,
-                setupStartT: shape.setupStartT,
-                setupEndT: shape.setupEndT,
-                setupDuration: shape.setupEndT - shape.setupStartT,
-                bsTopT: shape.bsTopT,
-                bsClassification: shape.bsClassification,
-                bsRotMag: result.bsPeakRotMag,
-                bsProminence: shape.bsProminence,
-                bsPeakRotX: result.bsPeakRotX,
-                bsPeakRotY: result.bsPeakRotY,
-                bsPeakRotZ: result.bsPeakRotZ,
-                bsTopPitch: result.bsTopPitch,
-                bsTopRoll: result.bsTopRoll,
-                bsAreaBeforeX: shape.bsAreaBeforeX,
-                bsAreaBeforeY: shape.bsAreaBeforeY,
-                bsAreaBeforeZ: shape.bsAreaBeforeZ,
-                bsAreaAfterX: shape.bsAreaAfterX,
-                bsAreaAfterY: shape.bsAreaAfterY,
-                bsAreaAfterZ: shape.bsAreaAfterZ,
-                fsPeakT: shape.fsPeakT,
-                fsClassification: shape.fsClassification,
-                fsPeakRotMag: result.fsPeakRotMag,
-                fsProminence: shape.fsProminence,
-                fsPeakRotX: result.fsPeakRotX,
-                fsPeakRotY: result.fsPeakRotY,
-                fsPeakRotZ: result.fsPeakRotZ,
-                fsAreaBeforeX: shape.fsAreaBeforeX,
-                fsAreaBeforeY: shape.fsAreaBeforeY,
-                fsAreaBeforeZ: shape.fsAreaBeforeZ,
-                fsAreaAfterX: shape.fsAreaAfterX,
-                fsAreaAfterY: shape.fsAreaAfterY,
-                fsAreaAfterZ: shape.fsAreaAfterZ,
-                fsBsRatio: result.fsBsRatio,
-                peakAcceleration: result.peakAcceleration,
-                preStrokePitch: result.preStrokePitch,
-                preStrokeRoll: result.preStrokeRoll,
-                contactTV: contactTV,
-                contactN: contactN,
-                contactTVX: contactTVX,
-                contactTVY: contactTVY,
-                contactTVZ: contactTVZ,
-                extremaSpread: extremaSpread,
-                baselineTV: baselineTV,
-                baselineN: baselineN,
-                latitude: coordinate.latitude,
-                longitude: coordinate.longitude,
-                trajectoryHeading: swingHeading
-            )
-            detectionMeta = metadata
-            DispatchQueue.main.async { self.lastDetectionMetadata = metadata }
-        }
-
-        // Cache motion slice for every detection (used by undo to send false positive CSV)
-        let motionWindowEnd = shapeEvent.map { $0.fsPeakT + 1.0 } ?? (lastDeviceMotionSensorTime + 0.5)
-        let motionWindowStart = shapeEvent.map { $0.bsTopT - 2.0 } ?? (motionWindowEnd - 5.0)
-        rollingBufferLock.lock()
-        let motionSlice = rollingMotionBuffer.elements(from: motionWindowStart, to: motionWindowEnd)
-        rollingBufferLock.unlock()
-        DispatchQueue.main.async { self.lastDetectionMotionSlice = motionSlice }
-
-        // Capture 800Hz raw accel slice (if running) over the same time window
-        eventBufferLock.lock()
-        let rawAccelSlice = eventRawAccelBuffer.samples(in: motionWindowStart...motionWindowEnd)
-        eventBufferLock.unlock()
-
-        // Upload to Supabase (pending lifecycle — see docs/BACKEND.md)
-        if let meta = detectionMeta {
-            let clubType = settings.selectedClubTypeName
-            let isAutoAdd = settings.autoAdd
-            ClientEventLogger.log("swing.upload.dispatch", detail: [
-                "motionSampleCount": .integer(motionSlice.count),
-                "rawAccelSampleCount": .integer(rawAccelSlice.count),
-                "clubType": clubType.map { .string($0) } ?? .null,
-                "autoAdd": .bool(isAutoAdd)
-            ])
-            let eventId = SupabaseUploader.shared.onSwingDetected(
-                metadata: meta,
-                motionSlice: motionSlice,
-                rawAccelSlice: rawAccelSlice,
-                clubType: clubType,
-                autoAdd: isAutoAdd,
-                gateReport: gateReport
-            )
-            // Publish the event id so the auto-add UI flow can pair it with
-            // the just-created stroke (for later false-positive marking on
-            // undo). Only set in auto-add mode — manual mode returns nil.
-            DispatchQueue.main.async { self.lastSwingEventId = eventId }
-
-            // Re-upload the 800Hz slice once the batches covering this stroke
-            // have actually been delivered. The synchronous slice above is
-            // taken at confirm time and reliably stops before impact (see
-            // uploadRawAccelLate); detection keeps its own timing, only the
-            // stored copy is corrected.
-            if let eventId {
-                let start = motionWindowStart, end = motionWindowEnd
-                DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + rawAccelSettleDelay) { [weak self] in
-                    guard let self else { return }
-                    self.eventBufferLock.lock()
-                    let late = self.eventRawAccelBuffer.samples(in: start...end)
-                    self.eventBufferLock.unlock()
-                    guard late.count > rawAccelSlice.count else { return }
-                    ClientEventLogger.log("swing.upload.rawLate.dispatch", detail: [
-                        "eventId": .string(eventId.uuidString),
-                        "wasCount": .integer(rawAccelSlice.count),
-                        "nowCount": .integer(late.count)
-                    ])
-                    SupabaseUploader.shared.uploadRawAccelLate(eventId: eventId, slice: late)
-                }
-            }
-        } else {
-            ClientEventLogger.log("swing.upload.skipped.noMetadata")
-        }
-
-        // This detection accounts for the motion behind it, so a later
-        // lookback capture must not reach back past here and re-upload the
-        // same swing as a miss.
-        markCaptureBoundary()
-
-        DispatchQueue.main.async { self.lastDetectedSwing = swing }
-        playFeedback()
-    }
-
-    // MARK: - Formatting
-
-    func f1(_ v: Double) -> String { String(format: "%.1f", v) }
-    func f2(_ v: Double) -> String { String(format: "%.2f", v) }
-    func f3(_ v: Double) -> String { String(format: "%.3f", v) }
-
-    // The following feature areas live in their own extension files:
-    //  - Raw accel / 800Hz batched sensor lifecycle → SwingDetectionManager+RawAccel.swift
-    //  - Post-pairing gates (contact + timing + dynamics + smoothness) + pending-shape checks → SwingDetectionManager+PostPairingGates.swift
-
-
-    // MARK: - Feedback
+    // MARK: - Extended runtime session
 
     func startExtendedSession() {
         let session = WKExtendedRuntimeSession()
@@ -1381,96 +538,6 @@ final class SwingDetectionManager: NSObject, ObservableObject, @unchecked Sendab
         session.start()
         extendedSession = session
         dprint("⌚ [SwingDetection] Extended runtime session started")
-    }
-
-    private func playFeedback() {
-        // Three spaced double-pulses, 0.45s apart, so a detection is
-        // unmistakable mid follow-through — a single buzz was too easy to miss.
-        for i in 0..<3 {
-            DispatchQueue.main.asyncAfter(deadline: .now() + Double(i) * 0.45) {
-                WKInterfaceDevice.current().play(.start)
-                WKInterfaceDevice.current().play(.retry)
-            }
-        }
-    }
-
-    /// Whether a new auto-added swing should replace the previous auto-added
-    /// stroke (= treat as practice swing). True when **both** signals say
-    /// the user hasn't moved between the previous stroke and the new
-    /// detection: GPS distance < ignorePracticeRadius AND step count <
-    /// stepGateThreshold. Step count is read from
-    /// `stepsSinceLastDetectedSwing` (live CMPedometer counter, reset on
-    /// every detection).
-    ///
-    /// Putts are exempted (always returns false) — they're inherently
-    /// short and would dedup tap-ins. Same for non-putt strokes outside
-    /// the radius+step gates.
-    ///
-    /// Both gates configurable via UserDefaults — set the step threshold
-    /// arbitrarily high to disable the step half of the AND.
-    func shouldReplacePreviousStroke(newLocation: CLLocationCoordinate2D,
-                                     previousLocation: CLLocationCoordinate2D,
-                                     swingType: SwingType) -> Bool {
-        guard ignorePractice, swingType != .putt else { return false }
-        let newLoc = CLLocation(latitude: newLocation.latitude, longitude: newLocation.longitude)
-        let prevLoc = CLLocation(latitude: previousLocation.latitude, longitude: previousLocation.longitude)
-        let distanceYards = newLoc.distance(from: prevLoc) * 1.09361
-        let stillNearby = distanceYards <= ignorePracticeRadius
-        let stillFew = stepsSinceLastDetectedSwing < stepGateThreshold
-        return stillNearby && stillFew
-    }
-
-    func clearLastSwing() {
-        lastDetectedSwing = nil
-        dprint("⌚ [SwingDetection] Cleared last detected swing")
-    }
-
-    func cacheDetectionMetadata(strokeId: UUID, metadata: DetectionMetadata) {
-        var updated = metadata
-        updated.strokeId = strokeId
-        detectionMetadataCache[strokeId] = updated
-        detectionMotionCache[strokeId] = lastDetectionMotionSlice
-        // Keep cache small — only last 5
-        if detectionMetadataCache.count > 5 {
-            let oldest = detectionMetadataCache.min { $0.value.timestamp < $1.value.timestamp }
-            if let key = oldest?.key {
-                detectionMetadataCache.removeValue(forKey: key)
-                detectionMotionCache.removeValue(forKey: key)
-            }
-        }
-    }
-
-    func logUndoEvent(strokeId: UUID) {
-        // Backend (Supabase) is the source of truth for swing diagnostics
-        // now — `markFalsePositive(eventId:)` flips the row's label there.
-        // We just clear the local caches so they don't grow indefinitely.
-        detectionMetadataCache.removeValue(forKey: strokeId)
-        detectionMotionCache.removeValue(forKey: strokeId)
-    }
-
-    /// Simulate a swing for testing in simulator
-    func simulateSwing() {
-        guard let location = LocationManager.latestDeviceLocation else {
-            dprint("⌚ [SwingDetection] Cannot simulate swing - no location available")
-            return
-        }
-
-        let swing = DetectedSwing(
-            location: location.coordinate,
-            timestamp: Date(),
-            peakAcceleration: 3.5,
-            trajectoryHeading: nil,
-            swingType: .swing,
-            fsPeakRotMag: 0, fsBsRatio: 0,
-            bsTopPitch: 0, bsTopRoll: 0,
-            preStrokePitch: 0, preStrokeRoll: 0,
-            bsPeakRotX: 0, bsPeakRotY: 0, bsPeakRotZ: 0, bsPeakRotMag: 0,
-            fsPeakRotX: 0, fsPeakRotY: 0, fsPeakRotZ: 0
-        )
-
-        DispatchQueue.main.async { self.lastDetectedSwing = swing }
-        playFeedback()
-        dprint("⌚ [SwingDetection] Simulated swing at \(location.coordinate)")
     }
 
 }

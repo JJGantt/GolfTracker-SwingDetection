@@ -539,8 +539,14 @@ GolfWatch Watch App/                      # watchOS app target
 │   ├── WatchDataStore+Clubs.swift        # Club catalog hydration from Supabase, active-set clubs
 │   ├── WatchDataStore+Greens.swift       # Blob results (server cache, phone request), canonical hole placements, OSM data
 │   ├── ClubPrediction.swift              # ClubPredictionMode + ClubPredictionManager
-│   ├── SwingDetectionManager.swift                     # CoreMotion swing detection (core: state, init, monitoring, runUnifDetect, fireSmartDetection)
-│   ├── SwingDetectionManager+RawAccel.swift            # CMBatchedSensorManager lifecycle, dynamic 800Hz gating for putter
+│   ├── SwingDetectionManager.swift                     # CoreMotion swing detection (core: state, init, processDeviceMotion, runUnifDetect)
+│   ├── SwingDetectionManager+Monitoring.swift          # startMonitoring / stopMonitoring, motion authorization, the device-motion stream
+│   ├── SwingDetectionManager+Detection.swift           # fireSmartDetection, DetectedSwing / DetectionMetadata, haptics
+│   ├── SwingDetectionManager+Strokes.swift             # practice-swing replacement, per-stroke caches, undo, simulateSwing
+│   ├── SwingDetectionManager+MissedSwings.swift        # rejections since the last stroke, Missed It lookback capture
+│   ├── SwingDetectionManager+Samples.swift             # RecordedDataPoint, RawAccelDataPoint, the 800Hz ring buffer
+│   ├── SwingDetectionManager+Pedometer.swift           # steps since the last detection (practice gate)
+│   ├── SwingDetectionManager+RawAccel.swift            # CMBatchedSensorManager lifecycle and the 800Hz liveness watchdog
 │   ├── SwingDetectionManager+PostPairingGates.swift       # Runs the package's post-pairing gates on pending shapes (100Hz DM + 800Hz raw paths)
 │   ├── SwingTestSession.swift                          # Swing Test Mode session — counters, labeling, lookback; forces autoAdd on
 │   ├── SupabaseUploader.swift                          # Uploads swing events, false-negative groups, lookback windows + motion CSVs

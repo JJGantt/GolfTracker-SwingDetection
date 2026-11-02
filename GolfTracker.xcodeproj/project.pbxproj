@@ -157,6 +157,12 @@
 		3096CECC50DF1C20079D7196 /* WatchDataStore+Rounds.swift in Sources */ = {isa = PBXBuildFile; fileRef = 025E4852430CA6A5BE2B201E /* WatchDataStore+Rounds.swift */; };
 		3F0D4362EBCE183DEBACEF9E /* WatchDataStore+Holes.swift in Sources */ = {isa = PBXBuildFile; fileRef = 57ED1C160423830EAA356B21 /* WatchDataStore+Holes.swift */; };
 		D40A622822A58730247B3704 /* ClubPrediction.swift in Sources */ = {isa = PBXBuildFile; fileRef = 67EA3CBFDD829933E4FEBBE4 /* ClubPrediction.swift */; };
+		D713D51582841BD5091FC382 /* SwingDetectionManager+MissedSwings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3F7B09EF44E7B66D02A1707C /* SwingDetectionManager+MissedSwings.swift */; };
+		49F6C700B1E023D62AE77888 /* SwingDetectionManager+Pedometer.swift in Sources */ = {isa = PBXBuildFile; fileRef = E665B07B98DA0894863BC245 /* SwingDetectionManager+Pedometer.swift */; };
+		BB1A96011E35705E4458179E /* SwingDetectionManager+Samples.swift in Sources */ = {isa = PBXBuildFile; fileRef = 588C5F0E883CDF69F59969D1 /* SwingDetectionManager+Samples.swift */; };
+		E7BC2CB128E5FF257164B2BA /* SwingDetectionManager+Monitoring.swift in Sources */ = {isa = PBXBuildFile; fileRef = D3E5114991433668AD29B001 /* SwingDetectionManager+Monitoring.swift */; };
+		73897E1A263B8709D694CE90 /* SwingDetectionManager+Detection.swift in Sources */ = {isa = PBXBuildFile; fileRef = E4261EFE3843A589A590D16A /* SwingDetectionManager+Detection.swift */; };
+		9C4BCC37FE9CB243D19A7E16 /* SwingDetectionManager+Strokes.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0155A4E249E346C94F7169B /* SwingDetectionManager+Strokes.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -309,6 +315,12 @@
 		025E4852430CA6A5BE2B201E /* WatchDataStore+Rounds.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "WatchDataStore+Rounds.swift"; sourceTree = "<group>"; };
 		57ED1C160423830EAA356B21 /* WatchDataStore+Holes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "WatchDataStore+Holes.swift"; sourceTree = "<group>"; };
 		67EA3CBFDD829933E4FEBBE4 /* ClubPrediction.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClubPrediction.swift; sourceTree = "<group>"; };
+		3F7B09EF44E7B66D02A1707C /* SwingDetectionManager+MissedSwings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "SwingDetectionManager+MissedSwings.swift"; sourceTree = "<group>"; };
+		E665B07B98DA0894863BC245 /* SwingDetectionManager+Pedometer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "SwingDetectionManager+Pedometer.swift"; sourceTree = "<group>"; };
+		588C5F0E883CDF69F59969D1 /* SwingDetectionManager+Samples.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "SwingDetectionManager+Samples.swift"; sourceTree = "<group>"; };
+		D3E5114991433668AD29B001 /* SwingDetectionManager+Monitoring.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "SwingDetectionManager+Monitoring.swift"; sourceTree = "<group>"; };
+		E4261EFE3843A589A590D16A /* SwingDetectionManager+Detection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "SwingDetectionManager+Detection.swift"; sourceTree = "<group>"; };
+		F0155A4E249E346C94F7169B /* SwingDetectionManager+Strokes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "SwingDetectionManager+Strokes.swift"; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -616,6 +628,12 @@
 				B31610D1E5F5AFEC620FE597 /* WatchDataStore+Greens.swift */,
 				6AAUTO000000000000000D0 /* AutoAdvanceMonitor.swift */,
 				6A27A5762F0C000000000002 /* SwingDetectionManager.swift */,
+				F0155A4E249E346C94F7169B /* SwingDetectionManager+Strokes.swift */,
+				E4261EFE3843A589A590D16A /* SwingDetectionManager+Detection.swift */,
+				D3E5114991433668AD29B001 /* SwingDetectionManager+Monitoring.swift */,
+				588C5F0E883CDF69F59969D1 /* SwingDetectionManager+Samples.swift */,
+				E665B07B98DA0894863BC245 /* SwingDetectionManager+Pedometer.swift */,
+				3F7B09EF44E7B66D02A1707C /* SwingDetectionManager+MissedSwings.swift */,
 				6B3389ABF55B3A667CD3A6FA /* TimeWindowBuffer.swift */,
 				6A27A5782F0C000000000004 /* WorkoutManager.swift */,
 				AA11BB22CC33DD44EE550140 /* SwingTestSession.swift */,
@@ -834,6 +852,12 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				9C4BCC37FE9CB243D19A7E16 /* SwingDetectionManager+Strokes.swift in Sources */,
+				73897E1A263B8709D694CE90 /* SwingDetectionManager+Detection.swift in Sources */,
+				E7BC2CB128E5FF257164B2BA /* SwingDetectionManager+Monitoring.swift in Sources */,
+				BB1A96011E35705E4458179E /* SwingDetectionManager+Samples.swift in Sources */,
+				49F6C700B1E023D62AE77888 /* SwingDetectionManager+Pedometer.swift in Sources */,
+				D713D51582841BD5091FC382 /* SwingDetectionManager+MissedSwings.swift in Sources */,
 				D40A622822A58730247B3704 /* ClubPrediction.swift in Sources */,
 				3F0D4362EBCE183DEBACEF9E /* WatchDataStore+Holes.swift in Sources */,
 				3096CECC50DF1C20079D7196 /* WatchDataStore+Rounds.swift in Sources */,
