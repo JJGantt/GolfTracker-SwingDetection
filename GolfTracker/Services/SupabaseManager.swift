@@ -65,7 +65,12 @@ struct ForwardingSupabaseLogger: SupabaseLogger {
         #if os(watchOS)
         let lower = message.message.lowercased()
         if lower.contains("401") || lower.contains("unauthorized") || lower.contains("jwt expired") {
-            WatchAuthSession.shared.requestRefreshFromPhone()
+            // Never synchronously: `WatchAuthSession.init` itself reads the
+            // SDK's stored session, the SDK logs through here when that read
+            // fails, and touching `shared` from inside its own initializer
+            // traps (seen at launch in the simulator, whose keychain read
+            // fails).
+            Task { WatchAuthSession.shared.requestRefreshFromPhone() }
         }
         #endif
     }
