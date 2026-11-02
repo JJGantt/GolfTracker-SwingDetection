@@ -1,8 +1,14 @@
 // OpenStreetMap golf-course geometry, fetched and shaped on the server.
 //
+// Read from the OSM editing API (api.openstreetmap.org/api/0.6): an element's
+// `full` call gives the course feature with its tags and outline, and a `map`
+// call over the outline's bounding box gives every hole, green, tee, fairway
+// and bunker. (Overpass, which the app queries, refuses requests from the
+// Supabase edge with 406.)
+//
 // The output is `OSMCourseData` exactly as the app's Codable model reads it
 // (GolfTracker/Services/OSMCourseService.swift), because it is stored on
-// `courses.osm_polygons` and decoded by every client. The parsing mirrors
+// `courses.osm_polygons` and decoded by every client. The shaping mirrors
 // `OSMCourseService.parseCandidates` / `parseCourseGeometry`; the client keeps
 // its own copy only for a round started while this function is unreachable.
 
@@ -78,70 +84,85 @@ function points(geometry: Json): MapPoint[] {
     .map((p: Json) => ({ latitude: p.lat, longitude: p.lon }))
 }
 
-/** Overpass for the elements themselves: tags, plus member geometry so a
- *  relation's outline can be assembled. */
-export function elementsQuery(refs: ElementRef[]): string {
-  const ways = refs.filter((r) => r.type === "way").map((r) => r.id)
-  const rels = refs.filter((r) => r.type === "relation").map((r) => r.id)
-  const parts = [
-    ways.length ? `way(id:${ways.join(",")});` : "",
-    rels.length ? `relation(id:${rels.join(",")});` : "",
-  ].join("")
-  return `[out:json][timeout:25];(${parts})->.cs;.cs out tags;(.cs;>;);out body geom;`
+/** OSM API JSON (`elements` of nodes, ways and relations), indexed. */
+export function indexOsm(response: Json) {
+  const nodes = new Map<number, MapPoint>()
+  // deno-lint-ignore no-explicit-any
+  const ways = new Map<number, any>()
+  // deno-lint-ignore no-explicit-any
+  const relations = new Map<number, any>()
+  for (const el of Array.isArray(response?.elements) ? response.elements : []) {
+    if (el.type === "node" && typeof el.lat === "number" && typeof el.lon === "number") {
+      nodes.set(el.id, { latitude: el.lat, longitude: el.lon })
+    } else if (el.type === "way") ways.set(el.id, el)
+    else if (el.type === "relation") relations.set(el.id, el)
+  }
+  const wayPoints = (w: Json): MapPoint[] =>
+    (Array.isArray(w?.nodes) ? w.nodes : []).map((id: number) => nodes.get(id)).filter(Boolean) as MapPoint[]
+  return { nodes, ways, relations, wayPoints }
 }
 
-/** The named `leisure=golf_course` features in an Overpass response, by ref.
- *  Anything else (not a golf course, unnamed, no outline) is absent. */
-export function parseGolfCourses(response: Json): Map<string, GolfCourse> {
-  const elements: Json[] = Array.isArray(response?.elements) ? response.elements : []
-  const wayPolygon = new Map<number, MapPoint[]>()
-  for (const el of elements) {
-    if (el.type !== "way") continue
-    const pts = points(el.geometry)
-    if (pts.length) wayPolygon.set(el.id, pts)
-  }
-  const out = new Map<string, GolfCourse>()
-  for (const el of elements) {
-    const tags = el.tags ?? {}
-    if ((el.type !== "way" && el.type !== "relation") || tags.leisure !== "golf_course" || !tags.name) continue
-    let polygon: MapPoint[] = []
-    if (el.type === "way") {
-      polygon = points(el.geometry)
-    } else {
-      for (const m of el.members ?? []) {
-        const role = m.role ?? ""
-        if ((role === "outer" || role === "") && m.type === "way" && wayPolygon.has(m.ref)) {
-          polygon.push(...wayPolygon.get(m.ref)!)
-        }
-      }
-      const b = el.bounds
-      if (!polygon.length && b) {
-        polygon = [
-          { latitude: b.minlat, longitude: b.minlon },
-          { latitude: b.minlat, longitude: b.maxlon },
-          { latitude: b.maxlat, longitude: b.maxlon },
-          { latitude: b.maxlat, longitude: b.minlon },
-        ]
+/** The element `ref` from an OSM API `full` response, if it is a named
+ *  `leisure=golf_course`. A relation's outline is its outer (or role-less)
+ *  member ways joined. */
+export function golfCourseFrom(response: Json, ref: ElementRef): GolfCourse | null {
+  const osm = indexOsm(response)
+  const el = ref.type === "way" ? osm.ways.get(ref.id) : osm.relations.get(ref.id)
+  const tags = el?.tags ?? {}
+  if (!el || tags.leisure !== "golf_course" || !tags.name) return null
+  let polygon: MapPoint[] = []
+  if (ref.type === "way") {
+    polygon = osm.wayPoints(el)
+  } else {
+    for (const m of el.members ?? []) {
+      const role = m.role ?? ""
+      if ((role === "outer" || role === "") && m.type === "way" && osm.ways.has(m.ref)) {
+        polygon.push(...osm.wayPoints(osm.ways.get(m.ref)))
       }
     }
-    if (polygon.length < 3) continue
-    const ref: ElementRef = { type: el.type, id: el.id }
-    out.set(`${ref.type}/${ref.id}`, { ref, name: tags.name, polygon, centroid: mean(polygon) })
   }
-  return out
+  if (polygon.length < 3) return null
+  return { ref, name: tags.name, polygon, centroid: mean(polygon) }
 }
 
-/** Overpass for every hole, green, tee, fairway and bunker inside any of the
- *  course's outlines. */
-export function geometryQuery(polygons: MapPoint[][]): string {
-  const clauses: string[] = []
-  for (const poly of polygons) {
-    const s = poly.map((p) => `${p.latitude} ${p.longitude}`).join(" ")
-    for (const tag of ["hole", "green", "tee", "fairway", "bunker"]) {
-      clauses.push(`way["golf"="${tag}"](poly:"${s}");`)
+/** The bounding box of the outlines, as the OSM API `map` call takes it. */
+export function bbox(polygons: MapPoint[][]): { minLon: number; minLat: number; maxLon: number; maxLat: number } {
+  const pts = polygons.flat()
+  return {
+    minLon: Math.min(...pts.map((p) => p.longitude)),
+    minLat: Math.min(...pts.map((p) => p.latitude)),
+    maxLon: Math.max(...pts.map((p) => p.longitude)),
+    maxLat: Math.max(...pts.map((p) => p.latitude)),
+  }
+}
+
+function inside(p: MapPoint, poly: MapPoint[]): boolean {
+  let hit = false
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const a = poly[i], b = poly[j]
+    if ((a.latitude > p.latitude) !== (b.latitude > p.latitude) &&
+      p.longitude < (b.longitude - a.longitude) * (p.latitude - a.latitude) / (b.latitude - a.latitude) + a.longitude) {
+      hit = !hit
     }
   }
-  return `[out:json][timeout:25];(${clauses.join("")});out tags geom;`
+  return hit
+}
+
+const FEATURES = new Set(["hole", "green", "tee", "fairway", "bunker"])
+
+/** The golf features in an OSM API `map` response that have a node inside one
+ *  of the outlines (what Overpass's `poly` filter selects), as ways with
+ *  inline geometry for `parseCourseGeometry`. */
+export function courseFeatures(response: Json, outlines: MapPoint[][]): Json {
+  const osm = indexOsm(response)
+  const elements: Json[] = []
+  for (const w of osm.ways.values()) {
+    if (!FEATURES.has(w?.tags?.golf)) continue
+    const pts = osm.wayPoints(w)
+    if (!pts.some((p) => outlines.some((o) => inside(p, o)))) continue
+    elements.push({ type: "way", id: w.id, tags: w.tags, geometry: pts.map((p) => ({ lat: p.latitude, lon: p.longitude })) })
+  }
+  return { elements }
 }
 
 function dedup<T>(items: T[], pointsOf: (t: T) => MapPoint[]): T[] {

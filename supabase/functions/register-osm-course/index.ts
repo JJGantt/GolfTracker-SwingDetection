@@ -1,7 +1,7 @@
 // register-osm-course: the only way a shared (OSM) course row is created or
 // filled in. The client names the OpenStreetMap element(s) it picked; this
-// function fetches them from Overpass itself, refuses anything that is not a
-// named golf course, builds the course's OSM data, and stores it through
+// function fetches them from the OSM API itself, refuses anything that is not
+// a named golf course, builds the course's OSM data, and stores it through
 // `register_osm_course` (service role only, migration 00056). Nothing about a
 // shared course's name, outline, holes or greens comes from the client.
 //
@@ -17,24 +17,24 @@
 // 200 { courseId, name, centerLat, centerLon, osmId, externalCourseId, osmData }
 // The returned courseId is the course for that osm_id, which is not the
 // requested one when it was already registered. A row that already has OSM
-// data is returned without asking Overpass again.
+// data is returned without asking OSM again.
 
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts"
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0"
 import {
+  bbox,
   courseCenter,
+  courseFeatures,
   distanceMeters,
-  elementsQuery,
   type ElementRef,
-  geometryQuery,
+  golfCourseFrom,
   parseCourseGeometry,
-  parseGolfCourses,
   SIBLING_MAX_METERS,
 } from "./osm.ts"
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL") ?? ""
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? ""
-const OVERPASS = "https://overpass-api.de/api/interpreter"
+const OSM_API = "https://api.openstreetmap.org/api/0.6"
 const MAX_SIBLINGS = 8
 const USER_AGENT = "StrokeSaver/1.0 (+https://jjgantt.github.io/golftracker-site)"
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
@@ -53,16 +53,21 @@ function asRef(v: unknown): ElementRef | null {
   return { type: r.type, id: r.id }
 }
 
-async function overpass(query: string) {
-  const res = await fetch(OVERPASS, {
-    method: "POST",
-    // Overpass refuses requests without an identifying User-Agent (406).
-    headers: { "Content-Type": "application/x-www-form-urlencoded", "User-Agent": USER_AGENT },
-    body: "data=" + encodeURIComponent(query),
+// The OSM API usage policy asks for an identifying User-Agent.
+async function osmApi(path: string) {
+  const res = await fetch(`${OSM_API}/${path}`, {
+    headers: { "Accept": "application/json", "User-Agent": USER_AGENT },
+    signal: AbortSignal.timeout(30_000),
   })
-  if (!res.ok) throw new Error(`overpass ${res.status}`)
+  // Gone or never existed: not a golf course, as far as registration goes.
+  if (res.status === 404 || res.status === 410) return null
+  if (!res.ok) throw new Error(`osm api ${path.split("?")[0]}: ${res.status}`)
   return await res.json()
 }
+
+// The `map` call refuses areas over 0.25 square degrees; a golf course is a
+// small fraction of that.
+const MAX_BBOX_DEG2 = 0.25
 
 async function courseRow(osmId: number) {
   const { data, error } = await admin
@@ -136,17 +141,23 @@ serve(async (req) => {
     }
     if (!picked) return json({ error: "osm.type required to register a new course" }, 400)
 
-    const courses = parseGolfCourses(await overpass(elementsQuery([picked, ...siblings])))
-    const course = courses.get(`${picked.type}/${picked.id}`)
+    const full = await osmApi(`${picked.type}/${picked.id}/full.json`)
+    const course = full ? golfCourseFrom(full, picked) : null
     if (!course) return json({ error: "not a named golf course in OpenStreetMap" }, 422)
     const outlines = [course.polygon]
     for (const s of siblings) {
-      const sib = courses.get(`${s.type}/${s.id}`)
+      const sibFull = await osmApi(`${s.type}/${s.id}/full.json`)
+      const sib = sibFull ? golfCourseFrom(sibFull, s) : null
       if (sib && distanceMeters(sib.centroid, course.centroid) <= SIBLING_MAX_METERS) outlines.push(sib.polygon)
     }
 
+    const box = bbox(outlines)
+    if ((box.maxLon - box.minLon) * (box.maxLat - box.minLat) > MAX_BBOX_DEG2) {
+      return json({ error: "course outline too large" }, 422)
+    }
+    const map = await osmApi(`map.json?bbox=${box.minLon},${box.minLat},${box.maxLon},${box.maxLat}`)
     const osmData = parseCourseGeometry(
-      await overpass(geometryQuery(outlines)),
+      courseFeatures(map ?? {}, outlines),
       course.centroid,
       outlines,
       new Date(),
