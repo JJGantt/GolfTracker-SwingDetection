@@ -1,5 +1,6 @@
 import Foundation
 import CoreLocation
+import os
 import CoreMotion
 import Combine
 import Supabase
@@ -12,7 +13,13 @@ import Supabase
 /// `gpsPowerMode`) and each became its own dependency edge. Coarse-grained
 /// `objectWillChange` is, in practice, what works — SwiftUI batches
 /// multiple @Published mutations into a single re-eval per runloop tick.
-class LocationManager: NSObject, ObservableObject {
+///
+/// Main actor: CoreLocation and the altimeter deliver to main, and every
+/// published property is UI state. Code on another queue (the swing detector
+/// stamps a detection with where it happened) reads `latestLocation`, a
+/// lock-backed copy of `location`.
+@MainActor
+final class LocationManager: NSObject, ObservableObject {
     static let shared = LocationManager()
     static let testCoordinate = CLLocationCoordinate2D(
         latitude: 30.285357365597697,
@@ -51,7 +58,13 @@ class LocationManager: NSObject, ObservableObject {
         isTestModeEnabled ? nil : latestRelativeAltitudeMeters
     }
 
-    @Published var location: CLLocation?
+    @Published var location: CLLocation? {
+        didSet { if let location { Self.locationMirror.withLock { $0 = location } } }
+    }
+    private nonisolated static let locationMirror = OSAllocatedUnfairLock<CLLocation?>(initialState: nil)
+    /// The device's most recent fix from any instance, readable from any
+    /// thread.
+    nonisolated static var latestDeviceLocation: CLLocation? { locationMirror.withLock { $0 } }
     @Published var heading: CLLocationDirection?
 
     /// Live compass heading, published on its own object rather than as a
@@ -113,7 +126,6 @@ class LocationManager: NSObject, ObservableObject {
     /// working copy. Loaded from disk on first round-start so any
     /// rows from a prior aborted session get drained.
     private var pendingUploadRows: [[String: Any]] = []
-    private let pathQueueLock = NSLock()
     private lazy var pathQueueURL: URL = {
         let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
@@ -189,17 +201,14 @@ class LocationManager: NSObject, ObservableObject {
                 "h_acc": sample.horizontalAccuracyMeters as Any? ?? NSNull(),
                 "recorded_at": Self.iso(sample.timestamp)
             ]
-            pathQueueLock.lock()
             pendingUploadRows.append(row)
-            savePathQueueLocked()
-            pathQueueLock.unlock()
+            savePathQueue()
         }
     }
 
-    /// Write current `pendingUploadRows` to disk. Caller must hold
-    /// `pathQueueLock`. Best-effort — a failed write doesn't surface
-    /// errors; the next mutation overwrites it.
-    private func savePathQueueLocked() {
+    /// Write current `pendingUploadRows` to disk. Best-effort — a failed
+    /// write doesn't surface errors; the next mutation overwrites it.
+    private func savePathQueue() {
         guard let data = try? JSONSerialization.data(withJSONObject: pendingUploadRows) else { return }
         try? data.write(to: pathQueueURL, options: .atomic)
     }
@@ -208,8 +217,6 @@ class LocationManager: NSObject, ObservableObject {
     /// Lets a force-quit / crash / network outage during a prior round
     /// drain on the next round's flush cycle instead of being lost.
     private func loadPathQueueFromDisk() {
-        pathQueueLock.lock()
-        defer { pathQueueLock.unlock() }
         guard let data = try? Data(contentsOf: pathQueueURL),
               let rows = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else {
             return
@@ -526,7 +533,8 @@ class LocationManager: NSObject, ObservableObject {
         // happens in stopPathRecording.
         uploadFlushTimer?.invalidate()
         uploadFlushTimer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
-            self?.flushPathUploads()
+            // Scheduled on the main run loop, so it fires on main.
+            MainActor.assumeIsolated { self?.flushPathUploads() }
         }
         dprint("[LocationManager] Path recording started for round \(roundId)")
         ClientEventLogger.log("altitude.recording.started", detail: [
@@ -598,9 +606,9 @@ class LocationManager: NSObject, ObservableObject {
     /// disk copy is rewritten to match.
     @discardableResult
     private func flushOneChunk() async -> Bool {
-        // Take a chunk under the lock so we don't race with a
-        // concurrent appendPathSample.
-        pathQueueLock.lock()
+        // Take the chunk before the first suspension, so an appendPathSample
+        // or another flush that runs while this one awaits sees the queue
+        // without it (all of this is on the main actor).
         if pathFlushInFlight {
             // Reclaim a wedged flag: if the in-flight request hung past the
             // deadline (its await never resumed), assume it dead and take
@@ -610,13 +618,12 @@ class LocationManager: NSObject, ObservableObject {
                Date().timeIntervalSince(started) > pathFlushStaleSeconds {
                 dprint("[LocationManager] Reclaiming wedged path flush (held \(Int(Date().timeIntervalSince(started)))s)")
             } else {
-                pathQueueLock.unlock(); return true // someone else has it
+                return true // someone else has it
             }
         }
         guard !pendingUploadRows.isEmpty else {
             pathFlushInFlight = false
             pathFlushStartedAt = nil
-            pathQueueLock.unlock()
             return true
         }
         pathFlushInFlight = true
@@ -624,8 +631,7 @@ class LocationManager: NSObject, ObservableObject {
         let chunkCount = min(pathUploadChunkSize, pendingUploadRows.count)
         let chunk = Array(pendingUploadRows.prefix(chunkCount))
         pendingUploadRows.removeFirst(chunkCount)
-        savePathQueueLocked()
-        pathQueueLock.unlock()
+        savePathQueue()
 
         do {
             let json = try JSONSerialization.data(withJSONObject: chunk)
@@ -655,18 +661,16 @@ class LocationManager: NSObject, ObservableObject {
                 "rowCount": .integer(chunk.count),
                 "remaining": .integer(pendingUploadRows.count)
             ])
-            pathQueueLock.lock(); pathFlushInFlight = false; pathFlushStartedAt = nil; pathQueueLock.unlock()
+            pathFlushInFlight = false; pathFlushStartedAt = nil
             return true
         } catch {
             // Put the chunk back at the front and persist again so the
             // next attempt picks it up. Disk copy now reflects the
             // requeued state.
-            pathQueueLock.lock()
             pendingUploadRows.insert(contentsOf: chunk, at: 0)
-            savePathQueueLocked()
+            savePathQueue()
             pathFlushInFlight = false
             pathFlushStartedAt = nil
-            pathQueueLock.unlock()
             dprint("[LocationManager] Altitude upload failed (\(chunk.count) rows requeued): \(error)")
             ClientEventLogger.log("altitude.flush.failed", detail: [
                 "rowCount": .integer(chunk.count),
@@ -713,7 +717,10 @@ class LocationManager: NSObject, ObservableObject {
 /// normal flush failure so the chunk requeues and the in-flight flag clears.
 private struct PathFlushTimeoutError: Error {}
 
-extension LocationManager: CLLocationManagerDelegate {
+// CLLocationManager calls its delegate on the thread it was created on, which
+// is main (the singleton is created by the app's views); the preconcurrency
+// conformance checks that at run time.
+extension LocationManager: @preconcurrency CLLocationManagerDelegate {
     func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
         authorizationStatus = manager.authorizationStatus
         dprint("[LocationManager] Authorization changed to: \(authorizationStatus.rawValue)")

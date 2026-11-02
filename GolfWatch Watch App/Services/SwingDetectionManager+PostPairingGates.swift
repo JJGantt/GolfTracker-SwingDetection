@@ -1,5 +1,5 @@
 import Foundation
-import CoreMotion
+@preconcurrency import CoreMotion
 import StrokeSaverAlgorithms
 
 extension SwingDetectionManager {

@@ -266,16 +266,11 @@ for the popup.
 | Manual-suggest: user accepts | `positive` | `high` |
 | Manual-suggest: user rejects (X) | `false_positive` | `high` |
 | Manual-suggest: next detection, no action | `false_positive` | `low` |
-| `rejectAll` farming mode | `false_positive` | `high` |
 
 `positive/low` is deliberately weak — the detector fired and the user did not
 object, which includes detections nobody noticed. Undo and practice replacement are
 edits to an already-uploaded row (`markFalsePositive` / `markPracticeSwing`), not
 flushes.
-
-**`rejectAll` has no UI.** It persists under UserDefaults `supabaseRejectAll` and
-nothing writes it but its own `didSet`, so it currently cannot be turned on from the
-app.
 
 ### Swing Test Mode
 

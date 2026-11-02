@@ -1,4 +1,4 @@
-// swift-tools-version:5.9
+// swift-tools-version:6.0
 import PackageDescription
 
 // The app's rule logic, compiled on its own so it can be tested on a Mac and in
@@ -11,5 +11,6 @@ let package = Package(
     targets: [
         .target(name: "AppLogic"),
         .testTarget(name: "AppLogicTests", dependencies: ["AppLogic"]),
-    ]
+    ],
+    swiftLanguageModes: [.v6]
 )

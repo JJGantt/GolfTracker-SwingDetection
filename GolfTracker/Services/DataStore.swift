@@ -817,13 +817,14 @@ class DataStore: ObservableObject {
         let geocoder = CLGeocoder()
         let location = CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude)
 
+        let courseId = course.id
         geocoder.reverseGeocodeLocation(location) { [weak self] placemarks, error in
             guard let self = self,
                   let placemark = placemarks?.first,
                   let city = placemark.locality else { return }
 
             DispatchQueue.main.async {
-                if let currentIndex = self.courses.firstIndex(where: { $0.id == course.id }) {
+                if let currentIndex = self.courses.firstIndex(where: { $0.id == courseId }) {
                     self.courses[currentIndex].city = city
                     self.saveCourses()
                     SupabaseSync.shared.upsertCourse(self.courses[currentIndex])
@@ -1272,14 +1273,16 @@ class DataStore: ObservableObject {
             "coverageRadiusMeters": .double(coverageRadius)
         ])
 
+        // The model object stays on main; the callbacks only need its id.
+        let detectedCourseId = course.id
         holeDetectionAnalyzer.detect(
-            courseId: course.id,
+            courseId: detectedCourseId,
             center: center,
             coverageRadiusMeters: coverageRadius,
             boundingPolygons: boundingPolygons,
             progress: { [weak self] message, progress in
                 DispatchQueue.main.async {
-                    self?.holeDetectionRunStateByCourse[course.id] = HoleDetectionRunState(
+                    self?.holeDetectionRunStateByCourse[detectedCourseId] = HoleDetectionRunState(
                         isRunning: true,
                         message: message,
                         progress: progress,
@@ -1301,16 +1304,16 @@ class DataStore: ObservableObject {
                             dprint("📱 [DataStore] Hole detection top green-ish RGBs: \(colors)")
                         }
                         // Keep detection results in memory for current-round UI even when test runs are non-persistent.
-                        self.holeDetectionDataByCourse[course.id] = detectionData
+                        self.holeDetectionDataByCourse[detectedCourseId] = detectionData
                         if persistResult {
                             self.saveHoleDetectionData()
                             // Server-side persistence — write to courses
                             // table so any device picking up this round
                             // (or another user playing the same course)
                             // skips the analyzer.
-                            self.uploadBlobDetectionResults(courseId: course.id, data: detectionData)
+                            self.uploadBlobDetectionResults(courseId: detectedCourseId, data: detectionData)
                         }
-                        self.holeDetectionRunStateByCourse[course.id] = HoleDetectionRunState(
+                        self.holeDetectionRunStateByCourse[detectedCourseId] = HoleDetectionRunState(
                             isRunning: false,
                             message: output.diagnostics.summaryMessage,
                             progress: 1.0,
@@ -1318,17 +1321,17 @@ class DataStore: ObservableObject {
                         )
                         WatchConnectivityManager.shared.sendHoleDetectionData(detectionData)
                         ClientEventLogger.log("blob.analyzer.succeeded", detail: [
-                            "courseId": .string(course.id.uuidString),
+                            "courseId": .string(detectedCourseId.uuidString),
                             "tileCount": .integer(output.diagnostics.tileCount),
                             "blobCount": .integer(detectionData.blobs.count)
                         ])
                         // Persisted runs report `done` from the upload, once
                         // the server cache actually holds the result.
                         if !persistResult {
-                            self.finishHoleDetection(courseId: course.id, state: .done)
+                            self.finishHoleDetection(courseId: detectedCourseId, state: .done)
                         }
                     case .failure(let error):
-                        self.holeDetectionRunStateByCourse[course.id] = HoleDetectionRunState(
+                        self.holeDetectionRunStateByCourse[detectedCourseId] = HoleDetectionRunState(
                             isRunning: false,
                             message: "Hole detection failed",
                             progress: 0,
@@ -1336,11 +1339,11 @@ class DataStore: ObservableObject {
                         )
                         let tileErrors = (error as? HoleDetectionAllTilesFailed)?.errors ?? [error]
                         ClientEventLogger.log("blob.analyzer.failed", detail: [
-                            "courseId": .string(course.id.uuidString),
+                            "courseId": .string(detectedCourseId.uuidString),
                             "tileErrorCount": .integer(tileErrors.count),
                             "errors": .string(Set(tileErrors.map(Self.describe)).sorted().joined(separator: " | "))
                         ])
-                        self.finishHoleDetection(courseId: course.id, state: .failed)
+                        self.finishHoleDetection(courseId: detectedCourseId, state: .failed)
                     }
                 }
             }

@@ -1,6 +1,7 @@
 // The satellite-tile green detector the phone runs when OSM has no greens for
 // a course (see CLAUDE.md, "Hole detection (blob analyzer)").
 import Foundation
+import os
 import CoreLocation
 import MapKit
 import UIKit
@@ -66,7 +67,7 @@ struct HoleDetectionTileResult {
     var greenishColorCounts: [UInt32: Int]
 }
 
-final class HoleDetectionAnalyzer {
+final class HoleDetectionAnalyzer: Sendable {
     // Exact standard-map green/tee fill from iPhone snapshots.
     private let greenColor = (r: 186, g: 232, b: 153)
     private let sandColor = (r: 245, g: 242, b: 218)
@@ -120,8 +121,8 @@ final class HoleDetectionAnalyzer {
         center: CLLocationCoordinate2D,
         coverageRadiusMeters: Double,
         boundingPolygons: [[CLLocationCoordinate2D]]? = nil,
-        progress: @escaping (String, Double) -> Void,
-        completion: @escaping (Result<HoleDetectionAnalyzeResult, Error>) -> Void
+        progress: @escaping @Sendable (String, Double) -> Void,
+        completion: @escaping @Sendable (Result<HoleDetectionAnalyzeResult, Error>) -> Void
     ) {
         DispatchQueue.global(qos: .userInitiated).async {
             do {
@@ -149,10 +150,12 @@ final class HoleDetectionAnalyzer {
                 // one at a time cost the entire run.
                 let limiter = DispatchSemaphore(value: self.maxConcurrentTiles)
                 let group = DispatchGroup()
-                let lock = NSLock()
-                var tileResults: [Int: HoleDetectionTileResult] = [:]
-                var tileErrors: [Error] = []
-                var completedTiles = 0
+                struct Collected {
+                    var results: [Int: HoleDetectionTileResult] = [:]
+                    var errors: [Error] = []
+                    var completed = 0
+                }
+                let collected = OSAllocatedUnfairLock(initialState: Collected())
 
                 if skipped > 0 {
                     progress("Scanning \(tileCenters.count) map tiles (\(skipped) outside course)...", 0.02)
@@ -172,19 +175,20 @@ final class HoleDetectionAnalyzer {
                                 tileCenter: tileCenter,
                                 tileDiameterMeters: self.tileDiameterMeters
                             )
-                            lock.lock()
-                            tileResults[index] = result
-                            completedTiles += 1
-                            let done = completedTiles
-                            lock.unlock()
+                            let done = collected.withLock { c in
+                                c.results[index] = result
+                                c.completed += 1
+                                return c.completed
+                            }
                             progress("Scanned \(done)/\(totalTiles) tiles...",
                                      min(0.02 + 0.9 * Double(done) / Double(totalTiles), 0.94))
                         } catch {
-                            lock.lock(); tileErrors.append(error); completedTiles += 1; lock.unlock()
+                            collected.withLock { $0.errors.append(error); $0.completed += 1 }
                         }
                     }
                 }
                 group.wait()
+                let (tileResults, tileErrors) = collected.withLock { ($0.results, $0.errors) }
 
                 // A tile that failed shouldn't sink the whole course — partial
                 // coverage still places most greens. Only give up when nothing
@@ -335,38 +339,38 @@ final class HoleDetectionAnalyzer {
     }
 
     private func snapshotStandardMapOnce(center: CLLocationCoordinate2D) throws -> CGImage {
-        let options = MKMapSnapshotter.Options()
-        options.region = MKCoordinateRegion(
-            center: center,
-            latitudinalMeters: tileDiameterMeters,
-            longitudinalMeters: tileDiameterMeters
-        )
-        options.size = CGSize(width: tilePixelSize, height: tilePixelSize)
-        options.mapType = .standard
-        options.showsBuildings = false
-        options.pointOfInterestFilter = .excludingAll
-        // Force light mode and 1x scale so the green fill color (186,232,153) matches
-        // regardless of the device's appearance setting or display scale.
-        options.traitCollection = UITraitCollection(traitsFrom: [
-            UITraitCollection(userInterfaceStyle: .light),
-            UITraitCollection(displayScale: 1.0)
-        ])
-
         let semaphore = DispatchSemaphore(value: 0)
-        var capturedImage: CGImage?
-        var capturedError: Error?
+        // Written on main by the completion, read here after the semaphore
+        // (or after a timeout, when the completion may still be running).
+        let outcome = OSAllocatedUnfairLock<(image: CGImage?, error: Error?)>(initialState: (nil, nil))
+        let diameter = tileDiameterMeters
+        let pixels = tilePixelSize
 
-        // MKMapSnapshotter must be created and started on the main thread.
-        // The completion handler is also delivered on main, which is fine
-        // since we only block the background thread with the semaphore.
+        // MKMapSnapshotter (and the trait collection it is given) must be
+        // created and started on the main thread. The completion handler is
+        // also delivered on main, which is fine since we only block the
+        // background thread with the semaphore.
         DispatchQueue.main.async {
+            let options = MKMapSnapshotter.Options()
+            options.region = MKCoordinateRegion(
+                center: center,
+                latitudinalMeters: diameter,
+                longitudinalMeters: diameter
+            )
+            options.size = CGSize(width: pixels, height: pixels)
+            options.mapType = .standard
+            options.showsBuildings = false
+            options.pointOfInterestFilter = .excludingAll
+            // Force light mode and 1x scale so the green fill color (186,232,153) matches
+            // regardless of the device's appearance setting or display scale.
+            options.traitCollection = UITraitCollection { traits in
+                traits.userInterfaceStyle = .light
+                traits.displayScale = 1.0
+            }
             let snapshotter = MKMapSnapshotter(options: options)
             snapshotter.start { snapshot, error in
-                if let error = error {
-                    capturedError = error
-                } else {
-                    capturedImage = snapshot?.image.cgImage
-                }
+                let image = snapshot?.image.cgImage
+                outcome.withLock { $0 = (error == nil ? image : nil, error) }
                 semaphore.signal()
             }
         }
@@ -379,6 +383,7 @@ final class HoleDetectionAnalyzer {
             )
         }
 
+        let (capturedImage, capturedError) = outcome.withLock { $0 }
         if let error = capturedError {
             throw error
         }

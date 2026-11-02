@@ -76,6 +76,7 @@ enum ClientEventLogger {
     /// Battery level at a hole transition. One row per hole change gives
     /// per-hole burn rate over a round — the data for deciding GPS
     /// fidelity policy empirically instead of by estimate.
+    @MainActor
     static func logBattery(hole: Int) {
         #if os(watchOS)
         let device = WKInterfaceDevice.current()

@@ -138,7 +138,7 @@ enum DemoDataSeeder {
             ?? Date()
 
         let roundId = UUID()
-        var round = Round(
+        let round = Round(
             id: roundId,
             courseId: course.id,
             courseName: course.name,
@@ -250,7 +250,7 @@ enum DemoDataSeeder {
             }()
 
             let strokeNumber = result.count + 1
-            var stroke = Stroke(
+            let stroke = Stroke(
                 holeNumber: hole.number,
                 strokeNumber: strokeNumber,
                 coordinate: currentCoord,
@@ -276,7 +276,7 @@ enum DemoDataSeeder {
         // Putts — place on green, each halving distance to the cup
         for p in 0..<putts {
             let strokeNumber = result.count + 1
-            var stroke = Stroke(
+            let stroke = Stroke(
                 holeNumber: hole.number,
                 strokeNumber: strokeNumber,
                 coordinate: currentCoord,

@@ -146,7 +146,7 @@ struct OSMCourseData: Codable, Hashable {
 /// JSONB column (see migration 00026). RoundResolver reads it directly from
 /// the row when the user picks an existing shared course, so this service
 /// only sees Overpass calls for courses that haven't been registered yet.
-final class OSMCourseService {
+final class OSMCourseService: Sendable {
     static let shared = OSMCourseService()
 
     private let overpassEndpoint = "https://overpass-api.de/api/interpreter"
@@ -168,7 +168,7 @@ final class OSMCourseService {
     /// Each candidate carries its bounding polygon for the second-pass query.
     func fetchCandidates(near coordinate: CLLocationCoordinate2D,
                          radiusMeters: Double? = nil,
-                         completion: @escaping (Result<[OSMCourseCandidate], Error>) -> Void) {
+                         completion: @escaping @Sendable (Result<[OSMCourseCandidate], Error>) -> Void) {
         let radius = radiusMeters ?? defaultRadiusMeters
         let lat = coordinate.latitude
         let lon = coordinate.longitude
@@ -285,10 +285,25 @@ final class OSMCourseService {
             .distance(from: CLLocation(latitude: b.latitude, longitude: b.longitude))
     }
 
+    /// `fetchCandidates`, awaited.
+    func fetchCandidates(near coordinate: CLLocationCoordinate2D,
+                         radiusMeters: Double? = nil) async -> Result<[OSMCourseCandidate], Error> {
+        await withCheckedContinuation { cont in
+            fetchCandidates(near: coordinate, radiusMeters: radiusMeters) { cont.resume(returning: $0) }
+        }
+    }
+
+    /// `fetchCourseGeometry`, awaited.
+    func fetchCourseGeometry(for candidate: OSMCourseCandidate) async -> Result<OSMCourseData, Error> {
+        await withCheckedContinuation { cont in
+            fetchCourseGeometry(for: candidate) { cont.resume(returning: $0) }
+        }
+    }
+
     /// Second pass — fetch holes/greens/tees/fairways/bunkers inside a course's
     /// bounding polygon. Cache-first by the course's OSM id.
     func fetchCourseGeometry(for candidate: OSMCourseCandidate,
-                             completion: @escaping (Result<OSMCourseData, Error>) -> Void) {
+                             completion: @escaping @Sendable (Result<OSMCourseData, Error>) -> Void) {
         ClientEventLogger.log("osm.fetchGeometry.start", detail: [
             "osmId": .integer(Int(candidate.osmId)),
             "name": .string(candidate.name)
@@ -345,7 +360,7 @@ final class OSMCourseService {
 
     // MARK: - Overpass transport
 
-    private func executeOverpass(query: String, completion: @escaping (Result<Data, Error>) -> Void) {
+    private func executeOverpass(query: String, completion: @escaping @Sendable (Result<Data, Error>) -> Void) {
         guard let url = URL(string: overpassEndpoint) else {
             completion(.failure(OSMError.badURL)); return
         }

@@ -109,8 +109,11 @@ extension ActiveRoundView {
 
         crownScrollTimer?.invalidate()
         crownScrollTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: false) { _ in
-            withAnimation(.easeInOut(duration: 0.2)) {
-                isCrownScrolling = false
+            // Scheduled on the main run loop, so it fires on main.
+            MainActor.assumeIsolated {
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    isCrownScrolling = false
+                }
             }
         }
     }

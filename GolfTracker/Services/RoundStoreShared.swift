@@ -16,7 +16,7 @@ struct PendingScorecardPicker: Identifiable {
 /// ends an abandoned round. Each store keeps its own state; the behaviour is
 /// written once, here.
 @MainActor
-protocol RoundStoreShared: AnyObject {
+protocol RoundStoreShared: AnyObject, Sendable {
     var availableClubs: [ClubData] { get }
     var clubTypes: [ClubTypeData] { get }
     var holeFilterSettings: HoleDetectionFilterSettings { get }

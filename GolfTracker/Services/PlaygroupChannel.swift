@@ -506,6 +506,8 @@ extension PlaygroupChannel.ScorecardPlayer {
     /// Build the self row for the multiplayer scorecard from the local
     /// SwiftData Round we already have in memory. Pulls tee data via
     /// GolfCourseAPIService cache, same path the solo scorecard uses.
+    /// Main actor: `round` belongs to the main context.
+    @MainActor
     static func fromLocalRound(
         round: Round,
         userId: String,

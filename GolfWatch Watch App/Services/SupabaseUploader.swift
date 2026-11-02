@@ -1,30 +1,23 @@
 import Foundation
+import os
 import StrokeSaverAlgorithms
 import Supabase
 
 /// Uploads swing detection events to Supabase for ML analysis.
 /// Manages the pending-event lifecycle: each detection is held until
 /// explicitly accepted/rejected or flushed by the next detection.
-class SupabaseUploader {
+///
+/// Detections arrive on the motion and raw-accel queues; the popup, Swing Test
+/// and monitoring stop act on main. The one piece of mutable state, the pending
+/// event and the test session it belongs to, sits behind `state`, and every
+/// upload runs in its own task.
+final class SupabaseUploader: Sendable {
     static let shared = SupabaseUploader()
 
     // MARK: - Configuration
 
     private let supabase = SupabaseManager.shared
     private let storageBucket = "swing-motion"
-
-    /// When true, every detection immediately uploads as false_positive/high.
-    /// For false-positive farming during casual wear.
-    var rejectAll: Bool = false {
-        didSet { UserDefaults.standard.set(rejectAll, forKey: "supabaseRejectAll") }
-    }
-
-    /// Non-nil while Swing Test Mode is running. Stamped onto every event
-    /// constructed for its lifetime so test detections stay filterable from
-    /// round play without a parallel schema. Set by `SwingTestSession.start`,
-    /// cleared on stop — reading it here rather than threading it through
-    /// `fireSmartDetection` keeps the detector unaware that test mode exists.
-    var currentTestSessionId: UUID?
 
     // MARK: - Pending Event
 
@@ -41,16 +34,25 @@ class SupabaseUploader {
         var gateReport: [String: [String: Double]]?
     }
 
-    private var pending: PendingEvent?
-    private let queue = DispatchQueue(label: "supabase-uploader", qos: .utility)
+    private struct State {
+        var pending: PendingEvent?
+        var currentTestSessionId: UUID?
+    }
+    private let state = OSAllocatedUnfairLock(initialState: State())
+
+    /// Non-nil while Swing Test Mode is running. Stamped onto every event
+    /// constructed for its lifetime so test detections stay filterable from
+    /// round play without a parallel schema. Set by `SwingTestSession.start`,
+    /// cleared on stop — reading it here rather than threading it through
+    /// `fireSmartDetection` keeps the detector unaware that test mode exists.
+    var currentTestSessionId: UUID? {
+        get { state.withLock { $0.currentTestSessionId } }
+        set { state.withLock { $0.currentTestSessionId = newValue } }
+    }
 
     // MARK: - Init
 
-    private init() {
-        if UserDefaults.standard.object(forKey: "supabaseRejectAll") != nil {
-            rejectAll = UserDefaults.standard.bool(forKey: "supabaseRejectAll")
-        }
-    }
+    private init() {}
 
     private func motionStoragePath(eventId: UUID, userId: String) -> String {
         "\(userId)/\(eventId.uuidString).csv"
@@ -77,91 +79,64 @@ class SupabaseUploader {
         autoAdd: Bool,
         gateReport: [String: [String: Double]]? = nil
     ) -> UUID? {
-        if rejectAll {
-            // Farming mode: immediate upload, no pending
-            let event = PendingEvent(
-                id: UUID(),
-                metadata: metadata,
-                motionSlice: motionSlice,
-                rawAccelSlice: rawAccelSlice,
-                clubType: clubType,
-                label: "false_positive",
-                confidence: "high",
-                testSessionId: currentTestSessionId,
-                gateReport: gateReport
-            )
-            upload(event: event)
-            // Flush any stale manual pending too
-            if let prev = pending { upload(event: prev) }
-            pending = nil
-            return event.id
-        }
-
-        if autoAdd {
-            // Auto-add: no popup, no pending — upload immediately as
-            // positive/low. Undo path edits the row to false_positive/high.
-            // Flush any stale manual pending first (shouldn't happen but
-            // defensive).
-            if let prev = pending {
-                upload(event: prev)
-                pending = nil
+        // Decide under the lock, upload outside it.
+        let (toUpload, returned): ([PendingEvent], UUID?) = state.withLock { s in
+            let prev = s.pending
+            s.pending = nil
+            if autoAdd {
+                // Auto-add: no popup, no pending — upload immediately as
+                // positive/low. Undo path edits the row to false_positive/high.
+                // Flush any stale manual pending first (shouldn't happen but
+                // defensive).
+                let event = PendingEvent(
+                    id: UUID(), metadata: metadata, motionSlice: motionSlice,
+                    rawAccelSlice: rawAccelSlice, clubType: clubType,
+                    label: "positive", confidence: "low",
+                    testSessionId: s.currentTestSessionId, gateReport: gateReport)
+                return ([prev, event].compactMap { $0 }, event.id)
             }
-            let event = PendingEvent(
-                id: UUID(),
-                metadata: metadata,
-                motionSlice: motionSlice,
-                rawAccelSlice: rawAccelSlice,
-                clubType: clubType,
-                label: "positive",
-                confidence: "low",
-                testSessionId: currentTestSessionId,
-                gateReport: gateReport
-            )
-            upload(event: event)
-            return event.id
+            // Manual mode: flush previous pending (implicit — user didn't act),
+            // hold this one for the popup to accept/reject.
+            s.pending = PendingEvent(
+                id: UUID(), metadata: metadata, motionSlice: motionSlice,
+                rawAccelSlice: rawAccelSlice, clubType: clubType,
+                label: "false_positive", confidence: "low",
+                testSessionId: s.currentTestSessionId, gateReport: gateReport)
+            return ([prev].compactMap { $0 }, nil)
         }
-
-        // Manual mode: flush previous pending (implicit — user didn't act),
-        // hold this one for the popup to accept/reject.
-        if let prev = pending {
-            upload(event: prev)
-        }
-        pending = PendingEvent(
-            id: UUID(),
-            metadata: metadata,
-            motionSlice: motionSlice,
-            rawAccelSlice: rawAccelSlice,
-            clubType: clubType,
-            label: "false_positive",
-            confidence: "low",
-            testSessionId: currentTestSessionId,
-            gateReport: gateReport
-        )
-        return nil
+        toUpload.forEach { upload(event: $0) }
+        return returned
     }
 
     /// Called when user taps to add the stroke (manual-add mode).
     /// Flips the pending label to positive with high confidence.
     func onSwingAccepted() {
-        pending?.label = "positive"
-        pending?.confidence = "high"
+        state.withLock { s in
+            s.pending?.label = "positive"
+            s.pending?.confidence = "high"
+        }
     }
 
     /// Called when user explicitly rejects the manual-add popup with X.
     /// Immediately flushes as false_positive with high confidence.
     func onSwingRejected() {
-        guard var event = pending else { return }
+        let taken: PendingEvent? = state.withLock { s in
+            defer { s.pending = nil }
+            return s.pending
+        }
+        guard var event = taken else { return }
         event.label = "false_positive"
         event.confidence = "high"
         upload(event: event)
-        pending = nil
     }
 
     /// Flush whatever's pending (e.g., on round end or monitoring stop).
     func flushPending() {
-        guard let event = pending else { return }
-        upload(event: event)
-        pending = nil
+        let taken: PendingEvent? = state.withLock { s in
+            defer { s.pending = nil }
+            return s.pending
+        }
+        if let event = taken { upload(event: event) }
     }
 
     /// Edit a previously uploaded swing_event row to label=false_positive,

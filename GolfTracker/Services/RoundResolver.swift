@@ -26,6 +26,7 @@ import Supabase
 /// MapKit is the last-resort fallback when OSM has zero matches — it has no
 /// polygon data, so the round starts as Tier `none` and we don't INSERT a
 /// shared row (we'd be persisting incomplete data).
+@MainActor
 final class RoundResolver {
     static let shared = RoundResolver()
 
@@ -234,24 +235,18 @@ final class RoundResolver {
     /// Run the OSM POI search and return its candidates as a list (no
     /// presentation). Empty on failure / no matches.
     private func fetchOSMCandidates(near currentLocation: CLLocationCoordinate2D) async -> [CourseCandidate] {
-        await withCheckedContinuation { (cont: CheckedContinuation<[CourseCandidate], Never>) in
-            osm.fetchCandidates(near: currentLocation) { result in
-                guard case .success(let osmCandidates) = result else {
-                    cont.resume(returning: [])
-                    return
-                }
-                let userLoc = CLLocation(latitude: currentLocation.latitude, longitude: currentLocation.longitude)
-                let candidates = osmCandidates.map { c -> CourseCandidate in
-                    let cLoc = CLLocation(latitude: c.centroid.latitude, longitude: c.centroid.longitude)
-                    return CourseCandidate(
-                        name: c.name,
-                        coordinate: c.centroid.coordinate,
-                        distanceMeters: cLoc.distance(from: userLoc),
-                        source: .osm(c)
-                    )
-                }
-                cont.resume(returning: candidates)
-            }
+        guard case .success(let osmCandidates) = await osm.fetchCandidates(near: currentLocation) else {
+            return []
+        }
+        let userLoc = CLLocation(latitude: currentLocation.latitude, longitude: currentLocation.longitude)
+        return osmCandidates.map { c -> CourseCandidate in
+            let cLoc = CLLocation(latitude: c.centroid.latitude, longitude: c.centroid.longitude)
+            return CourseCandidate(
+                name: c.name,
+                coordinate: c.centroid.coordinate,
+                distanceMeters: cLoc.distance(from: userLoc),
+                source: .osm(c)
+            )
         }
     }
 
@@ -339,9 +334,9 @@ final class RoundResolver {
         completion: @escaping (Resolution?) -> Void
     ) {
         progress(.searchingPOIs)
-        osm.fetchCandidates(near: currentLocation) { [weak self] result in
-            guard let self = self else { completion(nil); return }
-            switch result {
+        Task { [weak self] in
+            guard let self else { completion(nil); return }
+            switch await self.osm.fetchCandidates(near: currentLocation) {
             case .success(let osmCandidates) where !osmCandidates.isEmpty:
                 let userLoc = CLLocation(latitude: currentLocation.latitude, longitude: currentLocation.longitude)
                 let candidates = osmCandidates.map { c -> CourseCandidate in
@@ -635,8 +630,8 @@ final class RoundResolver {
                                         scorecard: GCAPICourse?,
                                         progress: @escaping (Step) -> Void,
                                         completion: @escaping (Resolution?) -> Void) {
-        osm.fetchCourseGeometry(for: osmCandidate) { result in
-            let osmData = try? result.get()
+        Task {
+            let osmData = try? await self.osm.fetchCourseGeometry(for: osmCandidate).get()
             let resolution = Resolution(
                 courseId: UUID(),
                 courseName: name,

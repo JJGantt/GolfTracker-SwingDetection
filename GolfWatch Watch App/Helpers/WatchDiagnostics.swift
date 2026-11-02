@@ -8,7 +8,8 @@ import Foundation
 /// Per-call cost: one Int increment under a serial DispatchQueue (no
 /// allocations, no network). Flush cost: one `ClientEventLogger.log`
 /// per second per active counter.
-final class WatchDiagnostics {
+/// Every counter is confined to `queue`, which is what makes sharing it safe.
+final class WatchDiagnostics: @unchecked Sendable {
     static let shared = WatchDiagnostics()
 
     private let queue = DispatchQueue(label: "WatchDiagnostics", qos: .utility)

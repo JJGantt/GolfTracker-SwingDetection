@@ -1,5 +1,6 @@
 import CryptoKit
 import Foundation
+import os
 import Supabase
 
 /// Watch-side auth, backed by the supabase-swift SDK. Receives session updates
@@ -8,11 +9,15 @@ import Supabase
 ///
 /// Public API surface preserved so existing callers (SupabaseUploader,
 /// OSMCourseService) don't change.
-final class WatchAuthSession: ObservableObject {
+///
+/// Read from every queue (uploads and sync ask who is signed in), written on
+/// main. `session` is main's published copy for the UI; everything else reads
+/// `currentSession`, a lock-backed mirror it keeps.
+final class WatchAuthSession: ObservableObject, @unchecked Sendable {
     static let shared = WatchAuthSession()
 
     private let supabase = SupabaseManager.shared
-    private let queue = DispatchQueue(label: "watch-auth-session")
+    private let mirror = OSAllocatedUnfairLock<AuthSession?>(initialState: nil)
 
     /// Mirror of the latest session received from the iPhone, kept locally so
     /// callers can read access token / user id synchronously without awaiting
@@ -25,21 +30,28 @@ final class WatchAuthSession: ObservableObject {
     /// exposed through `onSessionChanged`, which is a single-assignment closure
     /// already owned by `WatchDataStore` for club hydration — a second consumer
     /// taking it would silently clobber the first.
-    @Published private(set) var session: AuthSession?
+    @MainActor @Published private(set) var session: AuthSession? {
+        didSet { mirror.withLock { [session] in $0 = session } }
+    }
 
-    /// Notified whenever the session changes (sign-in, refresh, sign-out).
-    var onSessionChanged: ((AuthSession?) -> Void)?
+    /// Notified on main whenever the session changes (sign-in, refresh,
+    /// sign-out).
+    @MainActor var onSessionChanged: ((AuthSession?) -> Void)?
 
     private init() {
         // Pick up whatever the SDK has persisted from a previous launch.
-        if let s = supabase.auth.currentSession {
-            self.session = AuthSession(s)
+        let persisted = supabase.auth.currentSession.map(AuthSession.init)
+        mirror.withLock { $0 = persisted }
+        Task { @MainActor in
+            if self.session == nil, let persisted { self.session = persisted }
         }
         startSessionListener()
     }
 
-    var isSignedIn: Bool { session != nil }
-    var currentUserId: String? { session?.userId }
+    /// The session as last applied, from any thread.
+    var currentSession: AuthSession? { mirror.withLock { $0 } }
+    var isSignedIn: Bool { currentSession != nil }
+    var currentUserId: String? { currentSession?.userId }
 
     /// SHA-256 of the refresh token in the last session the phone sent
     /// (hashed because UserDefaults is not the keychain).
@@ -68,50 +80,22 @@ final class WatchAuthSession: ObservableObject {
     /// Replace the stored session and push it into the SDK so it can take
     /// over refresh.
     private func apply(_ newSession: AuthSession?) {
-        queue.async { [weak self] in
-            guard let self = self else { return }
-            Task {
-                if let s = newSession {
-                    do {
-                        _ = try await self.supabase.auth.setSession(
-                            accessToken: s.accessToken,
-                            refreshToken: s.refreshToken
-                        )
-                    } catch {
-                        dprint("⌚ [WatchAuthSession] setSession failed: \(error)")
-                    }
-                } else {
-                    try? await self.supabase.auth.signOut()
-                }
-                await MainActor.run {
-                    self.session = newSession
-                    self.onSessionChanged?(newSession)
-                }
-            }
-        }
-    }
-
-    /// Returns a non-expired access token. SDK handles refresh internally;
-    /// we just await `auth.session` which refreshes if needed.
-    func validAccessToken(completion: @escaping (Result<String, WatchAuthError>) -> Void) {
         Task {
-            do {
-                let s = try await supabase.auth.session
-                await MainActor.run { completion(.success(s.accessToken)) }
-            } catch {
-                await MainActor.run { completion(.failure(.refreshFailed(0))) }
+            if let s = newSession {
+                do {
+                    _ = try await self.supabase.auth.setSession(
+                        accessToken: s.accessToken,
+                        refreshToken: s.refreshToken
+                    )
+                } catch {
+                    dprint("⌚ [WatchAuthSession] setSession failed: \(error)")
+                }
+            } else {
+                try? await self.supabase.auth.signOut()
             }
-        }
-    }
-
-    /// Force a refresh (used after a 401 retry path).
-    func forceRefresh(completion: @escaping (Result<String, WatchAuthError>) -> Void) {
-        Task {
-            do {
-                let s = try await supabase.auth.refreshSession()
-                await MainActor.run { completion(.success(s.accessToken)) }
-            } catch {
-                await MainActor.run { completion(.failure(.refreshFailed(0))) }
+            await MainActor.run {
+                self.session = newSession
+                self.onSessionChanged?(newSession)
             }
         }
     }
@@ -123,22 +107,23 @@ final class WatchAuthSession: ObservableObject {
     /// most once every `requestRefreshThrottleSeconds` so a flurry of
     /// failing calls doesn't spam the iPhone.
     private static let requestRefreshThrottleSeconds: TimeInterval = 10
-    private var lastRefreshRequestAt: Date = .distantPast
+    private let lastRefreshRequestAt = OSAllocatedUnfairLock<Date>(initialState: .distantPast)
     func requestRefreshFromPhone() {
         let now = Date()
-        guard now.timeIntervalSince(lastRefreshRequestAt) >= Self.requestRefreshThrottleSeconds else { return }
-        lastRefreshRequestAt = now
+        let due = lastRefreshRequestAt.withLock { last in
+            guard now.timeIntervalSince(last) >= Self.requestRefreshThrottleSeconds else { return false }
+            last = now
+            return true
+        }
+        guard due else { return }
         WatchConnectivityManager.shared.requestAuthSessionRefresh()
     }
 
     // MARK: - Session listener
 
-    private var sessionListener: Task<Void, Never>?
-
+    /// Runs for the life of the process (the singleton never goes away).
     private func startSessionListener() {
-        sessionListener?.cancel()
-        sessionListener = Task { [weak self] in
-            guard let self = self else { return }
+        Task {
             for await (_, sdkSession) in self.supabase.auth.authStateChanges {
                 let mirror = sdkSession.map(AuthSession.init)
                 await MainActor.run {
@@ -156,8 +141,3 @@ final class WatchAuthSession: ObservableObject {
     }
 }
 
-enum WatchAuthError: Error {
-    case notSignedIn
-    case badRequest
-    case refreshFailed(Int)
-}

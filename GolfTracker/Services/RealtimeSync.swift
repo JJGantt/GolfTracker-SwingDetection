@@ -400,8 +400,8 @@ final class RealtimeSync {
         // backgrounding / network changes until then. The `onSubscribed`
         // callback runs after every successful (re-)subscribe — catches up
         // events missed during gaps, since postgres-changes are live-only.
-        subscribeLoopTask = Task { [weak self] in
-            await channel.subscribePersistently(label: "realtimeSync") {
+        subscribeLoopTask = Task {
+            await channel.subscribePersistently(label: "realtimeSync") { [weak self] in
                 await self?.reconcileRoundsWithSupabase()
             }
         }

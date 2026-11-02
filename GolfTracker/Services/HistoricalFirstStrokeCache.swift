@@ -79,7 +79,7 @@ final class HistoricalFirstStrokeCache: @unchecked Sendable {
                     FirstStroke(latitude: r.latitude, longitude: r.longitude)
                 )
             }
-            lock.lock(); byKey = grouped; lock.unlock()
+            lock.withLock { byKey = grouped }
 
             ClientEventLogger.log("autoadvance.history.loaded", detail: [
                 "courseId": .string(courseId.uuidString),

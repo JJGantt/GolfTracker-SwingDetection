@@ -227,7 +227,6 @@ enum ElevationFoldIn {
     /// late this session also fold in — single source of truth is the
     /// table, not in-memory state.
     private static func attempt(_ marker: PendingFoldIn) async {
-        var marker = marker
         let supabase = SupabaseManager.shared.client
         let roundId = marker.roundId
 

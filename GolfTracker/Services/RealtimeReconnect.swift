@@ -37,7 +37,7 @@ extension RealtimeChannelV2 {
     ///   prefix on `ClientEventLogger` events: `<label>.subscribe.attempt`,
     ///   `.subscribe.ok`, `.subscribe.lost`, `.subscribe.failed`,
     ///   `.subscribe.cancelled`.
-    func subscribePersistently(label: String, onSubscribed: (() async -> Void)? = nil) async {
+    func subscribePersistently(label: String, onSubscribed: (@Sendable () async -> Void)? = nil) async {
         var backoff: TimeInterval = 1.0
         let maxBackoff: TimeInterval = 30.0
 

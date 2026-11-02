@@ -87,7 +87,6 @@ extension ActiveRoundView {
         }
     }
 
-    @ViewBuilder
     func standardMapView(for hole: Hole) -> some View {
         // Caller (mainContent) now guards on `hole.hasLocation` before
         // invoking us, so `coordinate` is guaranteed non-nil here. The

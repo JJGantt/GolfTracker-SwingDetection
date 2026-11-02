@@ -7,7 +7,11 @@ import SwiftData
 /// Fire-and-forget from the caller's perspective; failed requests are queued
 /// on disk and retried on launch and via a periodic timer (the SDK doesn't
 /// provide offline queueing, so we still own that piece).
-final class SupabaseSync {
+///
+/// Called from every actor and queue. Its mutable state is the write queue and
+/// the `pumping` flag, both only touched under `queueLock`; the retry timer is
+/// created once, in `init`.
+final class SupabaseSync: @unchecked Sendable {
     static let shared = SupabaseSync()
 
     private let supabase = SupabaseManager.shared
@@ -24,7 +28,7 @@ final class SupabaseSync {
     }
     private var currentAccessToken: String? {
         #if os(watchOS)
-        return WatchAuthSession.shared.session?.accessToken
+        return WatchAuthSession.shared.currentSession?.accessToken
         #else
         return AuthManager.shared.currentAccessToken
         #endif
@@ -416,7 +420,7 @@ final class SupabaseSync {
     /// Deletes everything stored for the current user on the server — every
     /// row keyed to them and their motion recordings in storage — through
     /// the `delete-my-data` edge function. Shared (OSM) courses stay.
-    func deleteAllUserData(completion: @escaping (Bool) -> Void) {
+    func deleteAllUserData(completion: @escaping @MainActor (Bool) -> Void) {
         Task {
             var ok = false
             do {

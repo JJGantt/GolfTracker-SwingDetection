@@ -102,11 +102,6 @@ Every candidate's `label` is NULL. Nothing sifts them into `'true_positive_match
 `'noise'`, and there is no tooling to fetch and plot the per-candidate CSVs, so the
 groups accumulate without feeding anything.
 
-**Related, smaller:** `SupabaseUploader.rejectAll` (upload every detection as
-`false_positive/high`, for harvesting false positives during casual wear) works but
-**has no UI** — nothing writes it but its own `didSet`, so it cannot be enabled from
-the app.
-
 **Also worth remembering:** `fireSmartDetection` still returns early without a GPS
 fix during round play, discarding the detection *and* its motion slice. Swing Test
 Mode is exempt. That makes any swing taken before the first fix on a round an

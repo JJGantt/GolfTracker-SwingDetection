@@ -1520,7 +1520,7 @@ class WatchDataStore: ObservableObject {
 
 // MARK: - Club Prediction Manager
 
-class ClubPredictionManager {
+final class ClubPredictionManager: Sendable {
     static let shared = ClubPredictionManager()
 
     /// Club types skipped by distance-based prediction unconditionally.

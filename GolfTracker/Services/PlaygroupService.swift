@@ -11,7 +11,7 @@ import Supabase
 /// Realtime subscriptions for the playgroup-channel are layered on top by
 /// `RealtimeSync` (round-scoped lifecycle, started when active round screen
 /// is visible).
-final class PlaygroupService {
+final class PlaygroupService: Sendable {
     static let shared = PlaygroupService()
 
     private let supabase = SupabaseManager.shared

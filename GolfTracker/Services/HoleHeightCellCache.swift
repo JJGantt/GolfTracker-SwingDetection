@@ -152,7 +152,7 @@ final class HoleHeightCellCache {
         let cells: String?
     }
 
-    private static let bytesPerCell = 10
+    nonisolated private static let bytesPerCell = 10
 
     /// One request for the whole field. `haveSolvedAt` is the caller's cached
     /// solve stamp; when it still matches, the server answers `unchanged` and

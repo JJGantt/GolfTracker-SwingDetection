@@ -7,7 +7,7 @@ import Supabase
 ///
 /// One client per process. Auth state, session refresh, retry, and Realtime
 /// connection lifecycle are all handled by the SDK internally.
-final class SupabaseManager {
+final class SupabaseManager: Sendable {
     static let shared = SupabaseManager()
 
     let client: Supabase.SupabaseClient

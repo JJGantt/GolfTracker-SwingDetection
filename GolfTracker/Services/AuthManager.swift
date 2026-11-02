@@ -1,6 +1,7 @@
 import Foundation
 import AuthenticationServices
 import Combine
+import os
 import Supabase
 
 enum AuthError: Error, LocalizedError {
@@ -23,62 +24,44 @@ enum AuthError: Error, LocalizedError {
 /// refresh, retry, persistence internally). Public API surface preserved so
 /// existing callers don't change. Mirrors the auth session to the Watch via
 /// `WatchConnectivityManager.sendAuthSession` whenever it changes.
-final class AuthManager: NSObject, ObservableObject {
+///
+/// Read from every queue (sync and logging ask who is signed in), written on
+/// main. `session` is main's published copy for the UI; everything else reads
+/// `currentSession`, a lock-backed mirror it keeps.
+final class AuthManager: NSObject, ObservableObject, @unchecked Sendable {
     static let shared = AuthManager()
 
-    @Published private(set) var session: AuthSession?
-    @Published private(set) var isSigningIn = false
+    @MainActor @Published private(set) var session: AuthSession? {
+        didSet { mirror.withLock { [session] in $0 = session } }
+    }
+    @MainActor @Published private(set) var isSigningIn = false
 
     private let supabase = SupabaseManager.shared
-    private var sessionListener: Task<Void, Never>?
+    private let mirror = OSAllocatedUnfairLock<AuthSession?>(initialState: nil)
 
     private override init() {
         super.init()
         // Pick up whatever session the SDK has persisted from a previous launch.
-        if let s = supabase.auth.currentSession {
-            self.session = AuthSession(s)
-            WatchConnectivityManager.shared.sendAuthSession(self.session)
+        let persisted = supabase.auth.currentSession.map(AuthSession.init)
+        mirror.withLock { $0 = persisted }
+        if let persisted {
+            WatchConnectivityManager.shared.sendAuthSession(persisted)
+            Task { @MainActor in
+                if self.session == nil { self.session = persisted }
+            }
         }
         startSessionListener()
     }
 
-    var isSignedIn: Bool { session != nil }
-    var currentUserId: String? { session?.userId }
-    var currentAccessToken: String? { session?.accessToken }
-
-    /// SDK auto-refreshes; this call returns the current access token if the SDK
-    /// has a valid session. Kept async to preserve the legacy completion-handler
-    /// API used by SupabaseSync.
-    func validAccessToken(completion: @escaping (Result<String, AuthError>) -> Void) {
-        Task {
-            do {
-                let s = try await supabase.auth.session
-                await MainActor.run { completion(.success(s.accessToken)) }
-            } catch {
-                await MainActor.run { completion(.failure(.supabaseRejected(error.localizedDescription))) }
-            }
-        }
-    }
-
-    /// Forces a refresh. Mostly useful after a 401 retry path.
-    func refreshSession(completion: @escaping (Result<AuthSession, AuthError>) -> Void) {
-        Task {
-            do {
-                let s = try await supabase.auth.refreshSession()
-                let mirror = AuthSession(s)
-                await MainActor.run {
-                    self.session = mirror
-                    WatchConnectivityManager.shared.sendAuthSession(mirror)
-                    completion(.success(mirror))
-                }
-            } catch {
-                await MainActor.run { completion(.failure(.supabaseRejected(error.localizedDescription))) }
-            }
-        }
-    }
+    /// The session as last applied, from any thread.
+    var currentSession: AuthSession? { mirror.withLock { $0 } }
+    var isSignedIn: Bool { currentSession != nil }
+    var currentUserId: String? { currentSession?.userId }
+    var currentAccessToken: String? { currentSession?.accessToken }
 
     // MARK: - Sign In With Apple
 
+    @MainActor
     func signInWithApple(from anchor: ASPresentationAnchor? = nil, completion: @escaping (Result<AuthSession, AuthError>) -> Void) {
         isSigningIn = true
         let provider = ASAuthorizationAppleIDProvider()
@@ -135,6 +118,7 @@ final class AuthManager: NSObject, ObservableObject {
 
     // MARK: - Sign out
 
+    @MainActor
     func signOut() {
         Task {
             try? await supabase.auth.signOut()
@@ -149,10 +133,9 @@ final class AuthManager: NSObject, ObservableObject {
 
     /// SDK fires auth state change events (sign-in, sign-out, token refresh).
     /// Mirror those into our @Published session and the watch.
+    /// Runs for the life of the process (the singleton never goes away).
     private func startSessionListener() {
-        sessionListener?.cancel()
-        sessionListener = Task { [weak self] in
-            guard let self = self else { return }
+        Task {
             for await (_, sdkSession) in self.supabase.auth.authStateChanges {
                 let mirror = sdkSession.map(AuthSession.init)
                 await MainActor.run {

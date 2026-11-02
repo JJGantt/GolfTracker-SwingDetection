@@ -153,7 +153,7 @@ struct CachedCourseTeeHole: Identifiable, Hashable, Codable {
 ///
 /// Shared between iOS and watchOS — both targets call the same Edge Function
 /// and read from the same DB tables.
-final class GolfCourseAPIService {
+final class GolfCourseAPIService: Sendable {
     static let shared = GolfCourseAPIService()
 
     private let supabase = SupabaseManager.shared

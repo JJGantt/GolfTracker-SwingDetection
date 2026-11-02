@@ -1,5 +1,5 @@
 import Foundation
-import CoreMotion
+@preconcurrency import CoreMotion
 
 extension SwingDetectionManager {
 
@@ -129,13 +129,15 @@ extension SwingDetectionManager {
                             self.rawAccelMissingWarned = false
                         }
                         self.noteRawBatchArrived()
+                        // Copied out as plain values: the sensor's own sample
+                        // objects are not safe to hand to another queue.
+                        let samples = batch.map {
+                            (x: $0.acceleration.x, y: $0.acceleration.y, z: $0.acceleration.z, t: $0.timestamp)
+                        }
                         self.rawAccelQueue.addOperation { [weak self] in
                             guard let self = self else { return }
-                            for sample in batch {
-                                self.feedRawAccelSample(x: sample.acceleration.x,
-                                                        y: sample.acceleration.y,
-                                                        z: sample.acceleration.z,
-                                                        t: sample.timestamp)
+                            for sample in samples {
+                                self.feedRawAccelSample(x: sample.x, y: sample.y, z: sample.z, t: sample.t)
                             }
                         }
                     }

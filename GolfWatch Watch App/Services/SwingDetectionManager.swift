@@ -1,6 +1,6 @@
 import Foundation
 import os
-import CoreMotion
+@preconcurrency import CoreMotion
 import CoreLocation
 import Combine
 import WatchKit
@@ -21,11 +21,13 @@ enum UnifDetectPreset: String, CaseIterable {
     case custom = "Custom"
 }
 
-class SwingDetectionManager: NSObject, ObservableObject {
+/// Shared across main, `motionQueue` and `rawAccelQueue`; see "Threads" in
+/// CLAUDE.md for which lock covers which state. Its `@Published` properties
+/// are written on main only.
+final class SwingDetectionManager: NSObject, ObservableObject, @unchecked Sendable {
     static let shared = SwingDetectionManager()
 
     let motionManager = CMMotionManager()
-    let locationManager = LocationManager.shared
     let motionQueue: OperationQueue = {
         let q = OperationQueue()
         q.maxConcurrentOperationCount = 1
@@ -1144,8 +1146,9 @@ class SwingDetectionManager: NSObject, ObservableObject {
         // Runs on the motion or raw-accel queue: settings come from the
         // lock-backed mirror, read once so the whole detection sees one state.
         let settings = engine
+        let location = LocationManager.latestDeviceLocation
         ClientEventLogger.log("swing.fire.enter", detail: [
-            "hasLocation": .bool(locationManager.location != nil),
+            "hasLocation": .bool(location != nil),
             "hasShapeEvent": .bool(shapeEvent != nil),
             "selectedClubType": settings.selectedClubTypeName.map { .string($0) } ?? .null,
             "isPutterSelected": .bool(settings.selectedClubTypeName == "Putt"),
@@ -1161,7 +1164,7 @@ class SwingDetectionManager: NSObject, ObservableObject {
         // carries an explicitly invalid coordinate rather than a plausible-
         // looking zero.
         let coordinate: CLLocationCoordinate2D
-        if let location = locationManager.location {
+        if let location {
             coordinate = location.coordinate
         } else if settings.testModeActive {
             coordinate = kCLLocationCoordinate2DInvalid
@@ -1427,7 +1430,7 @@ class SwingDetectionManager: NSObject, ObservableObject {
 
     /// Simulate a swing for testing in simulator
     func simulateSwing() {
-        guard let location = locationManager.location else {
+        guard let location = LocationManager.latestDeviceLocation else {
             dprint("⌚ [SwingDetection] Cannot simulate swing - no location available")
             return
         }

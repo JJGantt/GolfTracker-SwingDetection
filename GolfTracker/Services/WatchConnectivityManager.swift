@@ -28,7 +28,12 @@ enum HoleDetectionPhoneState: String {
 /// They're gone — swing data goes directly from the watch to Supabase
 /// (`swing_events` + `false_negative_groups`), so the phone is no longer
 /// in the loop for any motion artifact.
-class WatchConnectivityManager: NSObject, ObservableObject {
+///
+/// WCSession calls its delegate on a background queue. Each delegate method
+/// decodes what it received there and hands the result to main, where the
+/// callbacks and published properties live; context writes are serialized by
+/// `contextLock`.
+final class WatchConnectivityManager: NSObject, ObservableObject, @unchecked Sendable {
     static let shared = WatchConnectivityManager()
 
     @Published var isReachable = false
@@ -490,6 +495,9 @@ extension WatchConnectivityManager: WCSessionDelegate {
         // @Published vars directly when they're the ones backing the value
         // (otherwise the UserDefaults write wouldn't reach the live object).
         if let type = message["type"] as? String, type == "devParam" {
+            // A received plist dictionary: immutable from here on, so handing
+            // it to main is safe although `Any` cannot say so.
+            nonisolated(unsafe) let message = message
             DispatchQueue.main.async {
                 for (k, v) in message where k != "type" {
                     UserDefaults.standard.set(v, forKey: k)
@@ -515,7 +523,7 @@ extension WatchConnectivityManager: WCSessionDelegate {
         #if os(iOS)
         if let type = message["type"] as? String, type == "requestAuthSession" {
             DispatchQueue.main.async {
-                self.sendAuthSession(AuthManager.shared.session)
+                self.sendAuthSession(AuthManager.shared.currentSession)
             }
             return
         }
@@ -600,7 +608,9 @@ extension WatchConnectivityManager: WCSessionDelegate {
         // Only changed ones: this dictionary rides along with every context
         // the phone sends (an hourly token refresh included), and applying
         // `detectionMode` resets the swing detector to idle.
-        if let params = applicationContext["devParams"] as? [String: Any] {
+        if let received = applicationContext["devParams"] as? [String: Any] {
+            // Immutable plist values; see the devParam message above.
+            nonisolated(unsafe) let params = received
             DispatchQueue.main.async {
                 for (k, v) in params {
                     if let current = UserDefaults.standard.object(forKey: k) as? NSObject,
@@ -699,8 +709,9 @@ extension WatchConnectivityManager: WCSessionDelegate {
     // MARK: Session Management
 
     func session(_ session: WCSession, activationDidCompleteWith activationState: WCSessionActivationState, error: Error?) {
+        let reachable = session.isReachable
         DispatchQueue.main.async {
-            self.isReachable = session.isReachable
+            self.isReachable = reachable
             self.isActivated = (activationState == .activated)
         }
         if let error = error {
@@ -728,7 +739,8 @@ extension WatchConnectivityManager: WCSessionDelegate {
     }
 
     func sessionReachabilityDidChange(_ session: WCSession) {
-        DispatchQueue.main.async { self.isReachable = session.isReachable }
+        let reachable = session.isReachable
+        DispatchQueue.main.async { self.isReachable = reachable }
     }
 
     #if os(iOS)
