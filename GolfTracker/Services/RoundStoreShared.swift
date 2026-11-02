@@ -15,6 +15,7 @@ struct PendingScorecardPicker: Identifiable {
 /// map and the green-placement picker offer, club lookups, and the sweep that
 /// ends an abandoned round. Each store keeps its own state; the behaviour is
 /// written once, here.
+@MainActor
 protocol RoundStoreShared: AnyObject {
     var availableClubs: [ClubData] { get }
     var clubTypes: [ClubTypeData] { get }
@@ -82,8 +83,9 @@ extension RoundStoreShared {
     /// arrival: an hour of inactivity changes nothing anyone could be told.
     func startRoundLifecycleSweep() {
         lifecycleTimer?.invalidate()
+        // Scheduled on the main run loop, so the tick is on the main actor.
         let timer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
-            self?.evaluateRoundLifecycle()
+            MainActor.assumeIsolated { self?.evaluateRoundLifecycle() }
         }
         RunLoop.main.add(timer, forMode: .common)
         lifecycleTimer = timer

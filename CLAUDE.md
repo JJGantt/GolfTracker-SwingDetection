@@ -133,7 +133,7 @@ When modifying data sync, update both the sending logic in `WatchConnectivityMan
 ### State Management Pattern
 
 All major features use `ObservableObject` classes as single sources of truth:
-- `DataStore` / `WatchDataStore` - Course and round data
+- `DataStore` / `WatchDataStore` - Course and round data. Both are `@MainActor` (as is `RoundStoreShared` and the watch's `AutoAdvanceMonitor`, which drives them): they are UI state, and every reader and writer must be on the main actor.
 - `LocationManager` - GPS tracking (singleton)
 - `WatchConnectivityManager` - iPhone-Watch communication (singleton)
 - `SwingDetectionManager` - Motion detection (singleton, Watch only)

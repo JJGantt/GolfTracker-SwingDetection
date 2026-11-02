@@ -15,6 +15,7 @@ enum ClubPredictionMode: String, Codable, CaseIterable {
 /// Watch-side data manager. SwiftData ModelContext is the persistence layer;
 /// `currentRoundId` tracks which round the play UI is bound to. Round/Stroke
 /// sync to/from the iPhone now goes through the DB (Realtime + SDK), not WC.
+@MainActor
 class WatchDataStore: ObservableObject {
     static let shared = WatchDataStore()
 

@@ -4,6 +4,7 @@ import MapKit
 import SwiftData
 import UIKit
 
+@MainActor
 class DataStore: ObservableObject {
     /// Shared instance — mirrors `WatchDataStore.shared`. Singletons that need
     /// access to the iOS data layer (like `MultiplayerView`) read from this

@@ -27,6 +27,7 @@ import WatchKit
 ///      this course. No putt gate — same reasoning as B.
 ///
 /// All distances in yards. Thresholds tunable via the dev menu.
+@MainActor
 final class AutoAdvanceMonitor: ObservableObject {
     static let shared = AutoAdvanceMonitor()
 

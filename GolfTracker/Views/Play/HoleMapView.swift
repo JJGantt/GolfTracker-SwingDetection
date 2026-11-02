@@ -253,10 +253,14 @@ struct HoleMapView: View {
                         let ordered = strokesForHole
                             .filter { !$0.isPenalty }
                             .sorted { $0.strokeNumber < $1.strokeNumber }
-                        func isPutt(_ s: Stroke) -> Bool {
-                            guard let club = DataStore.shared.availableClubs.first(where: { $0.id == s.clubId }) else { return false }
-                            return DataStore.shared.getTypeName(for: club) == "Putt"
+                        // Map content is built on the main thread, outside
+                        // the main actor as the compiler sees it.
+                        let putterIds = MainActor.assumeIsolated {
+                            Set(DataStore.shared.availableClubs
+                                .filter { DataStore.shared.getTypeName(for: $0) == "Putt" }
+                                .map(\.id))
                         }
+                        func isPutt(_ s: Stroke) -> Bool { putterIds.contains(s.clubId) }
                         var coords = ordered.filter { !isPutt($0) }.map(\.coordinate)
                         if let firstPutt = ordered.first(where: isPutt) { coords.append(firstPutt.coordinate) }
                         return coords
