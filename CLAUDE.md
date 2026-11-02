@@ -247,6 +247,8 @@ The swing detection system (Watch only) uses CoreMotion at 100Hz. All timing use
 - `off` — disabled
 - `unifDetect` — **current primary mode**: single `UnifiedDetector` with tri-state classification (putt/swing/ambig) and type-aware pairing (in the algorithms package)
 
+**Motion is recorded in the watch's hardware frame**, which changes with the wrist and with which side the crown faces. `startMonitoring` hands the detector the orientation setting (`WKInterfaceDevice.wristLocation` / `crownOrientation`) and the detector normalises to the wear its thresholds were measured on; without it a crown toward the elbow detects nothing and a left-hander on the right wrist loses most full swings. The uploaded motion files stay in the hardware frame and no row records the wear yet, so the labelled corpus assumes every recording is left wrist, crown on the right.
+
 **The detector is in the algorithms package.** `UnifiedDetector` (setup, backswing-top and forward-swing-peak event streams, tri-state classification, type-aware pairing), its post-pairing gates (`PostPairingGates`) and swing direction are pure code in `StrokeSaverAlgorithms`; their design, thresholds and Python reference live in that repo's `CLAUDE.md` and `docs/`. `SwingDetectionManager` feeds `MotionSample`s to `UnifiedDetector.process`, picks up `pendingShapeEvent` (a `UnifiedShapeEvent`) and fires `fireSmartDetection()`.
 
 **Every detection carries a per-gate report, passes included** (`swing_events.gate_report`, migration 00049): `{gate: {value, limit, margin, passed}}` for all eight post-pairing gates. `gate_fails` on rejections was the only verdict ever recorded, so a detection that squeaked through carried raw values and nothing else — "did this barely pass, and on which gate" meant fetching the thresholds and doing the arithmetic by hand. **`classification` / `swing_type` now record the detector's verdict.** Both columns had stored `club_type` since the table was created, so no row before build 68 says whether the detector thought it saw a putt or a swing.
@@ -300,6 +302,7 @@ target (only) links the package's `StrokeSaverAlgorithms` library, and every fil
 |---|---|
 | `UnifiedDetector` (`process(_:)`, `pendingShapeEvent`, `buildResult(from:)`, `reset()`, `log`) | `SwingDetectionManager` |
 | `UnifiedDetector.swingBearing(bsTopT:fsPeakT:)`: launch bearing for a paired shape | `SwingDetectionManager.fireSmartDetection` |
+| `UnifiedDetector.wear` / `WearFrame`: the wrist and crown side, from `WKInterfaceDevice` (`SwingDetectionManager.currentWear`), which the detector normalises motion for | `SwingDetectionManager.startMonitoring` |
 | `MotionSample`, `UnifiedShapeEvent`, `SwingDetectionResult`, `SwingType`, `StrokeClassification` | detection, upload and stroke paths |
 | `PostPairingGates.evaluate(...)` → `PostPairingGateResult`; `windowEnd` / `baselineStart` / `reversalEnd` | `SwingDetectionManager+PostPairingGates` |
 | `DetectorParameters.install(_:)` → `InstallResult`, `.isLoaded`, `DetectorKey` | `DetectorConfig`, `SwingDetectionManager.processDeviceMotion` |

@@ -880,6 +880,16 @@ final class SwingDetectionManager: NSObject, ObservableObject, @unchecked Sendab
         }
     }
 
+    /// The wrist and crown side from the watch's orientation setting. The
+    /// detector normalises motion to the wear its thresholds were measured on
+    /// (`WearFrame`), so this has to be what the user actually wears.
+    @MainActor
+    static var currentWear: WearFrame {
+        let device = WKInterfaceDevice.current()
+        return WearFrame(wrist: device.wristLocation == .right ? .right : .left,
+                         crown: device.crownOrientation == .left ? .left : .right)
+    }
+
     @MainActor
     func startMonitoring() {
         guard motionManager.isDeviceMotionAvailable else {
@@ -899,6 +909,8 @@ final class SwingDetectionManager: NSObject, ObservableObject, @unchecked Sendab
 
         dprint("⌚ [SwingDetection] Starting swing detection on background queue")
         isMonitoring = true
+        let wear = Self.currentWear
+        withDetector { $0.wear = wear }
         rawAccelMissingWarned = false
 
         // Pull the latest thresholds before the first sample is judged. A failed
