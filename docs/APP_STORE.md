@@ -35,9 +35,9 @@ the store screenshots are made, and what Apple requires before review. Store cop
 3. **Archive, then export with the App Store Connect API key.** The Xcode Apple ID
    session is expired, so automatic signing can't log in; the key mints the distribution
    certificate and App Store profile headlessly:
-   `-authenticationKeyPath ~/.appstoreconnect/private_keys/AuthKey_P8Y337A8RC.p8`
-   `-authenticationKeyID P8Y337A8RC`
-   `-authenticationKeyIssuerID 141a8ead-b829-4e58-b9ff-b8c95f8c4ed9 -allowProvisioningUpdates`
+   `-authenticationKeyPath <AuthKey.p8>`
+   `-authenticationKeyID <key id>`
+   `-authenticationKeyIssuerID <issuer id> -allowProvisioningUpdates`
 4. **Upload** with `xcrun altool --upload-app`.
 5. **If certificate creation fails with "PLA Update available"**, only the account holder
    can clear it: accept the updated Program License Agreement at
