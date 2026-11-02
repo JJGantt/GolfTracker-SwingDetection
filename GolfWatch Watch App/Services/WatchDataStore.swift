@@ -1231,6 +1231,7 @@ class WatchDataStore: ObservableObject {
         let course: Course
         if let existing = existingCourse {
             existing.name = resolution.courseName
+            if existing.osmId == nil { existing.osmId = resolution.osmId }
             if let ext = resolution.scorecardCourse.map({ String($0.id) }) {
                 existing.externalCourseId = ext
             }
@@ -1242,6 +1243,7 @@ class WatchDataStore: ObservableObject {
                 holes: [],
                 centerLat: resolution.courseCoordinate.latitude,
                 centerLon: resolution.courseCoordinate.longitude,
+                osmId: resolution.osmId,
                 externalCourseId: resolution.scorecardCourse.map { String($0.id) }
             )
             context.insert(course)

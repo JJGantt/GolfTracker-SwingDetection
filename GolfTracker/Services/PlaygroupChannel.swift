@@ -454,7 +454,8 @@ final class PlaygroupChannel: ObservableObject {
                 .value
 
             var byHole: [Int: Int] = [:]
-            for s in strokes where !s.isPenalty {
+            // Penalty strokes count toward the score.
+            for s in strokes {
                 byHole[s.holeNumber, default: 0] += 1
             }
 
@@ -512,7 +513,8 @@ extension PlaygroupChannel.ScorecardPlayer {
         colorHex: String
     ) async -> PlaygroupChannel.ScorecardPlayer {
         var strokesByHole: [Int: Int] = [:]
-        for s in round.strokes where !s.isPenalty {
+        // Penalty strokes count toward the score.
+        for s in round.strokes {
             strokesByHole[s.holeNumber, default: 0] += 1
         }
         let completed = Set(round.completedHolesArray)

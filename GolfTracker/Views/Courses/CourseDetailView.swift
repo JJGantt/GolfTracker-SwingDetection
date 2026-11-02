@@ -47,7 +47,10 @@ struct CourseDetailView: View {
             holeBreakdownSection
             roundsSection
             layoutSection
-            manageSection
+            // A shared (OSM) course is not the user's to rename or delete.
+            if !currentCourse.isShared {
+                manageSection
+            }
         }
         .navigationTitle(currentCourse.name)
         .navigationBarTitleDisplayMode(.inline)

@@ -1,58 +1,14 @@
 #!/usr/bin/env bash
 # What each kind of user may do with `holes` (migration 00053), asserted against
-# the live project with real sign-ins.
-#
-# Creates three throwaway email users and one throwaway course, and deletes them
-# all on exit. Needs the service-role key (to create and remove the users):
-# $SUPABASE_SERVICE_ROLE_KEY, or the logged-in supabase CLI, which it asks.
+# the live project with real sign-ins. Creates throwaway users and a throwaway
+# course and deletes them on exit (lib.sh).
 #
 #   supabase/tests/holes_rls.sh
 set -euo pipefail
-
-REF=oumnicnvayqrbfbljgyl
-U=https://$REF.supabase.co
-PK=sb_publishable_i0loB-AZw2qGokBJzHGSKA_VGgAgjBi
-SR=${SUPABASE_SERVICE_ROLE_KEY:-$(supabase projects api-keys --project-ref "$REF" -o json 2>/dev/null \
-    | jq -r '.[] | select(.name == "service_role") | .api_key')}
-[ -n "$SR" ] || { echo "no service-role key" >&2; exit 2; }
+. "$(dirname "$0")/lib.sh"
 
 # A full-tier OSM course with shared holes and none of anyone's own: Disney's Palm.
 SHARED_COURSE=ba5e825c-8161-4606-9e48-52d5cbac4f4f
-TAG=rls-$(date +%s)
-FAILS=0
-USERS=()
-TEMP_COURSE=""
-
-admin() { curl -s -H "apikey: $SR" -H "Authorization: Bearer $SR" -H 'Content-Type: application/json' "$@"; }
-# call <token> <curl args...>: prints "<body> <status>"
-call() { local t=$1; shift
-       curl -s -w ' %{http_code}' -H "apikey: $PK" -H "Authorization: Bearer $t" -H 'Content-Type: application/json' "$@"; }
-check() { # check <name> <actual> <expected>
-    if [ "$2" == "$3" ]; then echo "ok   $1"; else echo "FAIL $1: got [$2], want [$3]"; FAILS=$((FAILS + 1)); fi; }
-status() { echo "${1##* }"; }
-body() { echo "${1% *}"; }
-
-cleanup() {
-    [ -n "$TEMP_COURSE" ] && admin -X DELETE "$U/rest/v1/courses?id=eq.$TEMP_COURSE" >/dev/null
-    for id in ${USERS[@]+"${USERS[@]}"}; do admin -X DELETE "$U/auth/v1/admin/users/$id" >/dev/null; done
-    return 0
-}
-trap cleanup EXIT
-
-new_user() { # new_user <name>: creates the user, prints its id
-    admin -X POST "$U/auth/v1/admin/users" \
-        -d "{\"email\":\"$TAG-$1@example.com\",\"password\":\"Pw-$TAG-$1\",\"email_confirm\":true}" | jq -r .id
-}
-sign_in() { # sign_in <name>: prints an access token
-    curl -s -X POST "$U/auth/v1/token?grant_type=password" -H "apikey: $PK" -H 'Content-Type: application/json' \
-        -d "{\"email\":\"$TAG-$1@example.com\",\"password\":\"Pw-$TAG-$1\"}" | jq -r .access_token
-}
-A_ID=$(new_user a); USERS+=("$A_ID"); A_TOKEN=$(sign_in a)
-B_ID=$(new_user b); USERS+=("$B_ID"); B_TOKEN=$(sign_in b)
-C_ID=$(new_user c); USERS+=("$C_ID"); C_TOKEN=$(sign_in c)
-for t in "$A_TOKEN" "$B_TOKEN" "$C_TOKEN"; do
-    [ "${#t}" -gt 100 ] || { echo "could not sign in a test user" >&2; exit 2; }
-done
 
 rpc_upsert() { # rpc_upsert <token> <id|null> <course> <number> <lat>
     local id=$2; [ "$id" != null ] && id="\"$id\""
@@ -102,22 +58,31 @@ check "the owner deletes their own; the shared row stays" \
     "$(body "$(admin "$U/rest/v1/holes?course_id=eq.$SHARED_COURSE&number=eq.1&select=owner_id")" | jq -c 'map(.owner_id)')" '[null]'
 
 echo "-- deriving shared holes from OSM"
-TEMP_COURSE=$(uuidgen | tr 'A-Z' 'a-z')
 POLY=$(admin "$U/rest/v1/courses?id=eq.$SHARED_COURSE&select=osm_polygons" | jq -c '.[0].osm_polygons')
 N=$(echo "$POLY" | jq '.holes | length')
-jq -n --arg id "$TEMP_COURSE" --argjson p "$POLY" '{id: $id, name: "rls test", osm_polygons: $p}' \
-    | call "$C_TOKEN" -X POST "$U/rest/v1/courses" -d @- >/dev/null
-r=$(call "$C_TOKEN" -X POST "$U/rest/v1/rpc/derive_osm_course_holes" -d "{\"p_course_id\":\"$TEMP_COURSE\"}")
-check "derive adds one shared hole per OSM hole" "$(body "$r")" "$N"
+register() { # register <token> <id> <osm_id> <polygons json>
+    jq -n --arg id "$2" --argjson osm "$3" --argjson p "$4" \
+        '{p_id: $id, p_name: "rls test", p_center_lat: 30, p_center_lon: -81, p_osm_id: $osm,
+          p_external_course_id: null, p_osm_polygons: $p}' \
+        | call "$1" -X POST "$U/rest/v1/rpc/register_osm_course" -d @-
+}
+TEMP_COURSE=$(uuidgen | tr 'A-Z' 'a-z'); TEMP_COURSES+=("$TEMP_COURSE")
+register "$C_TOKEN" "$TEMP_COURSE" "$(fake_osm_id)" "$POLY" >/dev/null
+check "registering a course derives one shared hole per OSM hole" \
+    "$(admin "$U/rest/v1/holes?course_id=eq.$TEMP_COURSE&select=owner_id" | jq -c '[length, (map(.owner_id) | unique)]')" "[$N,[null]]"
 r=$(call "$C_TOKEN" -X POST "$U/rest/v1/rpc/derive_osm_course_holes" -d "{\"p_course_id\":\"$TEMP_COURSE\"}")
 check "derive again adds nothing" "$(body "$r")" 0
-check "derived holes are shared" \
-    "$(admin "$U/rest/v1/holes?course_id=eq.$TEMP_COURSE&select=owner_id" | jq -c '[length, (map(.owner_id) | unique)]')" "[$N,[null]]"
-admin -X DELETE "$U/rest/v1/holes?course_id=eq.$TEMP_COURSE" >/dev/null
 BROKEN=$(echo "$POLY" | jq -c '.holes[1].ref = "1"')   # a duplicate ref: order not determined
-admin -X PATCH "$U/rest/v1/courses?id=eq.$TEMP_COURSE" -d "{\"osm_polygons\":$BROKEN}" >/dev/null
-r=$(call "$C_TOKEN" -X POST "$U/rest/v1/rpc/derive_osm_course_holes" -d "{\"p_course_id\":\"$TEMP_COURSE\"}")
-check "derive adds nothing when OSM does not determine the order" "$(body "$r")" 0
+UNORDERED=$(uuidgen | tr 'A-Z' 'a-z'); TEMP_COURSES+=("$UNORDERED")
+register "$C_TOKEN" "$UNORDERED" "$(fake_osm_id)" "$BROKEN" >/dev/null
+check "a course whose OSM data does not determine the order gets no shared holes" \
+    "$(admin "$U/rest/v1/holes?course_id=eq.$UNORDERED&select=id" | jq length)" 0
+PERSONAL=$(uuidgen | tr 'A-Z' 'a-z')
+jq -n --arg id "$PERSONAL" --argjson p "$POLY" '{id: $id, name: "rls test", osm_polygons: $p}' \
+    | call "$C_TOKEN" -X POST "$U/rest/v1/courses" -d @- >/dev/null
+TEMP_COURSES+=("$PERSONAL")
+r=$(call "$C_TOKEN" -X POST "$U/rest/v1/rpc/derive_osm_course_holes" -d "{\"p_course_id\":\"$PERSONAL\"}")
+check "a personal course carrying OSM data gets no shared holes" "$(body "$r")" 0
 
 echo "-- signed out"
 r=$(curl -s -w ' %{http_code}' -H "apikey: $PK" "$U/rest/v1/holes?select=id&limit=1")
@@ -126,5 +91,4 @@ r=$(curl -s -w ' %{http_code}' -H "apikey: $PK" -H 'Content-Type: application/js
     -d "{\"p_id\":null,\"p_course_id\":\"$SHARED_COURSE\",\"p_number\":1,\"p_latitude\":1,\"p_longitude\":1,\"p_par\":null}")
 check "the publishable key alone writes nothing" "$(status "$r")" 401
 
-echo
-[ "$FAILS" -eq 0 ] && echo "all passed" || { echo "$FAILS failed"; exit 1; }
+finish

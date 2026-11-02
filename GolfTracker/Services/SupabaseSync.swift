@@ -100,13 +100,13 @@ final class SupabaseSync {
         }
     }
 
-    /// Mirrors local edits to a shared course row. Does NOT write
-    /// `created_by` or `osm_polygons` — those are owned by RoundResolver on
-    /// initial INSERT (see migration 00026). Updates here only carry
-    /// user-edit-able fields plus the geo centroid (which can be backfilled
-    /// from holes if missing).
+    /// Creates or updates one of the user's own courses. `created_by` is
+    /// filled in by the server (it defaults to the caller); `osm_polygons` is
+    /// only ever on shared courses, which this never writes.
     func upsertCourse(_ course: Course) {
-        guard currentUserId != nil else { return }
+        // A shared (OSM) course is written only by the server (migration
+        // 00055); the user's own courses are theirs to write.
+        guard currentUserId != nil, !course.isShared else { return }
         var body: [String: AnyCodableValue] = [
             "id": .string(course.id.uuidString),
             "name": .string(course.name),
@@ -118,7 +118,6 @@ final class SupabaseSync {
         ]
         if let lat = course.centerLat { body["center_lat"] = .double(lat) }
         if let lon = course.centerLon { body["center_lon"] = .double(lon) }
-        if let osmId = course.osmId { body["osm_id"] = .int(Int(osmId)) }
         upsert(table: "courses", values: body, onConflict: "id")
     }
 
@@ -151,6 +150,21 @@ final class SupabaseSync {
             "p_latitude": .double(latitude),
             "p_longitude": .double(longitude),
             "p_par": par.map(AnyCodableValue.int) ?? .null
+        ])
+    }
+
+    /// Fills in what a shared course's row lacks (today: its scorecard id),
+    /// through the server, which never overwrites a value already there.
+    func fillOSMCourse(id: UUID, name: String, center: CLLocationCoordinate2D,
+                       osmId: Int64, externalCourseId: String?) {
+        rpc("register_osm_course", table: "courses", params: [
+            "p_id": .string(id.uuidString),
+            "p_name": .string(name),
+            "p_center_lat": .double(center.latitude),
+            "p_center_lon": .double(center.longitude),
+            "p_osm_id": .int(Int(osmId)),
+            "p_external_course_id": externalCourseId.map(AnyCodableValue.string) ?? .null,
+            "p_osm_polygons": .null
         ])
     }
 
@@ -420,9 +434,11 @@ final class SupabaseSync {
         guard let uid = currentUserId else { completion(false); return }
         Task {
             var allOK = true
-            for table in ["rounds", "courses", "club_sets", "clubs", "club_types"] {
+            // Courses are owned through `created_by`; the rest through `user_id`.
+            for (table, owner) in [("rounds", "user_id"), ("courses", "created_by"), ("club_sets", "user_id"),
+                                   ("clubs", "user_id"), ("club_types", "user_id")] {
                 do {
-                    try await supabase.from(table).delete().eq("user_id", value: uid).execute()
+                    try await supabase.from(table).delete().eq(owner, value: uid).execute()
                 } catch {
                     dprint("[SupabaseSync] delete-all \(table) failed: \(error)")
                     allOK = false

@@ -137,15 +137,26 @@ final class StatsEngineTests: XCTestCase {
 
     // MARK: - Penalties
 
-    /// Two penalty strokes and nothing else: the hole has two strokes, so it
-    /// counts, and there is no shot to measure a distance from.
-    func testAHoleOfOnlyPenaltyStrokesComputesWithoutAShot() {
+    /// A penalty stroke is a stroke: it adds to the hole's score and to the round's.
+    func testPenaltyStrokesCountTowardTheScore() {
+        let c = course(pars: Array(repeating: 4, count: 9))
+        var holes = Array(repeating: parHole, count: 9)
+        holes[2] = [.drive(0), .penalty(150), .drive(250), .putt(395), .putt(399)]
+        let stats = compute([round(at: c, holes: holes)], courses: [c])
+        XCTAssertEqual(stats.scoring9.avgScoreVsPar, 1)
+        XCTAssertEqual(stats.perCourseStats[c.id.uuidString]?.holeStats[3]?.avgStrokes, 5)
+    }
+
+    /// Two penalty strokes and nothing else: the hole counts (two strokes) and
+    /// scores two, and there is no shot to measure a distance from.
+    func testAHoleOfOnlyPenaltyStrokesScoresItsPenalties() {
         let c = course(pars: Array(repeating: 4, count: 9))
         var holes = Array(repeating: parHole, count: 9)
         holes[4] = [.penalty(0), .penalty(10)]
         let stats = compute([round(at: c, holes: holes)], courses: [c])
         XCTAssertEqual(stats.scoring9.roundCount, 1)
-        XCTAssertEqual(stats.perCourseStats[c.id.uuidString]?.holeStats[5]?.avgStrokes, 0)
+        XCTAssertEqual(stats.scoring9.avgScoreVsPar, -2)
+        XCTAssertEqual(stats.perCourseStats[c.id.uuidString]?.holeStats[5]?.avgStrokes, 2)
     }
 
     // MARK: - Club distances

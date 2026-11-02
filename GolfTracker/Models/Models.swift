@@ -204,6 +204,10 @@ final class Course {
     /// Uniqueness-constrained server-side so two clients resolving the same
     /// OSM course collapse to the same row.
     var osmId: Int64?
+    /// A shared course (it has an OSM id): every user reads it and only
+    /// the server writes it (migration 00055). Any other course belongs to
+    /// the user who created it.
+    var isShared: Bool { osmId != nil }
     /// GolfCourseAPI's course id (when matched). Same uniqueness rule.
     /// Tee picker reads `course_tees` keyed by this; round-time scorecard
     /// data flows through `course_tee_holes`.

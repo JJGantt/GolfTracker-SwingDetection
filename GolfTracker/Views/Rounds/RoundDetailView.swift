@@ -20,7 +20,8 @@ struct RoundDetailView: View {
         round.strokes.filter { !$0.isPenalty }
     }
 
-    private var totalScore: Int { nonPenaltyStrokes.count }
+    /// Every stroke, penalties included: a penalty stroke is a stroke.
+    private var totalScore: Int { round.strokes.count }
 
     private var totalPar: Int? {
         let played = Set(round.strokes.map { $0.holeNumber })

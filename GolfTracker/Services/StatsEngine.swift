@@ -144,7 +144,9 @@ struct StatsEngine {
             guard qualifies else { continue }
 
             let roundPar = counted.reduce(0) { $0 + $1.par }
-            let roundStrokes = counted.reduce(0) { $0 + $1.nonPenalty.count }
+            // Penalty strokes are strokes: they count toward the score, as
+            // they already do toward the GIR test below.
+            let roundStrokes = counted.reduce(0) { $0 + $1.strokes.count }
             var roundPutts = 0
 
             for hole in counted {
@@ -161,7 +163,7 @@ struct StatsEngine {
                 // "which holes cost you strokes" breakdown.
                 var forCourse = holeHistoryByCourse[round.courseId] ?? [:]
                 var entry = forCourse[hole.number] ?? (par: hole.par, strokes: [], putts: [])
-                entry.strokes.append(hole.nonPenalty.count)
+                entry.strokes.append(hole.strokes.count)
                 entry.putts.append(putts.count)
                 forCourse[hole.number] = entry
                 holeHistoryByCourse[round.courseId] = forCourse

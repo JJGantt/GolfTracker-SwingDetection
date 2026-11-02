@@ -318,24 +318,30 @@ class DataStore: ObservableObject {
         }
     }
 
-    /// Server-side blob-detection cache write. Fire-and-forget; failures
-    /// are non-fatal — the in-memory + JSON cache still works.
+    /// Server-side blob-detection cache write, through
+    /// `store_course_blob_detection` (migration 00055): a shared course's row
+    /// is not the client's to update, and the function writes only the two
+    /// blob columns. Fire-and-forget; failures are non-fatal — the in-memory +
+    /// JSON cache still works.
     private func uploadBlobDetectionResults(courseId: UUID, data: CourseHoleDetectionData) {
-        struct UpdateRow: Encodable {
-            let blob_detection_results: CourseHoleDetectionData
-            let blob_detection_at: String
+        struct Params: Encodable {
+            let p_course_id: String
+            let p_results: CourseHoleDetectionData
         }
-        let row = UpdateRow(
-            blob_detection_results: data,
-            blob_detection_at: ISO8601DateFormatter().string(from: Date())
-        )
+        let params = Params(p_course_id: courseId.uuidString, p_results: data)
         Task { @MainActor in
             do {
-                try await SupabaseManager.shared
-                    .from("courses")
-                    .update(row)
-                    .eq("id", value: courseId.uuidString)
+                let stored: Bool = try await SupabaseManager.shared.client
+                    .rpc("store_course_blob_detection", params: params)
                     .execute()
+                    .value
+                guard stored else {
+                    ClientEventLogger.log("blob.serverCache.uploadError", detail: [
+                        "courseId": .string(courseId.uuidString),
+                        "error": .string("course not visible to this user")
+                    ])
+                    return
+                }
                 ClientEventLogger.log("blob.serverCache.uploaded", detail: [
                     "courseId": .string(courseId.uuidString),
                     "blobCount": .integer(data.blobs.count)
@@ -777,13 +783,14 @@ class DataStore: ObservableObject {
     }
 
     func deleteCourse(_ course: Course) {
+        guard !course.isShared else { return }
         courses.removeAll { $0.id == course.id }
         saveCourses()
         SupabaseSync.shared.deleteCourse(id: course.id)
     }
 
     func updateCourseInfo(_ course: Course, name: String, rating: Double?, slope: Int?) {
-        guard let index = courses.firstIndex(where: { $0.id == course.id }) else { return }
+        guard !course.isShared, let index = courses.firstIndex(where: { $0.id == course.id }) else { return }
         courses[index].name = name
         courses[index].rating = rating
         courses[index].slope = slope
@@ -1067,9 +1074,11 @@ class DataStore: ObservableObject {
             name: resolution.courseName,
             centerLat: resolution.courseCoordinate.latitude,
             centerLon: resolution.courseCoordinate.longitude,
+            osmId: resolution.osmId,
             osmPolygons: osmEncoded
         )
         if let osmEncoded { course.osmPolygons = osmEncoded }
+        if course.osmId == nil { course.osmId = resolution.osmId }
         if course.holes.isEmpty, resolution.tier == .full, let osm = resolution.osmData {
             course.holes = osm.holes
                 .compactMap { h -> Hole? in

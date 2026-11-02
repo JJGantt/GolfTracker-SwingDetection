@@ -158,6 +158,9 @@ final class RoundResolver {
         let isExistingCourse: Bool
         /// GolfCourseAPI scorecard. nil for courses the API doesn't have.
         let scorecardCourse: GCAPICourse?
+        /// The OSM id when this is a shared (OSM) course. Clients never write
+        /// a shared course's row; see migration 00055.
+        let osmId: Int64?
     }
 
     // MARK: - Entry point
@@ -427,7 +430,8 @@ final class RoundResolver {
                     osmData: nil,
                     tier: .none,
                     isExistingCourse: false,
-                    scorecardCourse: scorecard
+                    scorecardCourse: scorecard,
+                    osmId: nil
                 )
                 progress(.ready(resolution))
                 completion(resolution)
@@ -475,7 +479,8 @@ final class RoundResolver {
                     osmData: nil,
                     tier: .none,
                     isExistingCourse: false,
-                    scorecardCourse: nil
+                    scorecardCourse: nil,
+                    osmId: nil
                 )
                 progress(.ready(resolution))
                 completion(resolution)
@@ -548,9 +553,13 @@ final class RoundResolver {
                     return nil
                 }
             }()
-            _ = osmId  // currently unused; kept on the candidate for future polygon-refresh logic.
-
             self.resolveScorecard(courseName: courseName, near: coordinate, knownExternalCourseId: externalCourseId, courseId: courseId) { scorecard in
+                // A shared course registered before its scorecard was known
+                // gets it now. The server only fills what the row lacks.
+                if let osmId, externalCourseId == nil, let scorecard {
+                    SupabaseSync.shared.fillOSMCourse(id: courseId, name: courseName, center: coordinate,
+                                                      osmId: osmId, externalCourseId: String(scorecard.id))
+                }
                 let resolution = Resolution(
                     courseId: courseId,
                     courseName: courseName,
@@ -558,7 +567,8 @@ final class RoundResolver {
                     osmData: osmData,
                     tier: osmData?.tier ?? .none,
                     isExistingCourse: true,
-                    scorecardCourse: scorecard
+                    scorecardCourse: scorecard,
+                    osmId: osmId
                 )
                 progress(.ready(resolution))
                 completion(resolution)
@@ -616,7 +626,8 @@ final class RoundResolver {
                     osmData: osmData,
                     tier: tier,
                     isExistingCourse: false,
-                    scorecardCourse: scorecard
+                    scorecardCourse: scorecard,
+                    osmId: osmCandidate.osmId
                 )
                 progress(.ready(resolution))
                 completion(resolution)
@@ -624,49 +635,47 @@ final class RoundResolver {
         }
     }
 
-    /// One-shot INSERT of a shared courses row carrying everything resolved
-    /// for this physical course. Idempotent on `osm_id` (unique index from
-    /// migration 00026), so two users registering the same course at the same
-    /// time collapse to one row.
+    /// Registers the shared course row for an OSM course, with its OSM data,
+    /// through the server (`register_osm_course`, migration 00055): clients
+    /// cannot write a shared course themselves. Idempotent on `osm_id`; if the
+    /// course already exists the server fills in only what it lacks, derives
+    /// the shared holes, and returns that course's id.
     private func insertSharedCourse(id: UUID,
                                     name: String,
                                     centroid: CLLocationCoordinate2D,
                                     osmId: Int64,
                                     externalCourseId: String?,
                                     osmData: OSMCourseData?) {
-        struct Row: Encodable {
-            let id: String
-            let name: String
-            let center_lat: Double
-            let center_lon: Double
-            let osm_id: Int64
-            let external_course_id: String?
-            let osm_polygons: OSMCourseData?
+        struct Params: Encodable {
+            let p_id: String
+            let p_name: String
+            let p_center_lat: Double
+            let p_center_lon: Double
+            let p_osm_id: Int64
+            let p_external_course_id: String?
+            let p_osm_polygons: OSMCourseData?
         }
-        let row = Row(
-            id: id.uuidString,
-            name: name,
-            center_lat: centroid.latitude,
-            center_lon: centroid.longitude,
-            osm_id: osmId,
-            external_course_id: externalCourseId,
-            osm_polygons: osmData
+        let params = Params(
+            p_id: id.uuidString,
+            p_name: name,
+            p_center_lat: centroid.latitude,
+            p_center_lon: centroid.longitude,
+            p_osm_id: osmId,
+            p_external_course_id: externalCourseId,
+            p_osm_polygons: osmData
         )
         Task {
             do {
-                try await supabase.from("courses")
-                    .upsert(row, onConflict: "osm_id")
+                let registered: UUID = try await supabase.client
+                    .rpc("register_osm_course", params: params)
                     .execute()
+                    .value
                 ClientEventLogger.log("resolver.sharedCourseInserted", detail: [
                     "courseId": .string(id.uuidString),
+                    "registeredId": .string(registered.uuidString),
                     "osmId": .integer(Int(osmId)),
                     "externalCourseId": externalCourseId.map(AnyJSON.string) ?? .null
                 ])
-                // The course's shared holes are built by the server from
-                // the OSM data just stored, and only when it fixes the order.
-                if osmData != nil {
-                    SupabaseSync.shared.deriveOSMCourseHoles(courseId: id)
-                }
             } catch {
                 ClientEventLogger.log("resolver.sharedCourseInsertFailed", detail: [
                     "error": .string("\(error)")
