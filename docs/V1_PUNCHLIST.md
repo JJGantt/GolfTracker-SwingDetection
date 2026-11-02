@@ -143,7 +143,7 @@ and foreground. The mechanics are identical either way.
 ## S1 — Partial rounds poison every scoring stat  ⭐ biggest visible problem
 
 **Status:** DONE (2026-07-30)
-**Decision:** Jared — count a hole only with a couple of strokes on it; a round
+**Decision:** count a hole only with a couple of strokes on it; a round
 scores only as a real 9 or 18; everything else is bad data and gets thrown out.
 
 ### What shipped
@@ -259,7 +259,7 @@ lands to confirm it lands near ~30 putts/round.
 ## S3 — "Avg Shot Deviation" is structurally zero  ⭐ delete or rebuild
 
 **Status:** DONE (2026-07-30) — stat deleted AND the real algorithm shipped
-**Decision:** Jared — delete the fake stat, and implement the real swing-derived bearing.
+**Decision:** delete the fake stat, and implement the real swing-derived bearing.
 
 ### The stat is gone
 Removed from `StatsEngine` (accumulator, tee-shot block, aggregate, and the now-orphaned
@@ -302,7 +302,7 @@ records it. The detector's own pairing is the segmentation, so no phase detectio
 ## S4 — Club distances aren't ordered
 
 **Status:** DONE (2026-07-30)
-**Decision:** Jared — the ordering already exists as the declared type list. Use that,
+**Decision:** the ordering already exists as the declared type list. Use that,
 everywhere, not distance.
 
 ### What shipped
@@ -350,8 +350,8 @@ iOS **BUILD SUCCEEDED** · watchOS **BUILD SUCCEEDED**
 ## S4b — Bag order is user-sortable and persisted
 
 **Status:** DONE (2026-07-30)
-**Decision:** Jared — if a custom club type can be created, it has to be placeable
-wherever he wants. Make the list sortable and let that BE the canonical order.
+**Decision:** if a custom club type can be created, it has to be placeable
+wherever the user wants. Make the list sortable and let that BE the canonical order.
 
 ### The bug this exposed
 `ClubSetEditorView:106` already had `.onMove(perform: store.moveClubType)` — the
@@ -392,25 +392,6 @@ iOS **BUILD SUCCEEDED** · watchOS **BUILD SUCCEEDED** · migration pushed
 `sort_order` is NULL on all 16 rows until the app runs `loadClubTypes()` once — that's
 the backfill firing. Expected, not a gap.
 
-Observed order: 5-Iron, 6-Iron, Drive, 9-Iron, 7-Iron, 8-Iron, 4-Iron…
-
-`StatsView.swift:94` iterates `store.clubTypes` raw. `DataStore.loadClubTypes()`
-(line 577) is `context.fetch(FetchDescriptor<ClubTypeData>())` — **no sort
-descriptor**. `ClubTypeData` (`Models.swift`) has **no order field at all**.
-
-The club-selection screen looks right by accident: `ClubSetEditorView.swift:46` sorts
-by `averageDistance` descending, which yields Drive (245) → Putt (10).
-
-**Fix options:**
-- **Quick** — sort by `averageDistance` desc in `StatsView`, matching the editor.
-  One line. Breaks if a user sets a weird custom distance.
-- **Correct** — add a canonical `sortOrder` to `ClubTypeData` + a Supabase column,
-  seeded from `defaultClubTypes()` order, and use it in *every* club list (Stats,
-  editor, watch crown). Requires a migration and a backfill.
-
-Note the watch already claims type ordering at `WatchDataStore.swift:656` ("follow the
-type order from clubTypes (Drive → Putt)") but inherits the same unsorted source.
-
 ---
 
 ## S5 — GIR is a putt-proxy, not geometric
@@ -443,7 +424,7 @@ which matters at green edges.
 ## S6 — "Quick Start" and "Unlisted course" pollute By Course
 
 **Status:** DONE (2026-07-30)
-**Decision:** Jared — don't hide the placeholders, **remove the concept**. If a round starts
+**Decision:** don't hide the placeholders, **remove the concept**. If a round starts
 anywhere that isn't a course we identified, require a name. Name it once and it's that
 course from then on.
 
@@ -457,7 +438,7 @@ course from then on.
 2026-07-28  Quick Start  course_id=ac933a15
 ```
 `StatsEngine` groups By Course on `courseId`, so five taps rendered as five separate
-identically-titled entries. That's the duplicate Jared saw.
+identically-titled entries.
 
 ### What shipped
 No code path creates a placeholder-named course any more. All three that did now prompt:
@@ -496,29 +477,12 @@ UI: `CourseNamePromptView` (watch, routes to dictation/scribble/keyboard) and
   coords**, so they're re-findable and only need renaming; `Quick Start` and `H` have null
   coords. Renaming/merging them is a data edit — not done.
 
-Both are genuine `Course` rows:
-- `DataStore.startManualQuickRound()` (line 1049) creates a **brand new** course named
-  `"Quick Start"` **every single tap**
-- `RoundResolver.continueWith` `.manual` branch (line 425) creates `"Unlisted course"`
-
-So `perCourseStats` treats them as venues. In the live DB there are multiple distinct
-`Quick Start` and `Unlisted course` course rows.
-
-**Options:**
-- Filter them out of By Course by name (fragile but zero-risk)
-- Add an `isPlaceholder` flag to `Course` and filter on that (correct)
-- Reuse a single `Quick Start` course row instead of creating one per tap (fixes the
-  proliferation at the source, but merges unrelated rounds under one heading)
-
-Related: `MultiplayerView.swift:62` already treats Quick Start as a non-course
-("Multiplayer requires a recognized golf course").
-
 ---
 
 ## S7 — Course rows in Stats aren't tappable, and `CourseDetailView` is orphaned
 
 **Status:** DONE (2026-07-30)
-**Decision:** Jared — option 3: build a real course-stats screen, and move the hole-detection
+**Decision:** option 3: build a real course-stats screen, and move the hole-detection
 toggles into the hidden dev menu.
 
 ### The part that made this urgent
@@ -564,27 +528,12 @@ hole 15 (par 4)  +0.0
 ```
 iOS **BUILD SUCCEEDED** · watchOS **BUILD SUCCEEDED**
 
-`StatsView.courseHistorySection` (line 110) renders a plain `VStack` — no
-`NavigationLink`, no destination.
-
-**But the destination already exists and is fully built.** `CourseDetailView.swift`
-is complete. It is *unreachable dead code*:
-- Nothing anywhere instantiates `CourseListView` (verified by grep — zero call sites)
-- `CourseListView.swift:46` is the **only** thing that instantiates `CourseDetailView`
-
-The Courses tab was removed from `ContentView` (now Stats | Play | History | Settings,
-line 69-86) and stranded both files.
-
-**Decision needed:** wire course rows → `CourseDetailView` (revives ~2 files of
-existing work), build a purpose-made course-stats screen, or delete the dead files.
-Per the repo's own editing rule, dead code should not just sit there.
-
 ---
 
 ## S8 — What the "Rounds" count means
 
 **Status:** DONE (2026-07-31)
-**Decision:** Jared — History shows **every** round so partials can be found and deleted.
+**Decision:** History shows **every** round so partials can be found and deleted.
 The Overview count therefore stays "all rounds," matching what's browsable; `Scored` beside
 it carries the S1 rule. No change to the counter.
 
@@ -605,14 +554,6 @@ Realtime echo is belt-and-braces. Cascade takes strokes and targets, `Round.hole
   strokes reads "No shots recorded" in orange.
 
 Verified: 79 rounds on record, 41 with any stroke, 3 qualifying for scoring.
-
-Verified: 2026-07-05 and 2026-07-06, all `location_test_mode_enabled = false` except
-one. One legitimate **15-hole / 92-stroke** round, plus nine short restarts. Consistent
-with the blob-delivery race being debugged that weekend.
-
-Fixing S1 makes this display correctly on its own (9 of 10 drop out of scoring). The
-open question is whether "10 rounds" should keep counting *attempts*, or count only
-rounds that qualify for stats. Two different numbers, both defensible.
 
 ---
 
@@ -640,7 +581,7 @@ works.
 ## E1 — `hole_key` casing split
 
 **Status:** DONE (2026-07-30), with a data loss — see below
-**Decision:** Jared — normalize it; and after the incident, let Wekiva's map reseed
+**Decision:** normalize it; and after the incident, let Wekiva's map reseed
 naturally rather than reconstructing it.
 
 ### Correction to the original diagnosis
@@ -660,12 +601,10 @@ accumulate into a namespace the client never reads, and *that* would have lost r
   `authenticated`, the RPC is the only write path, so this is a true invariant rather than
   a convention. Verified live: an uppercase key sent to the RPC lands stored as lowercase.
 
-### ⚠️ Data loss during this migration
-The first version of the cleanup `DELETE` destroyed **all 944 Wekiva rows** instead of the
-472 duplicates. Operator precedence: `AND` binds tighter than `OR`, so the guard evaluated
-as `(A AND B) OR C`, and the two branches matched **opposite members of each pair** —
-branch one deleted the uppercase row, branch two deleted the newer (lowercase) row. Both
-rows satisfied a branch, so both went.
+### Data loss during this migration
+The first version of the cleanup `DELETE` removed all 944 Wekiva rows instead of the 472
+duplicates: `AND` binds tighter than `OR`, so the guard read as `(A AND B) OR C` and each
+branch matched a different member of every pair.
 
 Recoverable in principle and deliberately not recovered: `hole_height_cells` is derived
 from `round_altitude_readings`, which was untouched (6,354 rows; Wekiva's 510 readings
@@ -679,30 +618,6 @@ fresh database does the right thing. **Rule going forward: run a migration's DEL
 SELECT and check the row count before converting it.**
 
 iOS **BUILD SUCCEEDED** · watchOS **BUILD SUCCEEDED**
-
-```
-D133B094-045A-49FE-B4E5-ACD60614C7C1:*   472 cells   updated 2026-05-31
-d133b094-045a-49fe-b4e5-acd60614c7c1:*   472 cells   updated 2026-06-12
-```
-
-Same course (Wekiva Golf Club), two disjoint key namespaces.
-
-`ElevationFoldIn.holeKey` (`ElevationFoldIn.swift:60`) is
-`"\(courseId.uuidString):\(holeNumber)"`, and Swift's `uuidString` is **always
-uppercase**. So the lowercase rows were **not written by the app** — timestamps point
-at a re-solve/backfill run on 2026-06-12 that took UUIDs from the DB (Postgres emits
-lowercase) and wrote them back verbatim.
-
-**Consequence:** `HoleHeightCellCache.loadForCourse` (`HoleHeightCellCache.swift:33`)
-builds its `in("hole_key", values: keys)` from `uuidString`, so it only ever sees the
-uppercase half. Wekiva is running on half its accumulated elevation data, and the
-newer half is invisible.
-
-**Fix:** normalize `holeKey` to a single casing (lowercase is the safer target since
-Postgres and any future SQL-side job will emit it), migrate existing rows, and merge
-the two halves for Wekiva via the same weighted-merge the `upsert_hole_height_cells`
-RPC already implements. Also worth adding a case-insensitive guard so a future
-SQL-side backfill can't re-split it.
 
 ---
 
@@ -722,7 +637,7 @@ Current state, all shipped and working:
 - Round-end durable fold-in with retry-on-foreground
 
 It already self-hides when there's no solution (new course, no history, test mode,
-putter). **The fallback you described is the behavior that's actually implemented.**
+putter). **That fallback is the implemented behavior.**
 
 Given that, the v1 question is narrow: is the readout *accurate enough* on a
 first-visit course to leave enabled by default, or does it need a confidence gate
@@ -750,11 +665,11 @@ procedure.
 ## A2 — Screenshots
 
 **Status:** IN PROGRESS (2026-09-14)
-**Decision:** Jared: shots come from the simulators with staged data; stats shots approved;
+**Decision:** shots come from the simulators with staged data; stats shots approved;
 in-round shots on par 5s with water, targets on the far edge of the water, strokes with
 their trail; no near-green shots (the on-green readout doesn't show the app off).
 
-18 iPhone and 18 Apple Watch in-round shots are staged and waiting on Jared's pick, plus
+18 iPhone and 18 Apple Watch in-round shots are staged and waiting on the owner's pick, plus
 the approved stats screens. The method, the traps and the tooling
 (`StrokeSaverAlgorithms/tools/screenshots/`) are in `docs/APP_STORE.md`; the staged rounds stay in the database
 until the set is approved.
@@ -772,7 +687,7 @@ until the set is approved.
 - Review notes (optional, speeds review)
 - Marketing URL (optional, can reuse Support URL)
 
-Copy rule for anything written in Jared's voice: no em-dashes, no connector hyphens
+Copy rule for the listing text: no em-dashes, no connector hyphens
 (use parentheses), and no hedging or "known limitations" language in shipped
 user-facing text.
 
@@ -794,7 +709,7 @@ with them. That half needs hardware.
 ## A5 — Dead code sweep before submission
 
 **Status:** DONE (2026-07-31)
-**Decision:** Jared — delete the superseded detection modes provided `unifDetect` doesn't
+**Decision:** delete the superseded detection modes provided `unifDetect` doesn't
 lose anything. **Checked first: they were already gone.**
 
 ### The detection modes were a stale doc claim
@@ -820,11 +735,6 @@ location — and `HomeView.swift` deleted and deregistered from the pbxproj.
 `MotionParametersView`, `GreenFiltersView`, `TestModeView` (Settings → Developer),
 `ActiveRoundConfiguredView`, `ViewSettingsView`, `AddClubTypeView` all have real call sites.
 `CourseListView` was already removed in S7.
-
-Known dead as of this audit:
-- `CourseListView.swift` — zero call sites
-- `CourseDetailView.swift` — only referenced by the above (see S7; may get revived
-  instead of deleted)
 
 ---
 
@@ -852,7 +762,7 @@ reproduced, not inferred, unless marked.
 
 ## R1 — Starting a second phone round at a course crashes the phone
 
-**Status:** DONE (2026-09-14, `52e358f`) · **Decision:** Jared: fix it; rounds get their
+**Status:** DONE (2026-09-14, `52e358f`) · **Decision:** fix it; rounds get their
 own holes on the phone, as on the watch and in `round_holes`.
 
 **What shipped:** `startRound(for:)` builds copies (`Hole.roundCopy`, ids from
@@ -877,7 +787,7 @@ anyway, because each new round drains the holes out of the previous one.
 
 ## R2 — A course can end up with every hole twice on the phone, and then the phone and watch disagree about which hole you're on
 
-**Status:** DONE (2026-09-14, `52e358f`, `fcb7484`) · **Decision:** Jared: the phone and
+**Status:** DONE (2026-09-14, `52e358f`, `fcb7484`) · **Decision:** the phone and
 watch must never be able to disagree; state lives on the server.
 
 **What shipped:** the phone fetches a course the server already has instead of rebuilding
@@ -905,7 +815,7 @@ new holes. (Unverified: whether the phone's rejected hole upserts then sit in th
 
 ## R3 — Every hole change sends 19 concurrent writes, and opening Play overwrites the hole
 
-**Status:** DONE (2026-09-14, `fcb7484`, `559b36d`) · **Decision:** Jared: fix it.
+**Status:** DONE (2026-09-14, `fcb7484`, `559b36d`) · **Decision:** fix it.
 
 **What shipped:** a hole change is one PATCH (`updateCurrentHole`); `upsertRound` writes
 the round row only; each device's writes go through one ordered on-disk queue (merging
