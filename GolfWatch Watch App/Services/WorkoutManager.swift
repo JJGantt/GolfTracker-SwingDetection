@@ -1,11 +1,26 @@
 import Foundation
 import HealthKit
+import os
 
-class WorkoutManager: NSObject, ObservableObject {
+/// Main-actor state: every start, end and published flag changes on main, and
+/// each change is visible to the next line that reads it. HealthKit's
+/// callbacks arrive elsewhere and hop to main; a callback from a session that
+/// has since been replaced is ignored, so ending one session and starting the
+/// next never lets the old one's late `.ended` mark the new one inactive.
+@MainActor
+final class WorkoutManager: NSObject, ObservableObject {
     static let shared = WorkoutManager()
 
     let healthStore = HKHealthStore()
-    var session: HKWorkoutSession?
+    private(set) var session: HKWorkoutSession? {
+        didSet { Self.sessionStateMirror.withLock { [session] in $0 = session?.state ?? .notStarted } }
+    }
+
+    /// The current session's state, readable from any thread. The motion and
+    /// raw-accel queues ask whether the 800Hz stream can run, and the session
+    /// reference itself belongs to main.
+    private nonisolated static let sessionStateMirror = OSAllocatedUnfairLock<HKWorkoutSessionState>(initialState: .notStarted)
+    nonisolated static var currentSessionState: HKWorkoutSessionState { sessionStateMirror.withLock { $0 } }
 
     /// When set before `startWorkout()`, the session attaches an
     /// `HKLiveWorkoutBuilder` and calls `beginCollection` so it becomes an
@@ -53,15 +68,12 @@ class WorkoutManager: NSObject, ObservableObject {
     }
 
     func refreshAuthorizationStatus() {
-        let status = healthStore.authorizationStatus(for: workoutType)
-        DispatchQueue.main.async {
-            self.healthKitAuthorizationStatus = status
-        }
+        healthKitAuthorizationStatus = healthStore.authorizationStatus(for: workoutType)
     }
 
     // MARK: - Authorization
 
-    func requestAuthorization(completion: @escaping (Bool, Error?) -> Void) {
+    func requestAuthorization(completion: @escaping @MainActor (Bool, Error?) -> Void) {
         // Check if HealthKit is available on this device
         guard HKHealthStore.isHealthDataAvailable() else {
             dprint("⌚ [WorkoutManager] HealthKit is not available on this device")
@@ -76,47 +88,45 @@ class WorkoutManager: NSObject, ObservableObject {
 
         let typesToRead: Set<HKObjectType> = []
 
-        healthStore.requestAuthorization(toShare: typesToShare, read: typesToRead) { [weak self] success, error in
+        healthStore.requestAuthorization(toShare: typesToShare, read: typesToRead) { success, error in
             let errMsg = error?.localizedDescription ?? "none"
             dprint("⌚ [WorkoutManager] requestAuthorization completed: success=\(success) error=\(errMsg)")
-            self?.refreshAuthorizationStatus()
             // HealthKit calls back on a background queue, and every caller's
             // next step is `startWorkout()`, which publishes `isWorkoutActive`.
-            // Run from here, that SwiftUI update happened off the main thread
+            // Run from there, that SwiftUI update happened off the main thread
             // and UIKit aborted the app ("These UI changes are not supported
             // off the main thread") — on the watch 2026-05-08 (twice) and at
             // round start 2026-09-13. Hand the result over on main.
-            DispatchQueue.main.async { completion(success, error) }
+            Task { @MainActor in
+                WorkoutManager.shared.refreshAuthorizationStatus()
+                completion(success, error)
+            }
         }
     }
 
     // MARK: - Workout Session
 
     /// Recompute `keepAliveActive` from the current session + collection state.
-    /// Must be called on the main queue.
     private func refreshKeepAlive() {
         keepAliveActive = sessionState == .running && (!collectingRequested || isCollecting)
     }
 
-    /// Main thread only: it publishes `isWorkoutActive` synchronously so the
-    /// next caller sees it. A no-op while a session is already active — round
+    /// Publishes `isWorkoutActive` synchronously so the next caller sees it.
+    /// A no-op while a session is already active — round
     /// start asks twice (`SwingDetectionManager.startMonitoring` and
     /// `ActiveRoundView.handleViewAppear` each request authorization and start
     /// a workout in the callback), and the second call used to replace `session`
     /// with a new one, leaving the first running with nothing referencing it.
     func startWorkout() {
-        assert(Thread.isMainThread, "startWorkout publishes UI state; call it on main")
         guard !isWorkoutActive else {
             dprint("⌚ [WorkoutManager] startWorkout: session already active — ignoring")
             return
         }
         let collecting = useCollectingBuilder
         collectingRequested = collecting
-        DispatchQueue.main.async {
-            self.isCollecting = false
-            self.lastFailure = nil
-            self.refreshKeepAlive()
-        }
+        isCollecting = false
+        lastFailure = nil
+        refreshKeepAlive()
 
         // Golf rounds: builderless outdoor session (kept alive by the round's
         // continuous GPS, optical HR never spins up). Sensor capture: an actively
@@ -127,26 +137,28 @@ class WorkoutManager: NSObject, ObservableObject {
         configuration.locationType = collecting ? .indoor : .outdoor
 
         do {
-            session = try HKWorkoutSession(healthStore: healthStore, configuration: configuration)
-            session?.delegate = self
+            let newSession = try HKWorkoutSession(healthStore: healthStore, configuration: configuration)
+            newSession.delegate = self
+            session = newSession
 
             if collecting {
                 // beginCollection makes this a genuinely-running workout so CoreMotion
                 // and the 800Hz batched stream keep delivering wrist-down. The workout
                 // is discarded on end (endWorkout) so nothing lands in Health.
-                let builder = session?.associatedWorkoutBuilder()
-                builder?.dataSource = HKLiveWorkoutDataSource(healthStore: healthStore,
-                                                              workoutConfiguration: configuration)
+                let builder = newSession.associatedWorkoutBuilder()
+                builder.dataSource = HKLiveWorkoutDataSource(healthStore: healthStore,
+                                                             workoutConfiguration: configuration)
                 liveBuilder = builder
-                session?.startActivity(with: Date())
-                builder?.beginCollection(withStart: Date()) { [weak self] ok, err in
+                newSession.startActivity(with: Date())
+                builder.beginCollection(withStart: Date()) { ok, err in
                     dprint("⌚ [WorkoutManager] capture beginCollection ok=\(ok) err=\(err?.localizedDescription ?? "none")")
-                    DispatchQueue.main.async {
-                        self?.isCollecting = ok
-                        if !ok {
-                            self?.lastFailure = "beginCollection: \(err?.localizedDescription ?? "unknown")"
-                        }
-                        self?.refreshKeepAlive()
+                    let message = err?.localizedDescription ?? "unknown"
+                    Task { @MainActor in
+                        let manager = WorkoutManager.shared
+                        guard manager.session === newSession else { return }
+                        manager.isCollecting = ok
+                        if !ok { manager.lastFailure = "beginCollection: \(message)" }
+                        manager.refreshKeepAlive()
                     }
                 }
                 isWorkoutActive = true
@@ -154,19 +166,23 @@ class WorkoutManager: NSObject, ObservableObject {
             } else {
                 // Session alone keeps a round's app alive screen-off; no builder so the
                 // optical heart rate sensor is never activated.
-                session?.startActivity(with: Date())
+                newSession.startActivity(with: Date())
                 isWorkoutActive = true
                 dprint("⌚ [WorkoutManager] Workout session started (no data collection)")
             }
         } catch {
             dprint("⌚ [WorkoutManager] Failed to start workout: \(error.localizedDescription)")
-            DispatchQueue.main.async {
-                self.lastFailure = "session init: \(error.localizedDescription)"
-                self.refreshKeepAlive()
-            }
+            lastFailure = "session init: \(error.localizedDescription)"
+            refreshKeepAlive()
         }
     }
 
+    /// Ends the session and clears every flag before returning, so a
+    /// `startWorkout()` on the very next line starts a new one. These used to
+    /// clear on a later main-queue hop, and a start in between saw
+    /// `isWorkoutActive` still true and was ignored — then the hop cleared the
+    /// flags (and `session`) out from under the session that should have
+    /// started.
     func endWorkout() {
         guard let session = session else {
             dprint("⌚ [WorkoutManager] No active workout session to end")
@@ -175,32 +191,36 @@ class WorkoutManager: NSObject, ObservableObject {
         // Tear down + discard the capture builder (if any) so no stray workout is
         // saved to Health, then end the session.
         if let builder = liveBuilder {
-            builder.endCollection(withEnd: Date()) { [weak self] _, _ in
+            liveBuilder = nil
+            builder.endCollection(withEnd: Date()) { _, _ in
                 builder.discardWorkout()
-                self?.liveBuilder = nil
             }
         }
         session.end()
         useCollectingBuilder = false
         collectingRequested = false
         dprint("⌚ [WorkoutManager] Workout session ended")
-        DispatchQueue.main.async {
-            self.isWorkoutActive = false
-            self.isCollecting = false
-            self.session = nil
-            self.refreshKeepAlive()
-        }
+        isWorkoutActive = false
+        isCollecting = false
+        self.session = nil
+        sessionState = .ended
+        refreshKeepAlive()
     }
 }
 
 // MARK: - HKWorkoutSessionDelegate
 
 extension WorkoutManager: HKWorkoutSessionDelegate {
-    func workoutSession(_ workoutSession: HKWorkoutSession,
+    nonisolated func workoutSession(_ workoutSession: HKWorkoutSession,
                        didChangeTo toState: HKWorkoutSessionState,
                        from fromState: HKWorkoutSessionState,
                        date: Date) {
-        DispatchQueue.main.async {
+        let changed = ObjectIdentifier(workoutSession)
+        Task { @MainActor in
+            // A session already ended and replaced still reports its own
+            // transitions; they describe nothing current.
+            guard let current = self.session, ObjectIdentifier(current) == changed else { return }
+            Self.sessionStateMirror.withLock { $0 = toState }
             self.sessionState = toState
             self.refreshKeepAlive()
             switch toState {
@@ -228,12 +248,15 @@ extension WorkoutManager: HKWorkoutSessionDelegate {
         }
     }
 
-    func workoutSession(_ workoutSession: HKWorkoutSession,
+    nonisolated func workoutSession(_ workoutSession: HKWorkoutSession,
                        didFailWithError error: Error) {
         dprint("⌚ [WorkoutManager] HKWorkoutSession FAILED: \(error.localizedDescription)")
-        DispatchQueue.main.async {
+        let failed = ObjectIdentifier(workoutSession)
+        let message = error.localizedDescription
+        Task { @MainActor in
+            guard let current = self.session, ObjectIdentifier(current) == failed else { return }
             self.isWorkoutActive = false
-            self.lastFailure = "session failed: \(error.localizedDescription)"
+            self.lastFailure = "session failed: \(message)"
             self.refreshKeepAlive()
         }
     }

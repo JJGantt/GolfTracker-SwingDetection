@@ -134,7 +134,7 @@ struct SwingTestView: View {
                 Circle()
                     .fill(detector.isMonitoring ? Color.green : Color.gray)
                     .frame(width: 6, height: 6)
-                Text("pending \(detector.rejectedShapesSinceLastStroke.count)")
+                Text("pending \(detector.pendingRejectionCount)")
                     .font(.system(size: 10, design: .monospaced))
                     .foregroundColor(.secondary)
                 raw800Label

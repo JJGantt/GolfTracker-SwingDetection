@@ -32,7 +32,7 @@ extension SwingDetectionManager {
         if !CMBatchedSensorManager.isAccelerometerSupported {
             return true
         }
-        return WorkoutManager.shared.session?.state == .running
+        return WorkoutManager.currentSessionState == .running
     }
 
     /// 800Hz runs for the whole monitoring session — every round, and every
@@ -48,8 +48,9 @@ extension SwingDetectionManager {
     /// stopped (2026-08-31, 35 minutes with no vibration data). A dead stream
     /// is now recovered by the watchdog in `checkRaw800Liveness`.
     var shouldRunRawAccelHardware: Bool {
-        guard monitoringActive, rawAccelRunningForCapture else { return false }
-        switch detectionMode {
+        let state = engine
+        guard monitoringActive, state.rawAccelRunningForCapture else { return false }
+        switch state.detectionMode {
         case .unifDetect:
             return true
         case .off:
@@ -64,7 +65,7 @@ extension SwingDetectionManager {
         if shouldRunRawAccelHardware {
             guard canStartRawAccelNow else {
                 ClientEventLogger.log("rawAccel.sync.bail.canStartFalse", level: .diagnostic, detail: [
-                    "workoutSessionState": .string("\(WorkoutManager.shared.session?.state.rawValue ?? -1)"),
+                    "workoutSessionState": .string("\(WorkoutManager.currentSessionState.rawValue)"),
                     "isMonitoring": .bool(monitoringActive),
                     "isAccelerometerSupported": .bool(CMBatchedSensorManager.isAccelerometerSupported)
                 ])

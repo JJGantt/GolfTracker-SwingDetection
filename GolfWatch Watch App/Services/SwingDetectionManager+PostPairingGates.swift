@@ -13,7 +13,7 @@ extension SwingDetectionManager {
         // round) would erroneously upload these stale rejections as
         // false negatives.
         clearRejectionsSinceLastStroke()
-        let result = unifiedDetector.buildResult(from: shape)
+        let result = withDetector { $0.buildResult(from: shape) }
         fireSmartDetection(result: result, shapeEvent: shape,
             contactTV: gate.contactTV, contactN: gate.contactN,
             contactTVX: gate.contactTVX, contactTVY: gate.contactTVY, contactTVZ: gate.contactTVZ,

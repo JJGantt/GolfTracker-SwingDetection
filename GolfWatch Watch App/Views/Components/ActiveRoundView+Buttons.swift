@@ -88,7 +88,7 @@ extension ActiveRoundView {
                             }
                             VStack(alignment: .center, spacing: 1) {
                                 Text("\(swingDetector.stepsSinceLastDetectedSwing)")
-                                Text("\(swingDetector.rejectedShapesSinceLastStroke.count)")
+                                Text("\(swingDetector.pendingRejectionCount)")
                                 Text(altCm.map { String(format: "%+d", $0) } ?? "—")
                             }
                             .font(.system(size: 11, weight: .semibold, design: .monospaced))
