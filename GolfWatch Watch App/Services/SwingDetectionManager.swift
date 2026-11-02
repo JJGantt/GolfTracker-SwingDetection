@@ -560,9 +560,8 @@ private extension AlgorithmLog.Value {
 extension SwingDetectionManager {
     func phoneLog(_ message: String) {
         dprint("⌚ \(message)")
-        let payload: [String: Any] = ["type": "watchLog", "msg": message]
         if WCSession.default.isReachable {
-            WCSession.default.sendMessage(payload, replyHandler: nil, errorHandler: nil)
+            WCSession.default.sendMessage(WatchMessage.watchLog(message).dictionary, replyHandler: nil, errorHandler: nil)
         }
     }
 }

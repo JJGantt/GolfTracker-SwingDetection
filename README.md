@@ -173,7 +173,7 @@ Swing detection, swing direction and the elevation solver are kept in a private 
 - Course and hole data transfer
 - Connection status monitoring
 
-**Location**: `GolfTracker/Services/WatchConnectivityManager.swift`
+**Location**: `GolfTracker/Services/WatchConnectivityManager.swift` (message types in `WatchMessages.swift`)
 
 #### Watch App Features
 - Standalone round tracking

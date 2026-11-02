@@ -90,7 +90,7 @@ The suite is small on purpose (`~/CLAUDE.md`, "Tests: few"). Run before pushing:
 
 | What | Run | Covers |
 |---|---|---|
-| `Tests/AppLogic` | `cd Tests/AppLogic && swift test` | `GreenCandidates` (which greens a course offers, in what order), `StatsEngine` (what counts as a played hole and a scored round, score, putts, GIR, club distances), `RowVersion` (which copy of a synced row wins), `TimeWindowBuffer` (the watch's motion buffer) |
+| `Tests/AppLogic` | `cd Tests/AppLogic && swift test` | `GreenCandidates` (which greens a course offers, in what order), `StatsEngine` (what counts as a played hole and a scored round, score, putts, GIR, club distances), `RowVersion` (which copy of a synced row wins), `TimeWindowBuffer` (the watch's motion buffer), `WatchMessages` (every WatchConnectivity message and context entry still sends and reads the dictionaries older builds use) |
 | algorithms package | `cd StrokeSaverAlgorithms && swift test` | detector config install rules; the seed carries every `DetectorKey`; the labelled motion corpus replayed under the live thresholds keeps its precision and recall (protocol in the package's `docs/EVALUATION.md`, figures in its `docs/SWING_DETECTION.md`), and classifies the same when re-expressed as every other wrist/crown wear |
 | holes access | `supabase/tests/holes_rls.sh` | what each kind of user may do with `holes` (migrations 00053, 00055) |
 | detector config access | `supabase/tests/detector_config_rls.sh` | that a signed-in user gets the resolved thresholds through `detector_config_for_me`, their own row winning, and cannot read or write the table (migration 00058) |
@@ -436,8 +436,15 @@ server to the watch (`relayRow`, below). Otherwise WC carries: auth-session push
 flags, GPS test mode, and motion CSV file transfers. `sendRound` and `sendStrokes`
 do not exist.
 
-1. Add the sender to `WatchConnectivityManager.swift` alongside the existing
-   `sendAuthSession` / `sendHoleDetectionData` / `sendDevParam` methods
+1. Give the message its typed form in `WatchMessages.swift` (shared, both
+   targets): a `WatchMessage` case, with a `WatchPayload` struct when it carries
+   fields, or a `WatchContextKey` for a context entry. On the wire it is still a
+   plist dictionary (`type` plus the payload's fields, under the property
+   names), because the phone and the watch update separately and either may be
+   talking to an older build: never rename a key or change a value's type, and
+   make a new field optional. Then add the sender to `WatchConnectivityManager.swift`
+   alongside `sendAuthSession` / `sendHoleDetectionData` / `sendDevParam`, and a
+   case to `WatchMessagesTests`
 2. Update the receiving callback in `DataStore.setupWatchConnectivity()` (iOS) or
    `WatchDataStore.setupConnectivity()` (Watch)
 3. For a dev parameter specifically, no receiver work is needed — the generic
@@ -506,6 +513,7 @@ GolfTracker/                              # iOS app target
 │   ├── RowVersion.swift                  # Which copy of a synced row is newer (server updated_at, µs) — shared
 │   ├── OSMCourseService.swift            # Overpass + Supabase OSM cache (shared with watch target)
 │   ├── PlaygroupChannel.swift            # Realtime presence + other-player strokes + shared-scorecard fetch (shared)
+│   ├── WatchMessages.swift               # Typed WatchConnectivity messages and context keys, wire-compatible with older builds (shared)
 │   └── WatchConnectivityManager.swift    # iPhone-Watch communication
 └── Helpers/MapCalculations.swift         # Distance/bearing utilities
 

@@ -163,6 +163,8 @@
 		E7BC2CB128E5FF257164B2BA /* SwingDetectionManager+Monitoring.swift in Sources */ = {isa = PBXBuildFile; fileRef = D3E5114991433668AD29B001 /* SwingDetectionManager+Monitoring.swift */; };
 		73897E1A263B8709D694CE90 /* SwingDetectionManager+Detection.swift in Sources */ = {isa = PBXBuildFile; fileRef = E4261EFE3843A589A590D16A /* SwingDetectionManager+Detection.swift */; };
 		9C4BCC37FE9CB243D19A7E16 /* SwingDetectionManager+Strokes.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0155A4E249E346C94F7169B /* SwingDetectionManager+Strokes.swift */; };
+		C7AAC64F008850D2D0EC16FF /* WatchMessages.swift in Sources */ = {isa = PBXBuildFile; fileRef = 35466B01A050D98C660346A6 /* WatchMessages.swift */; };
+		8902CCA54401918EC3ECC6A7 /* WatchMessages.swift in Sources */ = {isa = PBXBuildFile; fileRef = 35466B01A050D98C660346A6 /* WatchMessages.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -321,6 +323,7 @@
 		D3E5114991433668AD29B001 /* SwingDetectionManager+Monitoring.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "SwingDetectionManager+Monitoring.swift"; sourceTree = "<group>"; };
 		E4261EFE3843A589A590D16A /* SwingDetectionManager+Detection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "SwingDetectionManager+Detection.swift"; sourceTree = "<group>"; };
 		F0155A4E249E346C94F7169B /* SwingDetectionManager+Strokes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "SwingDetectionManager+Strokes.swift"; sourceTree = "<group>"; };
+		35466B01A050D98C660346A6 /* WatchMessages.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchMessages.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -500,6 +503,7 @@
 			isa = PBXGroup;
 			children = (
 				6AD5EACD2EE47B0D00DDDCF0 /* WatchConnectivityManager.swift */,
+				35466B01A050D98C660346A6 /* WatchMessages.swift */,
 				6AB83CEF2EDFB78400CE341C /* LocationManager.swift */,
 				6AB83CE62EDFB19E00CE341C /* DataStore.swift */,
 				CABA947F884AEC8693217047 /* DataStore+Clubs.swift */,
@@ -773,6 +777,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				C7AAC64F008850D2D0EC16FF /* WatchMessages.swift in Sources */,
 				2AAF2DB012C5D0B0B0575F24 /* DataStore+DemoData.swift in Sources */,
 				70EECFEB5BF7519B2C41832D /* DataStore+Strokes.swift in Sources */,
 				E7D3905CA55409EAD6948B55 /* DataStore+Rounds.swift in Sources */,
@@ -852,6 +857,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				8902CCA54401918EC3ECC6A7 /* WatchMessages.swift in Sources */,
 				9C4BCC37FE9CB243D19A7E16 /* SwingDetectionManager+Strokes.swift in Sources */,
 				73897E1A263B8709D694CE90 /* SwingDetectionManager+Detection.swift in Sources */,
 				E7BC2CB128E5FF257164B2BA /* SwingDetectionManager+Monitoring.swift in Sources */,

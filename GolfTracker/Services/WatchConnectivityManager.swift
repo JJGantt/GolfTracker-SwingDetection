@@ -1,17 +1,6 @@
 import Foundation
 import WatchConnectivity
 
-/// Where the iPhone is with a blob analysis the watch asked for.
-enum HoleDetectionPhoneState: String {
-    /// Received while the app was not on screen. It runs on the next
-    /// foreground — MapKit snapshots do not render reliably in the background.
-    case queued
-    case running
-    /// Results are in the server cache (and on their way over WC).
-    case done
-    case failed
-}
-
 /// Now demoted: Round/Stroke/Club sync moves to the database (via Supabase
 /// Realtime + SwiftData local cache). The remaining responsibilities of this
 /// manager are the things that genuinely need a direct phone↔watch channel
@@ -28,6 +17,9 @@ enum HoleDetectionPhoneState: String {
 /// They're gone — swing data goes directly from the watch to Supabase
 /// (`swing_events` + `false_negative_groups`), so the phone is no longer
 /// in the loop for any motion artifact.
+///
+/// Every message and context entry has a typed form in `WatchMessages.swift`;
+/// this class only moves them.
 ///
 /// WCSession calls its delegate on a background queue. Each delegate method
 /// decodes what it received there and hands the result to main, where the
@@ -129,8 +121,7 @@ final class WatchConnectivityManager: NSObject, ObservableObject, @unchecked Sen
                 return
             }
             if WCSession.default.isReachable {
-                let message: [String: Any] = ["type": "holeDetectionData", "data": encoded]
-                WCSession.default.sendMessage(message, replyHandler: nil) { error in
+                WCSession.default.sendMessage(WatchMessage.holeDetectionData(encoded).dictionary, replyHandler: nil) { error in
                     dprint("📱 [iPhone] Failed to send hole detection data: \(error.localizedDescription)")
                     self.updateHoleDetectionContext(encoded)
                 }
@@ -156,8 +147,7 @@ final class WatchConnectivityManager: NSObject, ObservableObject, @unchecked Sen
         do {
             let encoded = try JSONEncoder().encode(settings)
             if WCSession.default.isReachable {
-                let message: [String: Any] = ["type": "holeFilterSettings", "data": encoded]
-                WCSession.default.sendMessage(message, replyHandler: nil) { error in
+                WCSession.default.sendMessage(WatchMessage.holeFilterSettings(encoded).dictionary, replyHandler: nil) { error in
                     dprint("⌚ [Watch] Failed to send hole filter settings: \(error.localizedDescription)")
                     self.updateHoleFilterSettingsContext(encoded)
                 }
@@ -174,6 +164,10 @@ final class WatchConnectivityManager: NSObject, ObservableObject, @unchecked Sen
     /// Every entry passes through `pendingContextEntries`, so a write before
     /// activation is held rather than dropped, and the first write after it
     /// (the activation flush, or anything later) carries everything held.
+    private func mergeIntoApplicationContext(_ key: WatchContextKey, _ value: Any) {
+        mergeIntoApplicationContext([key.rawValue: value])
+    }
+
     private func mergeIntoApplicationContext(_ newEntries: [String: Any]) {
         contextLock.lock()
         defer { contextLock.unlock() }
@@ -191,11 +185,11 @@ final class WatchConnectivityManager: NSObject, ObservableObject, @unchecked Sen
     }
 
     private func updateHoleDetectionContext(_ data: Data) {
-        mergeIntoApplicationContext(["holeDetectionData": data])
+        mergeIntoApplicationContext(.holeDetectionData, data)
     }
 
     private func updateHoleFilterSettingsContext(_ data: Data) {
-        mergeIntoApplicationContext(["holeFilterSettings": data])
+        mergeIntoApplicationContext(.holeFilterSettings, data)
     }
 
     // MARK: - Auth Session (iPhone → Watch)
@@ -204,28 +198,16 @@ final class WatchConnectivityManager: NSObject, ObservableObject, @unchecked Sen
     /// Pass nil to signal sign-out (Watch clears its stored session).
     /// Application context = latest-wins, persistent across the wire.
     func sendAuthSession(_ session: AuthSession?) {
-        if let session = session, let data = try? JSONEncoder().encode(session) {
-            mergeIntoApplicationContext(["authSession": data])
-            // Also sendMessage for live delivery — applicationContext is
-            // durable but coalescing-only and may not arrive immediately.
-            // The dual path matches the dev-param / debug-logging pattern.
-            guard WCSession.default.activationState == .activated,
-                  WCSession.default.isReachable else { return }
-            WCSession.default.sendMessage(
-                ["type": "authSession", "data": data],
-                replyHandler: nil,
-                errorHandler: nil
-            )
-        } else {
-            mergeIntoApplicationContext(["authSession": Data()])
-            guard WCSession.default.activationState == .activated,
-                  WCSession.default.isReachable else { return }
-            WCSession.default.sendMessage(
-                ["type": "authSession", "data": Data()],
-                replyHandler: nil,
-                errorHandler: nil
-            )
-        }
+        // An empty value is the sign-out sentinel, so a session that fails to
+        // encode signs the watch out, as it always has.
+        let data = session.flatMap { try? JSONEncoder().encode($0) } ?? Data()
+        mergeIntoApplicationContext(.authSession, data)
+        // Also sendMessage for live delivery — applicationContext is
+        // durable but coalescing-only and may not arrive immediately.
+        // The dual path matches the dev-param / debug-logging pattern.
+        guard WCSession.default.activationState == .activated,
+              WCSession.default.isReachable else { return }
+        WCSession.default.sendMessage(WatchMessage.authSession(data).dictionary, replyHandler: nil, errorHandler: nil)
     }
 
     /// Watch → iPhone: ask for the current auth session to be re-sent. Used
@@ -236,11 +218,7 @@ final class WatchConnectivityManager: NSObject, ObservableObject, @unchecked Sen
         #if os(watchOS)
         guard WCSession.default.activationState == .activated,
               WCSession.default.isReachable else { return }
-        WCSession.default.sendMessage(
-            ["type": "requestAuthSession"],
-            replyHandler: nil,
-            errorHandler: nil
-        )
+        WCSession.default.sendMessage(WatchMessage.requestAuthSession.dictionary, replyHandler: nil, errorHandler: nil)
         #endif
     }
 
@@ -249,14 +227,10 @@ final class WatchConnectivityManager: NSObject, ObservableObject, @unchecked Sen
     /// Mirror the ClientEventLogger on/off toggle to the watch so debug
     /// logging stays in sync across devices when toggled in iPhone Settings.
     func sendDebugLoggingEnabled(_ enabled: Bool) {
-        mergeIntoApplicationContext(["clientEventLoggerEnabled": enabled])
+        mergeIntoApplicationContext(.clientEventLoggerEnabled, enabled)
         guard WCSession.default.activationState == .activated,
               WCSession.default.isReachable else { return }
-        WCSession.default.sendMessage(
-            ["type": "clientEventLoggerEnabled", "value": enabled],
-            replyHandler: nil,
-            errorHandler: nil
-        )
+        WCSession.default.sendMessage(WatchMessage.clientEventLoggerEnabled(enabled).dictionary, replyHandler: nil, errorHandler: nil)
     }
 
     // MARK: - Dev parameter sync (iPhone → Watch)
@@ -278,14 +252,12 @@ final class WatchConnectivityManager: NSObject, ObservableObject, @unchecked Sen
         sendDevParamPayload([key: stringValue])
     }
     private func sendDevParamPayload(_ payload: [String: Any]) {
-        var contextPayload: [String: Any] = (WCSession.default.applicationContext["devParams"] as? [String: Any]) ?? [:]
+        var contextPayload: [String: Any] = (WCSession.default.applicationContext[WatchContextKey.devParams.rawValue] as? [String: Any]) ?? [:]
         for (k, v) in payload { contextPayload[k] = v }
-        mergeIntoApplicationContext(["devParams": contextPayload])
+        mergeIntoApplicationContext(.devParams, contextPayload)
         guard WCSession.default.activationState == .activated,
               WCSession.default.isReachable else { return }
-        var msg = payload
-        msg["type"] = "devParam"
-        WCSession.default.sendMessage(msg, replyHandler: nil) { _ in }
+        WCSession.default.sendMessage(WatchMessage.devParam(payload).dictionary, replyHandler: nil) { _ in }
     }
 
     // MARK: - Hole detection request (Watch → iPhone)
@@ -311,18 +283,13 @@ final class WatchConnectivityManager: NSObject, ObservableObject, @unchecked Sen
         // course would otherwise never arrive), and it is how the phone tells
         // a new request from this one arriving again: the live message and the
         // context both deliver it, and the context is re-read at every launch.
-        let request: [String: Any] = [
-            "courseId": courseId.uuidString,
-            "at": Date().timeIntervalSince1970
-        ]
-        mergeIntoApplicationContext(["holeDetectionRequest": request])
+        let request = HoleDetectionRequest(courseId: courseId, at: Date().timeIntervalSince1970)
+        mergeIntoApplicationContext(.holeDetectionRequest, request.dictionary)
         guard WCSession.default.isReachable else {
             onUndeliverable()
             return
         }
-        var message = request
-        message["type"] = "holeDetectionRequest"
-        WCSession.default.sendMessage(message, replyHandler: nil) { _ in onUndeliverable() }
+        WCSession.default.sendMessage(WatchMessage.holeDetectionRequest(request).dictionary, replyHandler: nil) { _ in onUndeliverable() }
     }
 
     /// iPhone → Watch progress on a watch-requested blob analysis. Sent both
@@ -330,16 +297,10 @@ final class WatchConnectivityManager: NSObject, ObservableObject, @unchecked Sen
     /// was not reachable at the moment still converges on the current state.
     func sendHoleDetectionStatus(courseId: UUID, state: HoleDetectionPhoneState) {
         guard WCSession.default.activationState == .activated else { return }
-        let payload: [String: Any] = [
-            "courseId": courseId.uuidString,
-            "state": state.rawValue,
-            "at": Date().timeIntervalSince1970
-        ]
-        mergeIntoApplicationContext(["holeDetectionStatus": payload])
+        let update = HoleDetectionStatusUpdate(courseId: courseId, state: state, at: Date().timeIntervalSince1970)
+        mergeIntoApplicationContext(.holeDetectionStatus, update.dictionary)
         if WCSession.default.isReachable {
-            var message = payload
-            message["type"] = "holeDetectionStatus"
-            WCSession.default.sendMessage(message, replyHandler: nil) { _ in }
+            WCSession.default.sendMessage(WatchMessage.holeDetectionStatus(update).dictionary, replyHandler: nil) { _ in }
         }
     }
 
@@ -347,27 +308,20 @@ final class WatchConnectivityManager: NSObject, ObservableObject, @unchecked Sen
     /// Runs a watch request once. Without the `at` check the phone re-ran the
     /// last requested course's analysis every time the watch's context was
     /// re-delivered, which happens on every watch launch.
-    private func handleHoleDetectionRequest(_ payload: [String: Any]) {
-        guard let idString = payload["courseId"] as? String,
-              let courseId = UUID(uuidString: idString) else { return }
-        let at = payload["at"] as? Double
+    private func handleHoleDetectionRequest(_ request: HoleDetectionRequest) {
         DispatchQueue.main.async {
-            if let at {
+            if let at = request.at {
                 guard at != UserDefaults.standard.double(forKey: Self.lastHoleDetectionRequestKey) else { return }
                 UserDefaults.standard.set(at, forKey: Self.lastHoleDetectionRequestKey)
             }
-            self.onReceiveHoleDetectionRequest?(courseId)
+            self.onReceiveHoleDetectionRequest?(request.courseId)
         }
     }
     #endif
 
-    private func handleHoleDetectionStatus(_ payload: [String: Any]) {
-        guard let idString = payload["courseId"] as? String,
-              let courseId = UUID(uuidString: idString),
-              let raw = payload["state"] as? String,
-              let state = HoleDetectionPhoneState(rawValue: raw) else { return }
+    private func handleHoleDetectionStatus(_ update: HoleDetectionStatusUpdate) {
         DispatchQueue.main.async {
-            self.onReceiveHoleDetectionStatus?(courseId, state)
+            self.onReceiveHoleDetectionStatus?(update.courseId, update.state)
         }
     }
 
@@ -382,7 +336,7 @@ final class WatchConnectivityManager: NSObject, ObservableObject, @unchecked Sen
         #if os(iOS)
         let session = WCSession.default
         guard session.activationState == .activated, session.isPaired, session.isWatchAppInstalled else { return }
-        let payload: [String: Any] = ["type": "roundRow", "table": table, "kind": kind, "record": recordJSON]
+        let payload = WatchMessage.roundRow(RoundRowRelay(table: table, kind: kind, record: recordJSON)).dictionary
         if session.isReachable {
             session.sendMessage(payload, replyHandler: nil) { _ in session.transferUserInfo(payload) }
         } else {
@@ -404,15 +358,11 @@ final class WatchConnectivityManager: NSObject, ObservableObject, @unchecked Sen
     /// updates application context (latest-wins, delivered on next watch
     /// app launch if the message didn't make it). Belt-and-suspenders.
     func sendTestModeState(enabled: Bool, lat: Double?, lon: Double?) {
-        var payload: [String: Any] = ["enabled": enabled]
-        if let lat = lat { payload["lat"] = lat }
-        if let lon = lon { payload["lon"] = lon }
-        mergeIntoApplicationContext(["testModeState": payload])
+        let state = TestModeState(enabled: enabled, lat: lat, lon: lon)
+        mergeIntoApplicationContext(.testModeState, state.dictionary)
         guard WCSession.default.activationState == .activated else { return }
         if WCSession.default.isReachable {
-            var message = payload
-            message["type"] = "testModeState"
-            WCSession.default.sendMessage(message, replyHandler: nil) { _ in }
+            WCSession.default.sendMessage(WatchMessage.testModeState(state).dictionary, replyHandler: nil) { _ in }
         }
     }
 }
@@ -424,111 +374,89 @@ extension WatchConnectivityManager: WCSessionDelegate {
     // MARK: Receiving Messages (Immediate)
 
     func session(_ session: WCSession, didReceiveMessage message: [String : Any]) {
-        // Hole detection data (iPhone → Watch)
-        if let type = message["type"] as? String, type == "holeDetectionData",
-           let data = message["data"] as? Data,
-           let detectionData = try? JSONDecoder().decode(CourseHoleDetectionData.self, from: data) {
+        guard let received = WatchMessage(message) else { return }
+        switch received {
+        case .holeDetectionData(let data):
+            // Hole detection data (iPhone → Watch)
+            guard let detectionData = try? JSONDecoder().decode(CourseHoleDetectionData.self, from: data) else { return }
             DispatchQueue.main.async {
                 self.onReceiveHoleDetectionData?(detectionData)
             }
-            return
-        }
 
-        // Watch-side diagnostic logs forwarded to phone console
-        if let type = message["type"] as? String, type == "watchLog",
-           let msg = message["msg"] as? String {
+        case .watchLog(let msg):
+            // Watch-side diagnostic logs forwarded to phone console
             dprint("⌚→📱 \(msg)")
-            return
-        }
 
-        // Hole filter settings (Watch → iPhone)
-        if let type = message["type"] as? String, type == "holeFilterSettings",
-           let data = message["data"] as? Data,
-           let settings = try? JSONDecoder().decode(HoleDetectionFilterSettings.self, from: data) {
+        case .holeFilterSettings(let data):
+            // Hole filter settings (Watch → iPhone)
+            guard let settings = try? JSONDecoder().decode(HoleDetectionFilterSettings.self, from: data) else { return }
             DispatchQueue.main.async {
                 self.onReceiveHoleFilterSettings?(settings)
             }
-            return
-        }
 
-        // Test mode state (iPhone → Watch). Uses sendMessage for sub-second
-        // delivery while watch is reachable; applicationContext catches the
-        // not-reachable / cold-launch case.
         #if os(watchOS)
-        if let type = message["type"] as? String, type == "testModeState" {
-            applyTestModePayload(message)
-            return
-        }
-        if let type = message["type"] as? String, type == "holeDetectionStatus" {
-            handleHoleDetectionStatus(message)
-            return
-        }
-        if let type = message["type"] as? String, type == "roundRow" {
-            receiveRoundRow(message)
-            return
-        }
-        #endif
+        case .testModeState(let state):
+            // Test mode state (iPhone → Watch). Uses sendMessage for sub-second
+            // delivery while watch is reachable; applicationContext catches the
+            // not-reachable / cold-launch case.
+            applyTestModeState(state)
 
-        // Hole detection request (Watch → iPhone). iPhone runs the
-        // analyzer for the named course and ships results back through
-        // the existing sendHoleDetectionData flow.
-        #if os(iOS)
-        if let type = message["type"] as? String, type == "holeDetectionRequest" {
-            handleHoleDetectionRequest(message)
-            return
-        }
-        #endif
+        case .holeDetectionStatus(let update):
+            handleHoleDetectionStatus(update)
 
-        // Debug logging toggle from iPhone — apply to watch's UserDefaults
-        // so ClientEventLogger.enabled tracks the iPhone setting.
-        #if os(watchOS)
-        if let type = message["type"] as? String, type == "clientEventLoggerEnabled",
-           let value = message["value"] as? Bool {
+        case .roundRow(let row):
+            receiveRoundRow(row)
+
+        case .clientEventLoggerEnabled(let value):
+            // Debug logging toggle from iPhone — apply to watch's UserDefaults
+            // so ClientEventLogger.enabled tracks the iPhone setting.
             DispatchQueue.main.async {
                 ClientEventLogger.setEnabled(value)
             }
-            return
-        }
 
-        // Dev-section parameter mirror — write to local UserDefaults so the
-        // consumer (AutoAdvanceMonitor / SwingDetectionManager / etc.) picks
-        // up the new value on its next read. Also poke the SwingDetectionManager
-        // @Published vars directly when they're the ones backing the value
-        // (otherwise the UserDefaults write wouldn't reach the live object).
-        if let type = message["type"] as? String, type == "devParam" {
+        case .devParam(let params):
+            // Dev-section parameter mirror — write to local UserDefaults so the
+            // consumer (AutoAdvanceMonitor / SwingDetectionManager / etc.) picks
+            // up the new value on its next read. Also poke the SwingDetectionManager
+            // @Published vars directly when they're the ones backing the value
+            // (otherwise the UserDefaults write wouldn't reach the live object).
             // A received plist dictionary: immutable from here on, so handing
             // it to main is safe although `Any` cannot say so.
-            nonisolated(unsafe) let message = message
+            nonisolated(unsafe) let params = params
             DispatchQueue.main.async {
-                for (k, v) in message where k != "type" {
+                for (k, v) in params {
                     UserDefaults.standard.set(v, forKey: k)
                     self.applyDevParamToLiveObjects(key: k, value: v)
                 }
             }
-            return
-        }
 
-        // Live-delivery auth session push from iPhone — same payload as the
-        // applicationContext path but no coalescing delay. Used by the
-        // watch's auto-recovery flow when a Supabase call returned 401.
-        if let type = message["type"] as? String, type == "authSession",
-           let data = message["data"] as? Data {
+        case .authSession(let data):
+            // Live-delivery auth session push from iPhone — same payload as the
+            // applicationContext path but no coalescing delay. Used by the
+            // watch's auto-recovery flow when a Supabase call returned 401.
             receiveAuthSessionData(data)
-            return
-        }
         #endif
 
-        // Watch asks iPhone to re-send current AuthSession. Triggered by
-        // the watch's recovery path when its Supabase calls 401. iPhone
-        // forwards whatever it has via the existing dual-channel push.
         #if os(iOS)
-        if let type = message["type"] as? String, type == "requestAuthSession" {
+        case .holeDetectionRequest(let request):
+            // Hole detection request (Watch → iPhone). iPhone runs the
+            // analyzer for the named course and ships results back through
+            // the existing sendHoleDetectionData flow.
+            handleHoleDetectionRequest(request)
+
+        case .requestAuthSession:
+            // Watch asks iPhone to re-send current AuthSession. Triggered by
+            // the watch's recovery path when its Supabase calls 401. iPhone
+            // forwards whatever it has via the existing dual-channel push.
             DispatchQueue.main.async {
                 self.sendAuthSession(AuthManager.shared.currentSession)
             }
-            return
-        }
         #endif
+
+        default:
+            // A message meant for the other device.
+            break
+        }
     }
 
     // MARK: Receiving Application Context (Background)
@@ -548,14 +476,16 @@ extension WatchConnectivityManager: WCSessionDelegate {
     private func handleApplicationContext(_ applicationContext: [String: Any]) {
         guard !applicationContext.isEmpty else { return }
 
+        func value(_ key: WatchContextKey) -> Any? { applicationContext[key.rawValue] }
+
         // Hole detection data
-        if let data = applicationContext["holeDetectionData"] as? Data,
+        if let data = value(.holeDetectionData) as? Data,
            let detectionData = try? JSONDecoder().decode(CourseHoleDetectionData.self, from: data) {
             DispatchQueue.main.async { self.onReceiveHoleDetectionData?(detectionData) }
         }
 
         // Hole filter settings
-        if let data = applicationContext["holeFilterSettings"] as? Data,
+        if let data = value(.holeFilterSettings) as? Data,
            let settings = try? JSONDecoder().decode(HoleDetectionFilterSettings.self, from: data) {
             DispatchQueue.main.async { self.onReceiveHoleFilterSettings?(settings) }
         }
@@ -563,26 +493,28 @@ extension WatchConnectivityManager: WCSessionDelegate {
         // Auth session mirrored from iPhone (Watch-only consumer).
         // Empty Data == explicit sign-out sentinel; absent key == no change.
         #if os(watchOS)
-        if let data = applicationContext["authSession"] as? Data {
+        if let data = value(.authSession) as? Data {
             receiveAuthSessionData(data)
         }
 
         // Test mode state mirrored from iPhone. Fires on app launch with
         // the latest state since applicationContext is latest-wins persistent.
-        if let payload = applicationContext["testModeState"] as? [String: Any] {
-            applyTestModePayload(payload)
+        if let payload = value(.testModeState) as? [String: Any],
+           let state = TestModeState(dictionary: payload) {
+            applyTestModeState(state)
         }
 
         // Latest phone-side state of a requested blob analysis, for a watch
         // that was not reachable when the live message went out.
-        if let payload = applicationContext["holeDetectionStatus"] as? [String: Any] {
-            handleHoleDetectionStatus(payload)
+        if let payload = value(.holeDetectionStatus) as? [String: Any],
+           let update = HoleDetectionStatusUpdate(dictionary: payload) {
+            handleHoleDetectionStatus(update)
         }
         #endif
 
         // Watch build number, pushed by the watch on activation.
         #if os(iOS)
-        if let build = applicationContext["watchBuild"] as? String {
+        if let build = value(.watchBuild) as? String {
             DispatchQueue.main.async { self.watchBuild = build }
         }
         #endif
@@ -591,17 +523,18 @@ extension WatchConnectivityManager: WCSessionDelegate {
         // delivered when watch wasn't reachable at the time of the original
         // sendMessage. iPhone-only consumer.
         #if os(iOS)
-        if let payload = applicationContext["holeDetectionRequest"] as? [String: Any] {
-            handleHoleDetectionRequest(payload)
+        if let payload = value(.holeDetectionRequest) as? [String: Any],
+           let request = HoleDetectionRequest(dictionary: payload) {
+            handleHoleDetectionRequest(request)
         }
         #endif
 
         // Debug logging toggle mirrored from iPhone via applicationContext
         // (latest-wins, persists across watch app launches).
         #if os(watchOS)
-        if let value = applicationContext["clientEventLoggerEnabled"] as? Bool {
+        if let enabled = value(.clientEventLoggerEnabled) as? Bool {
             DispatchQueue.main.async {
-                ClientEventLogger.setEnabled(value)
+                ClientEventLogger.setEnabled(enabled)
             }
         }
 
@@ -609,7 +542,7 @@ extension WatchConnectivityManager: WCSessionDelegate {
         // Only changed ones: this dictionary rides along with every context
         // the phone sends (an hourly token refresh included), and applying
         // `detectionMode` resets the swing detector to idle.
-        if let received = applicationContext["devParams"] as? [String: Any] {
+        if let received = value(.devParams) as? [String: Any] {
             // Immutable plist values; see the devParam message above.
             nonisolated(unsafe) let params = received
             DispatchQueue.main.async {
@@ -656,16 +589,12 @@ extension WatchConnectivityManager: WCSessionDelegate {
     #endif
 
     #if os(watchOS)
-    /// Decode a test-mode payload (from either applicationContext or
-    /// sendMessage) and forward to TestModeService. `enabled` is required;
-    /// `lat`/`lon` are optional (when test mode is being disabled they
-    /// won't be present).
-    private func applyTestModePayload(_ payload: [String: Any]) {
-        let enabled = (payload["enabled"] as? Bool) ?? false
-        let lat = payload["lat"] as? Double
-        let lon = payload["lon"] as? Double
+    /// Forward a test-mode state (from either applicationContext or
+    /// sendMessage) to TestModeService. `lat`/`lon` are absent when test mode
+    /// is being disabled.
+    private func applyTestModeState(_ state: TestModeState) {
         DispatchQueue.main.async {
-            TestModeService.shared.applyFromWatchConnectivity(enabled: enabled, lat: lat, lon: lon)
+            TestModeService.shared.applyFromWatchConnectivity(enabled: state.enabled, lat: state.lat, lon: state.lon)
         }
     }
     #endif
@@ -674,17 +603,15 @@ extension WatchConnectivityManager: WCSessionDelegate {
 
     func session(_ session: WCSession, didReceiveUserInfo userInfo: [String : Any] = [:]) {
         #if os(watchOS)
-        receiveRoundRow(userInfo)
+        if case .roundRow(let row) = WatchMessage(userInfo) {
+            receiveRoundRow(row)
+        }
         #endif
     }
 
     #if os(watchOS)
-    private func receiveRoundRow(_ payload: [String: Any]) {
-        guard payload["type"] as? String == "roundRow",
-              let table = payload["table"] as? String,
-              let kind = payload["kind"] as? String,
-              let record = payload["record"] as? Data else { return }
-        DispatchQueue.main.async { self.onReceiveRoundRow?(table, kind, record) }
+    private func receiveRoundRow(_ row: RoundRowRelay) {
+        DispatchQueue.main.async { self.onReceiveRoundRow?(row.table, row.kind, row.record) }
     }
     #endif
 
@@ -723,7 +650,7 @@ extension WatchConnectivityManager: WCSessionDelegate {
             // Report which build the watch is actually running, so the phone's
             // dev menu can show the skew. This write also flushes anything
             // merged before activation.
-            self.mergeIntoApplicationContext(["watchBuild": Self.localBuild])
+            self.mergeIntoApplicationContext(.watchBuild, Self.localBuild)
             #else
             self.mergeIntoApplicationContext([:])
             #endif
