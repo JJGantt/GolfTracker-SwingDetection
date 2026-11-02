@@ -965,6 +965,14 @@ final class SwingDetectionManager: NSObject, ObservableObject, @unchecked Sendab
         // magnetometer is uncalibrated — `attitude` is still produced; the
         // calibration accuracy can be inspected via the workout's heading
         // service if we need it.
+        startDeviceMotionUpdates()
+    }
+
+    /// Not main-actor on purpose. A closure written inside a main-actor
+    /// method is itself main-actor, and CoreMotion's handler type is not
+    /// `@Sendable`, so the compiler would let it through and the runtime would
+    /// trap on the first sample delivered to `motionQueue`.
+    private nonisolated func startDeviceMotionUpdates() {
         motionManager.startDeviceMotionUpdates(using: .xMagneticNorthZVertical, to: motionQueue) { [weak self] data, error in
             guard let self = self, let data = data else { return }
             self.processDeviceMotion(data)

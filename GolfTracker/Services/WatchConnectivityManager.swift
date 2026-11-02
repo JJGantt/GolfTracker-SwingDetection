@@ -300,7 +300,8 @@ final class WatchConnectivityManager: NSObject, ObservableObject, @unchecked Sen
     /// in the application context so the phone picks it up on its next launch,
     /// but nothing will happen until then, and the watch has to be able to say
     /// so rather than wait on an answer that is not coming.
-    func sendHoleDetectionRequest(courseId: UUID, onUndeliverable: @escaping () -> Void) {
+    /// `onUndeliverable` may run on WatchConnectivity's queue.
+    func sendHoleDetectionRequest(courseId: UUID, onUndeliverable: @escaping @Sendable () -> Void) {
         guard WCSession.default.activationState == .activated else {
             onUndeliverable()
             return
