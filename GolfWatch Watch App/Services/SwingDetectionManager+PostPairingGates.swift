@@ -37,12 +37,15 @@ extension SwingDetectionManager {
         // hasBatched controls whether DM-failed shapes get the 800Hz override
         // pass: whenever the stream is running, which is the whole session.
         let hasBatched = isBatchedAccelRunning
+        // One threshold set for the whole check, so a config install mid-check
+        // cannot judge a shape against a mix of old and new values.
+        let thresholds = DetectorParameters.snapshot()
 
         var remaining: [UnifiedShapeEvent] = []
         for shape in pendingUnifShapes {
             let fsPeakT = shape.fsPeakT
             let bsTopT = shape.bsTopT
-            let windowEnd = PostPairingGates.windowEnd(fsPeakT: fsPeakT)
+            let windowEnd = PostPairingGates.windowEnd(fsPeakT: fsPeakT, thresholds: thresholds)
             let baselineStart = PostPairingGates.baselineStart(bsTopT: bsTopT, fsPeakT: fsPeakT)
 
             if currentMotionTime < windowEnd {
@@ -73,7 +76,8 @@ extension SwingDetectionManager {
                 bsTopT: bsTopT, fsPeakT: fsPeakT, windowEnd: windowEnd,
                 fsPeakRotMag: shape.fsPeakRotMag,
                 bsPeakRotMag: sqrt(shape.bsPeakRotX * shape.bsPeakRotX + shape.bsPeakRotY * shape.bsPeakRotY + shape.bsPeakRotZ * shape.bsPeakRotZ),
-                prePeakT: shape.prePeakT
+                prePeakT: shape.prePeakT,
+                thresholds: thresholds
             )
 
             if gate.passes {
@@ -99,12 +103,13 @@ extension SwingDetectionManager {
     func checkPendingUnifShapes(currentRawTime: TimeInterval) {
         eventsLock.lock()
         guard !pendingUnifShapesDMFailed.isEmpty else { eventsLock.unlock(); return }
+        let thresholds = DetectorParameters.snapshot()
 
         var remaining: [UnifiedShapeEvent] = []
         for shape in pendingUnifShapesDMFailed {
             let fsPeakT = shape.fsPeakT
             let bsTopT = shape.bsTopT
-            let windowEnd = PostPairingGates.windowEnd(fsPeakT: fsPeakT)
+            let windowEnd = PostPairingGates.windowEnd(fsPeakT: fsPeakT, thresholds: thresholds)
             let baselineStart = PostPairingGates.baselineStart(bsTopT: bsTopT, fsPeakT: fsPeakT)
 
             if currentRawTime < windowEnd {
@@ -145,7 +150,8 @@ extension SwingDetectionManager {
                 bsTopT: bsTopT, fsPeakT: fsPeakT, windowEnd: windowEnd,
                 fsPeakRotMag: shape.fsPeakRotMag,
                 bsPeakRotMag: sqrt(shape.bsPeakRotX * shape.bsPeakRotX + shape.bsPeakRotY * shape.bsPeakRotY + shape.bsPeakRotZ * shape.bsPeakRotZ),
-                prePeakT: shape.prePeakT
+                prePeakT: shape.prePeakT,
+                thresholds: thresholds
             )
 
             if gate.passes {
@@ -177,13 +183,14 @@ extension SwingDetectionManager {
         guard hasUnifShapes || hasDMFailed else { eventsLock.unlock(); return }
 
         let staleThreshold: TimeInterval = 3.0  // seconds past window end before we give up
+        let thresholds = DetectorParameters.snapshot()
         var expiredCount = 0
 
         // Expire pending unified shapes (waiting for DM check — shouldn't happen since DM always runs)
         if hasUnifShapes {
             var remaining: [UnifiedShapeEvent] = []
             for shape in pendingUnifShapes {
-                let windowEnd = PostPairingGates.windowEnd(fsPeakT: shape.fsPeakT)
+                let windowEnd = PostPairingGates.windowEnd(fsPeakT: shape.fsPeakT, thresholds: thresholds)
                 let staleness = motionTime - windowEnd
                 if staleness > staleThreshold {
                     dprint("[UNIF_DM_EXPIRED type=\(shape.classification.rawValue) fsPeakT=\(f3(shape.fsPeakT)) staleness=\(f3(staleness))s]")
@@ -199,7 +206,7 @@ extension SwingDetectionManager {
         if hasDMFailed {
             var remaining: [UnifiedShapeEvent] = []
             for shape in pendingUnifShapesDMFailed {
-                let windowEnd = PostPairingGates.windowEnd(fsPeakT: shape.fsPeakT)
+                let windowEnd = PostPairingGates.windowEnd(fsPeakT: shape.fsPeakT, thresholds: thresholds)
                 let staleness = motionTime - windowEnd
                 if staleness > staleThreshold {
                     dprint("[UNIF_800HZ_EXPIRED type=\(shape.classification.rawValue) fsPeakT=\(f3(shape.fsPeakT)) staleness=\(f3(staleness))s — no 800Hz data]")

@@ -108,9 +108,9 @@ final class DetectorConfig: ObservableObject {
         }
     }
 
-    /// Thresholds are read through `DetectorParameters.d(_:)` / `i(_:)` at the
-    /// point of use, so there is nothing to copy into and no window where the
-    /// detector and the table disagree.
+    /// Thresholds are read from a `DetectorParameters.snapshot()` taken once per
+    /// detection pass, so there is nothing to copy into and a pass never mixes
+    /// two installed sets.
 
     /// Snapshot stamped onto every uploaded detection and rejection, so a row
     /// stays interpretable after the thresholds move. Without it, rows from
