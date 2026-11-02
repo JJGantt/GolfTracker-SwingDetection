@@ -1,13 +1,8 @@
 -- Courses: an OSM course is shared and only server functions write it; any
 -- other course belongs to the user who created it.
 --
--- Until now every signed-in user could insert a course with any osm_id, and
--- update any row whose `created_by` was null — which is every OSM course,
--- since the resolver never set it. So anyone could rename or overwrite any
--- shared course. And user-created courses were readable by everyone, their
--- privacy left to a client-side filter in `RoundResolver.fetchSharedCoursesNear`.
---
--- After this migration:
+-- Both rules are enforced by policy, not by the client, and a null
+-- `created_by` grants no write access:
 --   * osm_id IS NOT NULL — a SHARED course. Everyone signed in reads it. No
 --     client inserts, updates or deletes it; `register_osm_course` creates it
 --     (and only fills in what an existing row lacks), and
